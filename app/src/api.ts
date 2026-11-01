@@ -2,7 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type Kind = "drive" | "folder" | "file";
 export type Category = "image" | "video" | "audio" | "document";
-export type IndexStatus = "notIndexed" | "indexing" | "paused" | "queued" | "indexed" | "unindexable";
+export type IndexStatus = "notIndexed" | "indexing" | "paused" | "indexed" | "unindexable";
 
 export interface Entry {
   name: string;

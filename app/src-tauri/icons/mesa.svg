@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="261 300 731 630" width="731" height="630">
+  <title>Layered mountain logo</title>
+  <defs>
+    <clipPath id="silhouette">
+      <path d="M669.8 310.2 L739.7 353.8 Q746.5 358.0 753.5 361.9 L814.0 395.1 Q821.0 399.0 823.1 406.7 L852.4 515.8 Q854.5 523.5 860.3 529.1 L892.7 560.4 Q898.5 566.0 900.1 573.8 L915.9 650.7 Q917.5 658.5 922.4 664.8 L951.6 702.7 Q956.5 709.0 959.2 716.5 L982.8 782.5 Q985.5 790.0 978.4 793.8 L851.1 861.7 Q844.0 865.5 836.1 866.7 L742.4 881.3 Q734.5 882.5 726.7 884.4 L571.3 921.6 Q563.5 923.5 556.5 919.6 L432.0 848.9 Q425.0 845.0 417.1 843.7 L337.4 830.8 Q329.5 829.5 322.8 825.1 L273.7 793.4 Q267.0 789.0 269.4 781.4 L291.1 711.6 Q293.5 704.0 298.3 697.6 L326.2 660.4 Q331.0 654.0 332.9 646.2 L351.1 572.8 Q353.0 565.0 359.1 559.8 L384.4 538.2 Q390.5 533.0 392.6 525.3 L418.9 429.7 Q421.0 422.0 427.4 417.1 L507.6 355.9 Q514.0 351.0 521.9 350.0 L577.1 343.0 Q585.0 342.0 592.3 338.6 L655.7 309.4 Q663.0 306.0 669.8 310.2 Z"/>
+    </clipPath>
+    <linearGradient id="band-g" gradientUnits="userSpaceOnUse" x1="426.7" y1="776.9" x2="829.7" y2="481.1">
+      <stop offset="0" stop-color="#F88039"/>
+      <stop offset="1" stop-color="#DA612E"/>
+    </linearGradient>
+    <linearGradient id="band_right-g" gradientUnits="userSpaceOnUse" x1="739.3" y1="829" x2="879.7" y2="565.3">
+      <stop offset="0" stop-color="#CF5929"/>
+      <stop offset="1" stop-color="#C75027"/>
+    </linearGradient>
+    <linearGradient id="base_left-g" gradientUnits="userSpaceOnUse" x1="341.8" y1="863.8" x2="517.3" y2="704.4">
+      <stop offset="0" stop-color="#BB493C"/>
+      <stop offset="1" stop-color="#A33930"/>
+    </linearGradient>
+    <linearGradient id="base_right-g" gradientUnits="userSpaceOnUse" x1="656.3" y1="977.7" x2="881.4" y2="641.2">
+      <stop offset="0" stop-color="#A33A31"/>
+      <stop offset="1" stop-color="#852C27"/>
+    </linearGradient>
+    <linearGradient id="t1_left-g" gradientUnits="userSpaceOnUse" x1="455.9" y1="457.6" x2="393.2" y2="540.7">
+      <stop offset="0" stop-color="#FEB059"/>
+      <stop offset="1" stop-color="#FDBD64"/>
+    </linearGradient>
+    <linearGradient id="t1_front-g" gradientUnits="userSpaceOnUse" x1="503.2" y1="615.2" x2="539.1" y2="522">
+      <stop offset="0" stop-color="#FDAF55"/>
+      <stop offset="1" stop-color="#FDA44C"/>
+    </linearGradient>
+    <linearGradient id="t1_mid-g" gradientUnits="userSpaceOnUse" x1="637.4" y1="665.3" x2="674.3" y2="541.3">
+      <stop offset="0" stop-color="#F9A24B"/>
+      <stop offset="1" stop-color="#F39843"/>
+    </linearGradient>
+    <linearGradient id="t1_right-g" gradientUnits="userSpaceOnUse" x1="806.7" y1="564.7" x2="737.9" y2="468.9">
+      <stop offset="0" stop-color="#E79040"/>
+      <stop offset="1" stop-color="#E4873C"/>
+    </linearGradient>
+    <linearGradient id="top-g" gradientUnits="userSpaceOnUse" x1="663.4" y1="311.1" x2="582.1" y2="554">
+      <stop offset="0" stop-color="#FDCC89"/>
+      <stop offset="1" stop-color="#FDCE8B"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#silhouette)" stroke-width="0.8" stroke-linejoin="round">
+    <polygon id="band" points="331,654 353,565 390.5,533 425,572 524,600 599,659 708,639 741.5,595 819.5,561 854.5,523.5 898.5,566 917.5,658.5 898,677 802,723 738.5,780 603,768 579.5,766 480.5,701 382,696" fill="url(#band-g)" stroke="url(#band-g)"/>
+    <polygon id="band_right" points="603,768 756,733.5 813,644 898.5,566 917.5,658.5 898,677 802,723 738.5,780" fill="url(#band_right-g)"/>
+    <polygon id="base_left" points="267,789 293.5,704 331,654 382,696 480.5,701 579.5,766 563.5,923.5 425,845 329.5,829.5" fill="url(#base_left-g)" stroke="url(#base_left-g)"/>
+    <polygon id="base_right" points="579.5,766 603,768 738.5,780 802,723 898,677 917.5,658.5 956.5,709 985.5,790 844,865.5 734.5,882.5 563.5,923.5" fill="url(#base_right-g)" stroke="url(#base_right-g)"/>
+    <polygon id="t1_left" points="421,422 455,486 425,572 390.5,533" fill="url(#t1_left-g)" stroke="url(#t1_left-g)"/>
+    <polygon id="t1_front" points="455,486 554,524 610,568 599,659 524,600 425,572" fill="url(#t1_front-g)" stroke="url(#t1_front-g)"/>
+    <polygon id="t1_mid" points="610,568 703,544 708,639 599,659" fill="url(#t1_mid-g)" stroke="url(#t1_mid-g)"/>
+    <polygon id="t1_right" points="703,544 732.5,488 795.5,455 821,399 854.5,523.5 819.5,561 741.5,595 708,639" fill="url(#t1_right-g)" stroke="url(#t1_right-g)"/>
+    <polygon id="top" points="421,422 514,351 585,342 663,306 746.5,358 821,399 795.5,455 732.5,488 703,544 610,568 554,524 455,486" fill="url(#top-g)" stroke="url(#top-g)"/>
+  </g>
+</svg>

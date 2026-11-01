@@ -50,6 +50,8 @@
 }
 
 .dangerOutline {
+  border-width: 2px;
+  padding: 7px 15px;
   border-color: var(--color-danger);
   background: transparent;
   color: var(--color-danger);

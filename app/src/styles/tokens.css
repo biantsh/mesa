@@ -1,44 +1,46 @@
 :root {
   color-scheme: light;
 
-  --color-primary: #2478c8;
-  --color-primary-hover: #1f6ab0;
-  --color-primary-active: #195a97;
+  --color-primary: #e26931;
+  --color-primary-hover: #d25a29;
+  --color-primary-active: #bd4d22;
   --color-on-primary: #ffffff;
 
-  --color-bg: #f4f6f9;
+  --color-bg: #f7f4f1;
   --color-surface: #ffffff;
-  --color-border: #dfe4ea;
-  --color-border-strong: #c9d1da;
+  --color-border: #e6dfd8;
+  --color-border-strong: #d3c9bf;
 
-  --color-text: #17212b;
-  --color-text-muted: #5a6978;
-  --color-text-disabled: #9aa6b2;
+  --color-text: #2a1a14;
+  --color-text-muted: #6b5d52;
+  --color-text-disabled: #a39689;
+  --color-paused: #85786c;
 
-  --color-danger: #c62f45;
-  --color-danger-hover: #b32a3e;
-  --color-danger-active: #9e2436;
+  --color-danger: #c42a4d;
+  --color-danger-hover: #b0243f;
+  --color-danger-active: #9b1f37;
   --color-on-danger: #ffffff;
-  --color-danger-bg: rgba(198, 47, 69, 0.09);
-  --color-danger-border: rgba(198, 47, 69, 0.28);
-  --color-lock: #d64545;
+  --color-danger-bg: rgba(196, 42, 77, 0.09);
+  --color-danger-border: rgba(196, 42, 77, 0.28);
+  --color-lock: #d23c52;
 
-  --color-folder: #f6c244;
-  --color-folder-paper: #fffaf0;
-  --color-file: #6f8093;
-  --color-preview-bg: #eef1f5;
+  --color-folder: #fdbd64;
+  --color-folder-back: #f39d3e;
+  --color-folder-paper: #ffffff;
+  --color-file: #8a7b6e;
+  --color-preview-bg: #f1ece7;
 
-  --color-hover-bg: rgba(36, 120, 200, 0.08);
-  --color-selected-bg: rgba(36, 120, 200, 0.17);
-  --color-selected-border: rgba(36, 120, 200, 0.45);
-  --color-overlay: rgba(15, 23, 32, 0.42);
-  --color-scrollbar: rgba(23, 33, 43, 0.22);
-  --color-scrollbar-hover: rgba(23, 33, 43, 0.38);
-  --color-scrollbar-active: rgba(23, 33, 43, 0.52);
+  --color-hover-bg: rgba(226, 105, 49, 0.08);
+  --color-selected-bg: rgba(226, 105, 49, 0.15);
+  --color-selected-border: rgba(226, 105, 49, 0.5);
+  --color-overlay: rgba(42, 26, 20, 0.42);
+  --color-scrollbar: var(--color-text-disabled);
+  --color-scrollbar-hover: var(--color-file);
+  --color-scrollbar-active: var(--color-text-muted);
 
-  --shadow-sm: 0 1px 2px rgba(15, 23, 32, 0.08);
-  --shadow-menu: 0 10px 30px rgba(15, 23, 32, 0.18), 0 2px 6px rgba(15, 23, 32, 0.08);
-  --shadow-dialog: 0 24px 60px rgba(15, 23, 32, 0.28);
+  --shadow-sm: 0 1px 2px rgba(42, 26, 20, 0.08);
+  --shadow-menu: 0 10px 30px rgba(42, 26, 20, 0.18), 0 2px 6px rgba(42, 26, 20, 0.08);
+  --shadow-dialog: 0 24px 60px rgba(42, 26, 20, 0.28);
 
   --radius-sm: 6px;
   --radius-md: 10px;

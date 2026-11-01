@@ -25,7 +25,6 @@ pub enum IndexStatus {
     NotIndexed,
     Indexing,
     Paused,
-    Queued,
     Indexed,
     Unindexable,
 }
@@ -165,17 +164,18 @@ impl Index {
 
     pub fn status(&self, path: &Path) -> IndexStatus {
         if unindexable::is_unindexable(path) {
-            IndexStatus::Unindexable
-        } else if !self.shared.is_indexed(path) {
-            IndexStatus::NotIndexed
-        } else if lock(&self.shared.pending).touches(path) {
+            return IndexStatus::Unindexable;
+        }
+        if !self.shared.is_indexed(path) {
+            return IndexStatus::NotIndexed;
+        }
+        let working = lock(&self.shared.pending).touches(path);
+        if working || lock(&self.shared.progress).is_waiting(path) {
             if self.shared.control.is_paused() {
                 IndexStatus::Paused
             } else {
                 IndexStatus::Indexing
             }
-        } else if lock(&self.shared.progress).is_waiting(path) {
-            IndexStatus::Queued
         } else {
             IndexStatus::Indexed
         }

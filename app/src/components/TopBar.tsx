@@ -1,9 +1,12 @@
 import { DatabaseZap, Eraser } from "lucide-react";
+import type { Progress } from "../api";
 import { Button } from "./Button";
 import { IndexProgress } from "./IndexProgress";
 import styles from "./TopBar.module.css";
 
 interface Props {
+  progress: Progress | null;
+  onRefreshProgress: () => Promise<void>;
   onIndexAll: () => void;
   onClearIndex: () => void;
   onCancelIndexing: (subject: string) => void;
@@ -11,7 +14,15 @@ interface Props {
   stoppedAt: number;
 }
 
-export function TopBar({ onIndexAll, onClearIndex, onCancelIndexing, onError, stoppedAt }: Props) {
+export function TopBar({
+  progress,
+  onRefreshProgress,
+  onIndexAll,
+  onClearIndex,
+  onCancelIndexing,
+  onError,
+  stoppedAt,
+}: Props) {
   return (
     <header className={styles.bar}>
       <Button variant="primary" onClick={onIndexAll}>
@@ -19,7 +30,13 @@ export function TopBar({ onIndexAll, onClearIndex, onCancelIndexing, onError, st
         Index all
       </Button>
       <div className={styles.middle}>
-        <IndexProgress onCancel={onCancelIndexing} onError={onError} stoppedAt={stoppedAt} />
+        <IndexProgress
+          progress={progress}
+          onRefresh={onRefreshProgress}
+          onCancel={onCancelIndexing}
+          onError={onError}
+          stoppedAt={stoppedAt}
+        />
       </div>
       <Button variant="dangerOutline" onClick={onClearIndex}>
         <Eraser size={16} aria-hidden />

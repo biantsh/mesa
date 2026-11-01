@@ -48,7 +48,7 @@
 }
 
 .paused .fill {
-  background: var(--color-text-disabled);
+  background: var(--color-paused);
 }
 
 .indeterminate .fill {
@@ -58,8 +58,7 @@
 
 .count {
   flex: none;
-  display: flex;
-  align-items: center;
+  display: grid;
   color: var(--color-text-muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -70,17 +69,19 @@
   margin-right: 6px;
 }
 
-.figures {
-  display: grid;
-}
-
 .sizer,
-.text {
+.shown {
   grid-area: 1 / 1;
 }
 
 .sizer {
   visibility: hidden;
+}
+
+.shown {
+  justify-self: end;
+  display: flex;
+  align-items: center;
 }
 
 @container (max-width: 440px) {

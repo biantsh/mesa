@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { CircleCheck, CirclePause, Clock, Lock, LoaderCircle, type LucideProps } from "lucide-react";
+import { CircleCheck, CirclePause, Lock, LoaderCircle, type LucideProps } from "lucide-react";
 import type { Entry, IndexStatus } from "../api";
 import { cx } from "../cx";
 import styles from "./StatusBadge.module.css";
@@ -15,9 +15,8 @@ interface Badge {
 const LOCK = { Icon: Lock, size: 12, strokeWidth: 2.4, className: styles.lock };
 
 const BADGES: Partial<Record<IndexStatus, Badge>> = {
-  indexing: { label: "Indexing", Icon: LoaderCircle, size: 18, strokeWidth: 2.4, className: styles.indexing },
-  queued: { label: "Queued", Icon: Clock, size: 18, strokeWidth: 2.2, className: styles.waiting },
-  paused: { label: "Paused", Icon: CirclePause, size: 18, strokeWidth: 2.2, className: styles.paused },
+  indexing: { label: "Indexing", Icon: LoaderCircle, size: 18, strokeWidth: 3, className: styles.indexing },
+  paused: { label: "Paused", Icon: CirclePause, size: 17, strokeWidth: 3, className: styles.paused },
   indexed: { label: "Indexed", Icon: CircleCheck, size: 20, className: styles.indexed },
   unindexable: { label: "Can't be indexed", ...LOCK },
 };

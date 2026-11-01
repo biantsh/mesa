@@ -3,3 +3,4 @@ dist
 
 app/src-tauri/gen/schemas
 app/src-tauri/target
+app/src-tauri/runtime

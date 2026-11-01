@@ -7,6 +7,7 @@ import { ContextMenu, type MenuItem } from "./components/ContextMenu";
 import { FileGrid } from "./components/FileGrid";
 import { NavBar } from "./components/NavBar";
 import { TopBar } from "./components/TopBar";
+import { useIndexProgress } from "./useIndexProgress";
 import { useLiveIndexStatus } from "./useLiveIndexStatus";
 import styles from "./App.module.css";
 
@@ -25,7 +26,8 @@ export default function App() {
   const latestRequest = useRef(0);
   const [stoppedAt, setStoppedAt] = useState(0);
 
-  useLiveIndexStatus(listing, setListing);
+  const { progress, refresh: refreshProgress } = useIndexProgress();
+  useLiveIndexStatus(listing, setListing, refreshProgress);
 
   const load = useCallback(async (path: string) => {
     const request = ++latestRequest.current;
@@ -116,6 +118,8 @@ export default function App() {
   return (
     <div className={styles.app}>
       <TopBar
+        progress={progress}
+        onRefreshProgress={refreshProgress}
         onIndexAll={() => setConfirming({ which: "indexAll", subject: "" })}
         onClearIndex={() => setConfirming({ which: "clearIndex", subject: "" })}
         onCancelIndexing={(subject) => setConfirming({ which: "cancelIndexing", subject })}

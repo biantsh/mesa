@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Pause, Play, X } from "lucide-react";
 import { api, errorText, type Progress } from "../api";
 import { cx } from "../cx";
-import { useIndexProgress } from "../useIndexProgress";
 import { IconButton } from "./IconButton";
 import { Reveal } from "./Reveal";
 import styles from "./IndexProgress.module.css";
@@ -11,6 +10,8 @@ const number = new Intl.NumberFormat();
 const STOP_WINDOW_MS = 3000;
 
 interface Props {
+  progress: Progress | null;
+  onRefresh: () => Promise<void>;
   onCancel: (subject: string) => void;
   onError: (message: string) => void;
   stoppedAt: number;
@@ -34,8 +35,7 @@ function useLeaving(progress: Progress | null, stoppedAt: number) {
   return { leaving, finish: () => setLeaving(null) };
 }
 
-export function IndexProgress({ onCancel, onError, stoppedAt }: Props) {
-  const { progress: current, refresh } = useIndexProgress();
+export function IndexProgress({ progress: current, onRefresh, onCancel, onError, stoppedAt }: Props) {
   const { leaving, finish } = useLeaving(current, stoppedAt);
   const isLeaving = current === null && leaving !== null;
 
@@ -52,7 +52,7 @@ export function IndexProgress({ onCancel, onError, stoppedAt }: Props) {
     } catch (e) {
       onError(`Couldn't ${progress.paused ? "resume" : "pause"} indexing. ${errorText(e)}`);
     }
-    refresh();
+    onRefresh();
   };
 
   return (
@@ -106,14 +106,14 @@ function Count({ progress }: { progress: Progress }) {
   const longest = figures({ ...progress, done: progress.total });
   return (
     <span className={styles.count}>
-      <Reveal show={progress.paused}>
-        <span className={styles.pausedTag}>{text ? "Paused \u00b7" : "Paused"}</span>
-      </Reveal>
-      <span className={styles.figures}>
-        <span className={styles.sizer} aria-hidden>
-          {longest}
-        </span>
-        <span className={styles.text}>{text}</span>
+      <span className={styles.sizer} aria-hidden>
+        {longest}
+      </span>
+      <span className={styles.shown}>
+        <Reveal show={progress.paused}>
+          <span className={styles.pausedTag}>{text ? "Paused \u00b7" : "Paused"}</span>
+        </Reveal>
+        <span>{text}</span>
       </span>
     </span>
   );

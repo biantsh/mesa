@@ -10,5 +10,6 @@ fn main() {
         );
     }
     println!("cargo:rerun-if-changed={folder}");
+    println!("cargo:rerun-if-changed=icons");
     tauri_build::build()
 }

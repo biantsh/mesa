@@ -19,9 +19,8 @@
   animation: spin 900ms linear infinite;
 }
 
-.paused,
-.waiting {
-  color: var(--color-text-muted);
+.paused {
+  color: var(--color-paused);
 }
 
 .lock {
