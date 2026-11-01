@@ -2,6 +2,8 @@
 
 mod browse;
 mod commands;
+mod crawl;
+mod embed;
 mod index;
 mod indexer;
 mod progress;
@@ -17,8 +19,9 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
-            let index =
-                index::Index::open(&dir).map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
+            let resources = app.path().resource_dir().ok();
+            let index = index::Index::open(&dir, embed::for_this_platform(&dir, resources.as_deref()))
+                .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             app.manage(index);
             Ok(())
         })

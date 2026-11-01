@@ -7,12 +7,12 @@ use std::{
         mpsc::{self, Sender},
     },
     thread,
-    time::Duration,
 };
 
 use serde::Serialize;
 
 use crate::{
+    embed::Embedder,
     indexer,
     progress::{Progress, ProgressState},
     store::{self, Store},
@@ -48,6 +48,7 @@ pub struct Shared {
     pub pending: Mutex<Pending>,
     pub progress: Mutex<ProgressState>,
     pub control: Control,
+    pub embedder: Arc<dyn Embedder>,
 }
 
 pub struct Control {
@@ -79,6 +80,15 @@ impl Control {
         self.changed.notify_all();
     }
 
+    pub fn epoch(&self) -> u64 {
+        lock(&self.state).epoch
+    }
+
+    pub fn changed_since(&self, epoch: u64) -> bool {
+        let state = lock(&self.state);
+        state.paused || state.epoch != epoch
+    }
+
     pub fn poke(&self) {
         lock(&self.state).epoch += 1;
         self.changed.notify_all();
@@ -89,16 +99,6 @@ impl Control {
         while state.paused {
             state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
         }
-    }
-
-    pub fn sleep(&self, time: Duration) -> bool {
-        let state = lock(&self.state);
-        let epoch = state.epoch;
-        let (_state, result) = self
-            .changed
-            .wait_timeout_while(state, time, |state| !state.paused && state.epoch == epoch)
-            .unwrap_or_else(|e| e.into_inner());
-        result.timed_out()
     }
 }
 
@@ -120,10 +120,17 @@ pub struct Index {
 }
 
 impl Index {
-    pub fn open(dir: &Path) -> store::Result<Self> {
+    pub fn open(dir: &Path, embedder: Arc<dyn Embedder>) -> store::Result<Self> {
         let store = Store::open(dir)?;
         let rules = store.load_rules()?;
-        let unfinished = store.unfinished_jobs()?;
+        let mut unfinished = store.unfinished_jobs()?;
+        if store.has_stale_files()? {
+            for (root, _) in rules.iter().filter(|(_, indexed)| **indexed) {
+                if !unfinished.iter().any(|(_, queued)| queued == root) {
+                    unfinished.push((store.add_job(root)?, root.clone()));
+                }
+            }
+        }
         let paused = store.is_paused()?;
         if paused && unfinished.is_empty() {
             store.set_paused(false)?;
@@ -134,6 +141,7 @@ impl Index {
             pending: Mutex::new(Pending::default()),
             progress: Mutex::new(ProgressState::default()),
             control: Control::new(paused && !unfinished.is_empty()),
+            embedder,
         });
 
         let (sender, receiver) = mpsc::channel();
@@ -263,6 +271,12 @@ impl Index {
     }
 }
 
+impl Drop for Index {
+    fn drop(&mut self) {
+        self.shared.embedder.release();
+    }
+}
+
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -287,8 +301,7 @@ impl Pending {
     }
 
     pub fn touches(&self, path: &Path) -> bool {
-        self.paths.contains_key(path)
-            || path.parent().is_some_and(|parent| self.paths.contains_key(parent))
+        path.ancestors().any(|above| self.paths.contains_key(above))
             || self
                 .paths
                 .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
@@ -345,6 +358,10 @@ mod tests {
         assert!(!effective(&rules, Path::new("/photos2/a.jpg")));
     }
 
+    fn embedder() -> Arc<dyn Embedder> {
+        Arc::new(crate::embed::testing::Everything)
+    }
+
     struct Fixture {
         data: PathBuf,
         photos: PathBuf,
@@ -367,7 +384,7 @@ mod tests {
         fn new(tag: &str) -> Self {
             let (root, photos) = make_photos(tag);
             let data = root.join("data");
-            let index = Index::open(&data).unwrap();
+            let index = Index::open(&data, embedder()).unwrap();
             Self {
                 data,
                 photos,
@@ -427,7 +444,7 @@ mod tests {
 
         assert_eq!(f.count("files"), 5);
         assert_eq!(f.count("embeddings"), 5);
-        assert_eq!(f.count("free_slots"), 0);
+        assert_eq!(f.count("free_slots"), 1);
     }
 
     fn interrupted_run(tag: &str, paused: bool) -> (PathBuf, PathBuf, PathBuf) {
@@ -445,6 +462,10 @@ mod tests {
             category: Category::Image,
             modified_ms: 1,
             size: 1,
+            vectors: vec![crate::vectors::Located {
+                locator: 0,
+                record: crate::vectors::random_record(),
+            }],
         };
         let scan = ScannedDir {
             path: photos.clone(),
@@ -457,7 +478,7 @@ mod tests {
     }
 
     fn open(root: PathBuf, data: PathBuf, photos: PathBuf) -> Fixture {
-        let index = Index::open(&data).unwrap();
+        let index = Index::open(&data, embedder()).unwrap();
         Fixture {
             data,
             photos,
@@ -482,7 +503,10 @@ mod tests {
         assert_eq!(f.count("files"), 4);
         assert_eq!(f.index.status(&f.photos), IndexStatus::Indexed);
         assert!(f.index.progress().is_none());
-        assert_eq!(Index::open(&f.data).unwrap().status(&f.photos), IndexStatus::Indexed);
+        assert_eq!(
+            Index::open(&f.data, embedder()).unwrap().status(&f.photos),
+            IndexStatus::Indexed
+        );
     }
 
     #[test]
@@ -511,7 +535,7 @@ mod tests {
             store.save_rules(&HashMap::from([(photos.clone(), true)])).unwrap();
             store.add_job(&photos).unwrap();
         }
-        let index = Index::open(&data).unwrap();
+        let index = Index::open(&data, embedder()).unwrap();
         let f = Fixture {
             data,
             photos,

@@ -11,12 +11,12 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::{
     browse::Category,
-    vectors::{self, DIMS, Record, VectorFile},
+    embed,
+    vectors::{DIMS, Located, Record, VectorFile},
 };
 
-const CONFIG_ID: u32 = 1;
-const CONFIG_MODEL: &str = "random-placeholder";
-const MIGRATIONS: &[&str] = &[SCHEMA, ADD_META];
+const CONFIG_ID: u32 = 3;
+const MIGRATIONS: &[&str] = &[SCHEMA, ADD_META, ADD_EMBEDDED_WITH, ADD_LOCATOR];
 
 const SCHEMA: &str = "
 CREATE TABLE dirs (
@@ -73,6 +73,8 @@ CREATE TABLE jobs (id INTEGER PRIMARY KEY, path TEXT NOT NULL);
 ";
 
 const ADD_META: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;";
+const ADD_EMBEDDED_WITH: &str = "ALTER TABLE files ADD COLUMN embedded_with INTEGER NOT NULL DEFAULT 0;";
+const ADD_LOCATOR: &str = "ALTER TABLE embeddings ADD COLUMN locator INTEGER NOT NULL DEFAULT 0;";
 
 #[derive(Debug)]
 pub enum Error {
@@ -115,6 +117,7 @@ pub struct ScannedFile {
     pub category: Category,
     pub modified_ms: i64,
     pub size: u64,
+    pub vectors: Vec<Located>,
 }
 
 pub struct ScannedDir {
@@ -133,6 +136,7 @@ impl Store {
     pub fn open(dir: &Path) -> Result<Self> {
         fs::create_dir_all(dir)?;
         let conn = open_db(dir)?;
+        remove_other_vector_files(dir);
         let mut vectors = VectorFile::open(&vectors_path(dir), CONFIG_ID)?;
         vectors.truncate_to(extent(&conn)?)?;
         Ok(Self {
@@ -247,16 +251,18 @@ impl Store {
                     None => *dir_id.insert(ensure_dir(&tx, &scan.path)?),
                 };
                 let file_id = upsert_file(&tx, dir, file)?;
-                let slot = match old.and_then(|o| o.slot) {
-                    Some(slot) => slot,
-                    None => {
-                        let slot = take_slot(&tx, &mut next_slot)?;
-                        tx.prepare_cached("INSERT INTO embeddings (config_id, slot, file_id) VALUES (?1, ?2, ?3)")?
-                            .execute(params![CONFIG_ID, slot as i64, file_id])?;
-                        slot
-                    }
-                };
-                writes.push((slot, vectors::random_record()));
+                if old.is_some() {
+                    tx.prepare_cached("DELETE FROM embeddings WHERE config_id = ?1 AND file_id = ?2")?
+                        .execute(params![CONFIG_ID, file_id])?;
+                }
+                for vector in &file.vectors {
+                    let slot = take_slot(&tx, &mut next_slot)?;
+                    tx.prepare_cached(
+                        "INSERT INTO embeddings (config_id, slot, file_id, locator) VALUES (?1, ?2, ?3, ?4)",
+                    )?
+                    .execute(params![CONFIG_ID, slot as i64, file_id, vector.locator as i64])?;
+                    writes.push((slot, vector.record));
+                }
             }
 
             if scan.complete {
@@ -272,6 +278,14 @@ impl Store {
         self.vectors.write(&mut writes)?;
         self.vectors.sync()?;
         Ok(tx.commit()?)
+    }
+
+    pub fn has_stale_files(&self) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM files WHERE embedded_with != ?1)",
+            [CONFIG_ID],
+            |r| r.get(0),
+        )?)
     }
 
     pub fn changed(&self, scan: &ScannedDir) -> Result<HashSet<String>> {
@@ -332,9 +346,23 @@ fn open_db(dir: &Path) -> Result<Connection> {
     }
     conn.execute(
         "INSERT OR IGNORE INTO embedding_configs (id, model, dims, dtype) VALUES (?1, ?2, ?3, 'f16')",
-        params![CONFIG_ID, CONFIG_MODEL, DIMS],
+        params![CONFIG_ID, embed::MODEL_NAME, DIMS],
     )?;
+    conn.execute("DELETE FROM embeddings WHERE config_id != ?1", [CONFIG_ID])?;
+    conn.execute("DELETE FROM free_slots WHERE config_id != ?1", [CONFIG_ID])?;
     Ok(conn)
+}
+
+fn remove_other_vector_files(dir: &Path) {
+    let keep = vectors_path(dir);
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("vectors-") && name.ends_with(".bin") && entry.path() != keep {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn extent(conn: &Connection) -> Result<u64> {
@@ -414,27 +442,26 @@ struct StoredFile {
     id: i64,
     modified_ms: i64,
     size: i64,
-    slot: Option<u64>,
+    embedded_with: i64,
 }
 
 fn is_current(stored: &StoredFile, file: &ScannedFile) -> bool {
-    stored.modified_ms == file.modified_ms && stored.size == file.size as i64 && stored.slot.is_some()
+    stored.modified_ms == file.modified_ms
+        && stored.size == file.size as i64
+        && stored.embedded_with == i64::from(CONFIG_ID)
 }
 
 fn existing_files(conn: &Connection, dir_id: i64) -> Result<HashMap<String, StoredFile>> {
-    let mut statement = conn.prepare_cached(
-        "SELECT f.name, f.id, f.modified_ms, f.size,
-                (SELECT slot FROM embeddings WHERE config_id = ?2 AND file_id = f.id LIMIT 1)
-         FROM files f WHERE f.dir_id = ?1",
-    )?;
-    let rows = statement.query_map(params![dir_id, CONFIG_ID], |r| {
+    let mut statement =
+        conn.prepare_cached("SELECT name, id, modified_ms, size, embedded_with FROM files WHERE dir_id = ?1")?;
+    let rows = statement.query_map([dir_id], |r| {
         Ok((
             r.get::<_, String>(0)?,
             StoredFile {
                 id: r.get(1)?,
                 modified_ms: r.get(2)?,
                 size: r.get(3)?,
-                slot: r.get::<_, Option<i64>>(4)?.map(|s| s as u64),
+                embedded_with: r.get(4)?,
             },
         ))
     })?;
@@ -444,11 +471,13 @@ fn existing_files(conn: &Connection, dir_id: i64) -> Result<HashMap<String, Stor
 fn upsert_file(tx: &Transaction, dir_id: i64, file: &ScannedFile) -> Result<i64> {
     Ok(tx
         .prepare_cached(
-            "INSERT INTO files (dir_id, name, category, modified_ms, size) VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO files (dir_id, name, category, modified_ms, size, embedded_with)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT (dir_id, name) DO UPDATE SET
                  category = excluded.category,
                  modified_ms = excluded.modified_ms,
-                 size = excluded.size
+                 size = excluded.size,
+                 embedded_with = excluded.embedded_with
              RETURNING id",
         )?
         .query_row(
@@ -457,7 +486,8 @@ fn upsert_file(tx: &Transaction, dir_id: i64, file: &ScannedFile) -> Result<i64>
                 file.name,
                 category_code(file.category),
                 file.modified_ms,
-                file.size as i64
+                file.size as i64,
+                CONFIG_ID
             ],
             |r| r.get(0),
         )?)
@@ -484,6 +514,7 @@ fn take_slot(tx: &Transaction, next_slot: &mut u64) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vectors;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("mesa-store-{tag}"));
@@ -502,6 +533,24 @@ mod tests {
             category: Category::Image,
             modified_ms,
             size: 100,
+            vectors: vec![Located {
+                locator: 0,
+                record: vectors::random_record(),
+            }],
+        }
+    }
+
+    fn in_parts(name: &str, modified_ms: i64, locators: &[u64]) -> ScannedFile {
+        let vectors = locators
+            .iter()
+            .map(|&locator| Located {
+                locator,
+                record: vectors::random_record(),
+            })
+            .collect();
+        ScannedFile {
+            vectors,
+            ..file(name, modified_ms)
         }
     }
 
@@ -556,6 +605,25 @@ mod tests {
         let vector = store.vectors.read(slot_of(&store, "a", "a.jpg")).unwrap();
         assert_eq!(vector.len(), DIMS);
         assert!(vector.iter().any(|v| v.to_f32() != 0.0));
+    }
+
+    #[test]
+    fn changed_file_reuses_slots() {
+        let mut store = Store::open(&temp_dir("reparts")).unwrap();
+        write(
+            &mut store,
+            &[scan("a", vec![in_parts("song.mp3", 1, &[0, 25_000, 50_000])])],
+        );
+        write(&mut store, &[scan("a", vec![in_parts("song.mp3", 2, &[0, 25_000])])]);
+        assert_eq!(count(&store, "embeddings"), 2);
+        assert_eq!(count(&store, "free_slots"), 1);
+        assert_eq!(store.vectors.next_slot(), 3);
+        write(
+            &mut store,
+            &[scan("a", vec![in_parts("song.mp3", 3, &[0, 25_000, 50_000, 75_000])])],
+        );
+        assert_eq!((count(&store, "embeddings"), count(&store, "free_slots")), (4, 0));
+        assert_eq!(store.vectors.next_slot(), 4);
     }
 
     #[test]

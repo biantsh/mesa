@@ -16,6 +16,12 @@ const VERSION: u32 = 1;
 const F16: u32 = 1;
 pub type Record = [u8; RECORD_BYTES];
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Located {
+    pub locator: u64,
+    pub record: Record,
+}
+
 pub struct VectorFile {
     file: File,
     next_slot: u64,
@@ -113,6 +119,20 @@ fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
+pub fn record_from(output: &[f32]) -> Option<Record> {
+    let prefix = output.get(..DIMS)?;
+    let length = prefix.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if !length.is_finite() || length == 0.0 {
+        return None;
+    }
+    let mut record = [0u8; RECORD_BYTES];
+    for (v, out) in prefix.iter().zip(record.chunks_exact_mut(ELEMENT_BYTES)) {
+        out.copy_from_slice(&f16::from_f32(v / length).to_le_bytes());
+    }
+    Some(record)
+}
+
+#[cfg(test)]
 pub fn random_record() -> Record {
     let mut values = [0f32; DIMS];
     for v in &mut values {
@@ -139,6 +159,23 @@ mod tests {
 
     fn filled(byte: u8) -> Record {
         [byte; RECORD_BYTES]
+    }
+
+    fn values(record: &Record) -> Vec<f32> {
+        record
+            .chunks_exact(2)
+            .map(|b| f16::from_le_bytes([b[0], b[1]]).to_f32())
+            .collect()
+    }
+
+    #[test]
+    fn output_truncated_and_normalized() {
+        let output: Vec<f32> = (0..768).map(|i| if i < DIMS { 3.0 } else { 1000.0 }).collect();
+        let kept = values(&record_from(&output).unwrap());
+        assert_eq!(kept.len(), DIMS);
+        let length = kept.iter().map(|v| v * v).sum::<f32>().sqrt();
+        assert!((length - 1.0).abs() < 0.001, "length was {length}");
+        assert!((kept[0] - 1.0 / (DIMS as f32).sqrt()).abs() < 0.001);
     }
 
     #[test]
