@@ -7,6 +7,7 @@ mod embed;
 mod index;
 mod indexer;
 mod progress;
+mod rules;
 mod store;
 mod thumbnail;
 mod unindexable;
@@ -18,6 +19,7 @@ fn main() {
     let previews = thumbnail::PreviewServer::start();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let resources = app.path().resource_dir().ok();
@@ -41,6 +43,12 @@ fn main() {
             commands::add_to_index,
             commands::drop_from_queue,
             commands::remove_from_index,
+            commands::exclude_from_index,
+            commands::stop_excluding,
+            commands::count_with_data,
+            commands::exclusion_count,
+            commands::open_file,
+            commands::show_in_folder,
             commands::index_everything,
             commands::clear_index,
         ])

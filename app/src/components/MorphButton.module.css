@@ -1,0 +1,50 @@
+.morph {
+  position: relative;
+}
+
+.sizers {
+  display: grid;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.sizers > span {
+  grid-area: 1 / 1;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+}
+
+.iconSpace {
+  flex: none;
+  width: 16px;
+  margin-right: 8px;
+}
+
+.window {
+  position: absolute;
+  inset: 0 8px;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent, #000 6px, #000 calc(100% - 6px), transparent);
+}
+
+.icon,
+.label {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  white-space: nowrap;
+  transform: translateY(-50%);
+  transition: left 240ms ease, opacity 160ms ease;
+}
+
+.iconGone {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon,
+  .label {
+    transition: none;
+  }
+}

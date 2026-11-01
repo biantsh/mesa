@@ -11,6 +11,10 @@
   stroke: var(--color-on-primary);
 }
 
+.partly {
+  color: var(--color-primary);
+}
+
 .indexing {
   color: var(--color-primary);
 }
@@ -23,10 +27,18 @@
   color: var(--color-paused);
 }
 
-.lock {
+.lock,
+.lockExcluded {
   background: var(--color-surface);
-  color: var(--color-lock);
   box-shadow: 0 0 0 1px var(--color-border);
+}
+
+.lock {
+  color: var(--color-lock);
+}
+
+.lockExcluded {
+  color: var(--color-text-faint);
 }
 
 @keyframes spin {

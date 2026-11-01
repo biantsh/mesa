@@ -2,7 +2,14 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type Kind = "drive" | "folder" | "file";
 export type Category = "image" | "video" | "audio" | "document";
-export type IndexStatus = "notIndexed" | "indexing" | "paused" | "indexed" | "unindexable";
+export type IndexStatus =
+  | "notIndexed"
+  | "indexing"
+  | "paused"
+  | "indexed"
+  | "partlyIndexed"
+  | "unindexable"
+  | "excluded";
 
 export interface Entry {
   name: string;
@@ -13,11 +20,15 @@ export interface Entry {
   hasContents: boolean;
   index: IndexStatus;
   droppable: boolean;
+  excludedHere: boolean;
+  size: number | null;
+  modified: number | null;
 }
 
 export interface IndexState {
   status: IndexStatus;
   droppable: boolean;
+  excludedHere: boolean;
 }
 
 export interface Crumb {
@@ -51,9 +62,15 @@ export const api = {
   indexProgress: () => invoke<Progress | null>("index_progress"),
   setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),
   cancelIndexing: () => invoke<void>("cancel_indexing"),
-  dropFromQueue: (path: string) => invoke<void>("drop_from_queue", { path }),
-  addToIndex: (path: string) => invoke<void>("add_to_index", { path }),
-  removeFromIndex: (path: string) => invoke<void>("remove_from_index", { path }),
+  dropFromQueue: (paths: string[]) => invoke<void>("drop_from_queue", { paths }),
+  addToIndex: (paths: string[], completing?: string) => invoke<void>("add_to_index", { paths, completing }),
+  removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
+  openFile: (path: string) => invoke<void>("open_file", { path }),
+  showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
+  excludeFromIndex: (paths: string[]) => invoke<void>("exclude_from_index", { paths }),
+  stopExcluding: (paths: string[]) => invoke<void>("stop_excluding", { paths }),
+  countWithData: (paths: string[]) => invoke<number>("count_with_data", { paths }),
+  exclusionCount: () => invoke<number>("exclusion_count"),
   indexEverything: () => invoke<void>("index_everything"),
   clearIndex: () => invoke<void>("clear_index"),
 };

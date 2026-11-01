@@ -5,7 +5,7 @@ use std::{
 
 use serde::Serialize;
 
-use crate::index::IndexStatus;
+use crate::{index::IndexStatus, indexer};
 
 #[cfg(windows)]
 const COMPUTER_LABEL: &str = "This PC";
@@ -47,6 +47,9 @@ pub struct Entry {
     pub has_contents: bool,
     pub index: IndexStatus,
     pub droppable: bool,
+    pub excluded_here: bool,
+    pub size: Option<u64>,
+    pub modified: Option<i64>,
 }
 
 impl Entry {
@@ -60,6 +63,9 @@ impl Entry {
             has_contents: false,
             index: IndexStatus::NotIndexed,
             droppable: false,
+            excluded_here: false,
+            size: None,
+            modified: None,
         }
     }
 
@@ -140,9 +146,18 @@ fn read_entries(dir: &Path) -> io::Result<Vec<Entry>> {
         let Ok(item) = item else { continue };
         let Some((name, shown)) = classify(&item) else { continue };
         let path = item.path();
+        let facts = indexer::facts(&item);
+        let modified = facts.map(|(modified, _)| modified);
         entries.push(match shown {
-            Shown::Folder => Entry::folder(name, &path),
-            Shown::File(category) => Entry::file(name, &path, category),
+            Shown::Folder => Entry {
+                modified,
+                ..Entry::folder(name, &path)
+            },
+            Shown::File(category) => Entry {
+                modified,
+                size: facts.map(|(_, size)| size),
+                ..Entry::file(name, &path, category)
+            },
         });
     }
     entries.sort_by_cached_key(|e| (e.kind == Kind::File, e.name.to_lowercase()));
@@ -206,6 +221,14 @@ fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
         }
     }
     false
+}
+
+pub fn is_listed_file(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| category_of(name).is_some())
 }
 
 pub fn category_of(name: &str) -> Option<Category> {

@@ -37,10 +37,11 @@ pub fn work(shared: &Shared, jobs: Receiver<Job>) {
         let wanted = lock(&shared.progress).finish_job(job.ticket);
 
         let store = lock(&shared.store);
-        if wanted && stored {
-            if let Err(e) = store.finish_job(job.id) {
-                eprintln!("Mesa: couldn't mark indexing of {} as done: {e}", job.root.display());
-            }
+        if wanted
+            && stored
+            && let Err(e) = store.finish_job(job.id)
+        {
+            eprintln!("Mesa: couldn't mark indexing of {} as done: {e}", job.root.display());
         }
 
         let active = lock(&shared.progress).is_active();
@@ -417,7 +418,7 @@ fn scan_file(path: &Path) -> Option<ScannedDir> {
     })
 }
 
-fn facts(item: &fs::DirEntry) -> Option<(i64, u64)> {
+pub fn facts(item: &fs::DirEntry) -> Option<(i64, u64)> {
     let metadata = if item.file_type().ok()?.is_symlink() {
         fs::metadata(item.path()).ok()?
     } else {
@@ -440,7 +441,7 @@ fn unix_millis(time: SystemTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{HashMap, VecDeque},
+        collections::{BTreeSet, HashMap, HashSet, VecDeque},
         sync::{
             Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
@@ -544,6 +545,9 @@ mod tests {
         let shared = Arc::new(Shared {
             store: Mutex::new(Store::open(&data.join("index")).unwrap()),
             rules: Mutex::new(HashMap::from([(folder.clone(), true)])),
+            gaps: Mutex::new(BTreeSet::new()),
+            included: Mutex::new(BTreeSet::new()),
+            excluded: Mutex::new(HashSet::new()),
             pending: Mutex::new(Pending::default()),
             progress: Mutex::new(ProgressState::default()),
             control: Control::new(false),

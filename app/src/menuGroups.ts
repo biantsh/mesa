@@ -1,0 +1,45 @@
+import type { Entry } from "./api";
+import type { MenuItem } from "./components/ContextMenu";
+import { counted } from "./menuTargets";
+import type { IndexActions } from "./useIndexActions";
+
+export function menuGroups(
+  targets: Entry[],
+  actions: IndexActions,
+  open: (entry: Entry) => void,
+  showInFolder: (entry: Entry) => void,
+): MenuItem[][] {
+  const several = targets.length > 1;
+  const [only] = targets;
+  return [
+    ...(several
+      ? []
+      : [
+          [
+            { label: "Open", onSelect: () => open(only) },
+            ...(only.kind === "drive" ? [] : [{ label: "Show in File Explorer", onSelect: () => showInFolder(only) }]),
+          ],
+        ]),
+    [
+      {
+        label: counted("Add to index", actions.add, several),
+        disabled: actions.add === 0,
+        onSelect: actions.doAdd,
+      },
+      ...(actions.drop > 0
+        ? [{ label: counted("Drop from queue", actions.drop, several), onSelect: actions.doDrop }]
+        : []),
+    ],
+    [
+      actions.exclude === 0 && actions.stop > 0
+        ? { label: "Stop excluding", onSelect: actions.doStopExcluding }
+        : { label: actions.excludeLabel, disabled: actions.exclude === 0, onSelect: actions.doExclude },
+      {
+        label: counted("Remove from index", actions.remove, several),
+        danger: true,
+        disabled: actions.remove === 0,
+        onSelect: actions.doRemove,
+      },
+    ],
+  ];
+}

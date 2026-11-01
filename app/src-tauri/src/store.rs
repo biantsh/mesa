@@ -16,7 +16,7 @@ use crate::{
 };
 
 const CONFIG_ID: u32 = 3;
-const MIGRATIONS: &[&str] = &[SCHEMA, ADD_META, ADD_EMBEDDED_WITH, ADD_LOCATOR];
+const MIGRATIONS: &[&str] = &[SCHEMA, ADD_META, ADD_EMBEDDED_WITH, ADD_LOCATOR, ADD_EXCLUSIONS];
 
 const SCHEMA: &str = "
 CREATE TABLE dirs (
@@ -75,6 +75,7 @@ CREATE TABLE jobs (id INTEGER PRIMARY KEY, path TEXT NOT NULL);
 const ADD_META: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;";
 const ADD_EMBEDDED_WITH: &str = "ALTER TABLE files ADD COLUMN embedded_with INTEGER NOT NULL DEFAULT 0;";
 const ADD_LOCATOR: &str = "ALTER TABLE embeddings ADD COLUMN locator INTEGER NOT NULL DEFAULT 0;";
+const ADD_EXCLUSIONS: &str = "CREATE TABLE exclusions (path TEXT PRIMARY KEY) WITHOUT ROWID;";
 
 #[derive(Debug)]
 pub enum Error {
@@ -179,6 +180,24 @@ impl Store {
         Ok(tx.commit()?)
     }
 
+    pub fn load_exclusions(&self) -> Result<HashSet<PathBuf>> {
+        let mut statement = self.conn.prepare("SELECT path FROM exclusions")?;
+        let rows = statement.query_map([], |r| Ok(PathBuf::from(r.get::<_, String>(0)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn save_exclusions(&mut self, exclusions: &HashSet<PathBuf>) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM exclusions", [])?;
+        {
+            let mut insert = tx.prepare("INSERT INTO exclusions (path) VALUES (?1)")?;
+            for path in exclusions {
+                insert.execute(params![path.to_string_lossy()])?;
+            }
+        }
+        Ok(tx.commit()?)
+    }
+
     pub fn is_paused(&self) -> Result<bool> {
         let paused: Option<String> = self
             .conn
@@ -203,9 +222,37 @@ impl Store {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn add_jobs(&self, paths: &[PathBuf]) -> Result<Vec<i64>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut ids = Vec::with_capacity(paths.len());
+        {
+            let mut insert = tx.prepare_cached("INSERT INTO jobs (path) VALUES (?1)")?;
+            for path in paths {
+                insert.execute([path.to_string_lossy()])?;
+                ids.push(tx.last_insert_rowid());
+            }
+        }
+        tx.commit()?;
+        Ok(ids)
+    }
+
     pub fn finish_job(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM jobs WHERE id = ?1", [id])?;
         Ok(())
+    }
+
+    pub fn finish_jobs(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut delete = tx.prepare_cached("DELETE FROM jobs WHERE id = ?1")?;
+            for id in ids {
+                delete.execute([id])?;
+            }
+        }
+        Ok(tx.commit()?)
     }
 
     pub fn unfinished_jobs(&self) -> Result<Vec<(i64, PathBuf)>> {
@@ -301,13 +348,20 @@ impl Store {
             .collect())
     }
 
+    #[cfg(test)]
     pub fn remove_path(&mut self, path: &Path) -> Result<()> {
+        self.remove_paths(std::slice::from_ref(&path.to_path_buf()))
+    }
+
+    pub fn remove_paths(&mut self, paths: &[PathBuf]) -> Result<()> {
         let tx = self.conn.transaction()?;
-        if let Some(id) = find_dir(&tx, path)? {
-            tx.execute("DELETE FROM dirs WHERE id = ?1", [id])?;
-        }
-        if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
-            if let Some(dir) = find_dir(&tx, parent)? {
+        for path in paths {
+            if let Some(id) = find_dir(&tx, path)? {
+                tx.execute("DELETE FROM dirs WHERE id = ?1", [id])?;
+            }
+            if let (Some(parent), Some(name)) = (path.parent(), path.file_name())
+                && let Some(dir) = find_dir(&tx, parent)?
+            {
                 tx.execute(
                     "DELETE FROM files WHERE dir_id = ?1 AND name = ?2",
                     params![dir, name.to_string_lossy()],

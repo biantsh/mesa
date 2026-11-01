@@ -17,11 +17,11 @@
   box-shadow: var(--shadow-sm);
 }
 
-.primary:hover {
+.primary:hover:not(:disabled) {
   background: var(--color-primary-hover);
 }
 
-.primary:active {
+.primary:active:not(:disabled) {
   background: var(--color-primary-active);
 }
 
@@ -31,7 +31,7 @@
   color: var(--color-text);
 }
 
-.secondary:hover {
+.secondary:hover:not(:disabled) {
   background: var(--color-hover-bg);
 }
 
@@ -41,11 +41,11 @@
   box-shadow: var(--shadow-sm);
 }
 
-.danger:hover {
+.danger:hover:not(:disabled) {
   background: var(--color-danger-hover);
 }
 
-.danger:active {
+.danger:active:not(:disabled) {
   background: var(--color-danger-active);
 }
 
@@ -57,13 +57,19 @@
   color: var(--color-danger);
 }
 
-.dangerOutline:hover {
+.dangerOutline:hover:not(:disabled) {
   background: var(--color-danger);
   color: var(--color-on-danger);
 }
 
-.dangerOutline:active {
+.dangerOutline:active:not(:disabled) {
   border-color: var(--color-danger-active);
   background: var(--color-danger-active);
   color: var(--color-on-danger);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  box-shadow: none;
 }

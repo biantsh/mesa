@@ -1,15 +1,19 @@
 import { useEffect, useRef } from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import type { Crumb } from "../api";
+import type { ViewMode } from "../useViewMode";
+import { ViewToggle } from "./ViewToggle";
 import styles from "./NavBar.module.css";
 
 interface Props {
   crumbs: Crumb[];
   parent: string | null;
   onOpen: (path: string) => void;
+  view: ViewMode;
+  onViewChange: (view: ViewMode) => void;
 }
 
-export function NavBar({ crumbs, parent, onOpen }: Props) {
+export function NavBar({ crumbs, parent, onOpen, view, onViewChange }: Props) {
   const trail = useRef<HTMLOListElement>(null);
 
   useEffect(() => {
@@ -46,6 +50,7 @@ export function NavBar({ crumbs, parent, onOpen }: Props) {
           ))}
         </ol>
       </nav>
+      <ViewToggle view={view} onChange={onViewChange} />
     </div>
   );
 }

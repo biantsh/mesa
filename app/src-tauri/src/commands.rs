@@ -1,6 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     browse::{self, Listing},
@@ -26,6 +27,7 @@ pub async fn list_dir(path: String, index: State<'_, Index>) -> Result<Listing, 
         let state = index.state(Path::new(&entry.path));
         entry.index = state.status;
         entry.droppable = state.droppable;
+        entry.excluded_here = state.excluded_here;
     }
     Ok(listing)
 }
@@ -51,18 +53,61 @@ pub fn cancel_indexing(index: State<'_, Index>) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-pub fn add_to_index(path: String, index: State<'_, Index>) -> Result<(), String> {
-    index.set(Path::new(&path), true)
+pub fn add_to_index(paths: Vec<String>, completing: Option<String>, index: State<'_, Index>) -> Result<(), String> {
+    match completing {
+        Some(folder) => index.add_completing(&to_paths(paths), Path::new(&folder)),
+        None => index.set_many(&to_paths(paths), true),
+    }
 }
 
 #[tauri::command(async)]
-pub fn drop_from_queue(path: String, index: State<'_, Index>) -> Result<(), String> {
-    index.drop_job(Path::new(&path))
+pub fn drop_from_queue(paths: Vec<String>, index: State<'_, Index>) -> Result<(), String> {
+    index.drop_jobs(&to_paths(paths))
 }
 
 #[tauri::command(async)]
-pub fn remove_from_index(path: String, index: State<'_, Index>) -> Result<(), String> {
-    index.set(Path::new(&path), false)
+pub fn remove_from_index(paths: Vec<String>, index: State<'_, Index>) -> Result<(), String> {
+    index.set_many(&to_paths(paths), false)
+}
+
+#[tauri::command(async)]
+pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
+    if !browse::is_listed_file(Path::new(&path)) {
+        return Err("That isn't a file Mesa opens.".into());
+    }
+    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn show_in_folder(path: String, app: AppHandle) -> Result<(), String> {
+    if !Path::new(&path).exists() {
+        return Err("That isn't there any more.".into());
+    }
+    app.opener().reveal_item_in_dir(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn exclude_from_index(paths: Vec<String>, index: State<'_, Index>) -> Result<(), String> {
+    index.exclude_many(&to_paths(paths))
+}
+
+#[tauri::command(async)]
+pub fn stop_excluding(paths: Vec<String>, index: State<'_, Index>) -> Result<(), String> {
+    index.stop_excluding_many(&to_paths(paths))
+}
+
+#[tauri::command(async)]
+pub fn count_with_data(paths: Vec<String>, index: State<'_, Index>) -> usize {
+    index.count_with_data(&to_paths(paths))
+}
+
+#[tauri::command(async)]
+pub fn exclusion_count(index: State<'_, Index>) -> usize {
+    index.exclusion_count()
+}
+
+fn to_paths(paths: Vec<String>) -> Vec<PathBuf> {
+    paths.into_iter().map(PathBuf::from).collect()
 }
 
 #[tauri::command(async)]

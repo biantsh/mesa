@@ -54,6 +54,14 @@ impl ProgressState {
         Some(self.jobs.remove(position).id)
     }
 
+    pub fn roots_under(&self, path: &Path) -> Vec<PathBuf> {
+        self.jobs
+            .iter()
+            .filter(|job| job.root.starts_with(path))
+            .map(|job| job.root.clone())
+            .collect()
+    }
+
     pub fn is_job_root(&self, root: &Path) -> bool {
         self.jobs.iter().any(|job| job.root == root)
     }

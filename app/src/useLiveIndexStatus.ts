@@ -1,36 +1,37 @@
-import type { Dispatch, SetStateAction } from "react";
-import { api, type Listing } from "./api";
+import { useMemo, type Dispatch, type SetStateAction } from "react";
+import { api, type Entry, type IndexState, type Listing } from "./api";
 import { usePoll } from "./usePoll";
+
+const isUnfinished = (entry: Entry) => entry.index === "indexing" || entry.index === "paused";
+
+const sameState = (entry: Entry, state: IndexState) =>
+  entry.index === state.status && entry.droppable === state.droppable && entry.excludedHere === state.excludedHere;
 
 export function useLiveIndexStatus(
   listing: Listing | null,
   setListing: Dispatch<SetStateAction<Listing | null>>,
   refreshProgress: () => Promise<void>,
 ) {
-  const unfinished =
-    listing?.entries.some((e) => ["indexing", "paused"].includes(e.index)) ?? false;
+  const watched = useMemo(() => listing?.entries.filter(isUnfinished) ?? [], [listing]);
 
   usePoll(
     async () => {
       if (!listing) return;
-      const states = await api.indexStatuses(listing.entries.map((e) => e.path));
+      const states = await api.indexStatuses(watched.map((entry) => entry.path));
       await refreshProgress();
+      const stateOf = new Map(watched.map((entry, i) => [entry.path, states[i]]));
       setListing((current) => {
         if (current !== listing) return current;
-        const unchanged = current.entries.every(
-          (e, i) => e.index === states[i].status && e.droppable === states[i].droppable,
-        );
-        if (unchanged) return current;
-        return {
-          ...current,
-          entries: current.entries.map((e, i) => ({
-            ...e,
-            index: states[i].status,
-            droppable: states[i].droppable,
-          })),
-        };
+        let changed = false;
+        const entries = current.entries.map((entry) => {
+          const state = stateOf.get(entry.path);
+          if (!state || sameState(entry, state)) return entry;
+          changed = true;
+          return { ...entry, index: state.status, droppable: state.droppable, excludedHere: state.excludedHere };
+        });
+        return changed ? { ...current, entries } : current;
       });
     },
-    { active: unfinished },
+    { active: watched.length > 0 },
   );
 }

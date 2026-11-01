@@ -17,10 +17,15 @@ export function usePoll(
 
   useEffect(() => {
     if (!active) return;
+    let running = false;
     const run = async () => {
+      if (running || document.hidden) return;
+      running = true;
       try {
         await latest.current();
       } catch {
+      } finally {
+        running = false;
       }
     };
     if (immediately) run();

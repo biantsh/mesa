@@ -16,6 +16,7 @@
 }
 
 .tile {
+  scroll-margin: 12px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -70,15 +71,6 @@
   display: grid;
 }
 
-.folder {
-  color: var(--color-folder);
-}
-
-.drive,
-.file {
-  color: var(--color-file);
-}
-
 .badgeOnIcon {
   position: absolute;
   right: -6px;
@@ -108,26 +100,4 @@
 .unreadable .iconBox > svg,
 .unreadable .name {
   opacity: 0.5;
-}
-
-.empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 24px;
-  color: var(--color-text-muted);
-  text-align: center;
-}
-
-.empty p {
-  margin: 0;
-}
-
-.emptyTitle {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text);
 }

@@ -66,7 +66,7 @@ impl Resampler {
     }
 
     pub fn finish(&mut self, output: &mut Vec<f32>) {
-        self.buffer.extend(std::iter::repeat(0.0).take(self.reach as usize));
+        self.buffer.extend(std::iter::repeat_n(0.0, self.reach as usize));
         self.produce(output, true);
     }
 
