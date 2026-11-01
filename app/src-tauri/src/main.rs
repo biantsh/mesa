@@ -9,6 +9,7 @@ mod indexer;
 mod progress;
 mod store;
 mod thumbnail;
+mod unindexable;
 mod vectors;
 
 use tauri::Manager;
@@ -20,7 +21,9 @@ fn main() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let resources = app.path().resource_dir().ok();
-            let index = index::Index::open(&dir, embed::for_this_platform(&dir, resources.as_deref()))
+            let embedder = embed::for_this_platform(&dir, resources.as_deref());
+            embedder.warm_up();
+            let index = index::Index::open(&dir, embedder)
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             app.manage(index);
             Ok(())

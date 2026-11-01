@@ -16,6 +16,7 @@ use crate::{
     indexer,
     progress::{Progress, ProgressState},
     store::{self, Store},
+    unindexable,
 };
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -26,6 +27,7 @@ pub enum IndexStatus {
     Paused,
     Queued,
     Indexed,
+    Unindexable,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -104,7 +106,7 @@ impl Control {
 
 impl Shared {
     pub fn is_indexed(&self, path: &Path) -> bool {
-        effective(&lock(&self.rules), path)
+        !unindexable::is_unindexable(path) && effective(&lock(&self.rules), path)
     }
 
     pub fn set_paused(&self, store: &Store, paused: bool) -> store::Result<()> {
@@ -162,7 +164,9 @@ impl Index {
     }
 
     pub fn status(&self, path: &Path) -> IndexStatus {
-        if !self.shared.is_indexed(path) {
+        if unindexable::is_unindexable(path) {
+            IndexStatus::Unindexable
+        } else if !self.shared.is_indexed(path) {
             IndexStatus::NotIndexed
         } else if lock(&self.shared.pending).touches(path) {
             if self.shared.control.is_paused() {
@@ -192,6 +196,9 @@ impl Index {
     }
 
     pub fn set(&self, path: &Path, indexed: bool) -> Result<(), String> {
+        if indexed && unindexable::is_unindexable(path) {
+            return Err("That can't be indexed.".into());
+        }
         let mut store = lock(&self.shared.store);
         let mut rules = lock(&self.shared.rules).clone();
         set_rule(&mut rules, path, indexed);

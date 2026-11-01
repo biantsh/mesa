@@ -14,6 +14,7 @@ use crate::{
     embed::{Item, Outcome},
     index::{Job, Shared, lock},
     store::{ScannedDir, ScannedFile},
+    unindexable,
 };
 
 const BATCH_FILES: usize = 2000;
@@ -47,9 +48,6 @@ pub fn work(shared: &Shared, jobs: Receiver<Job>) {
             let _ = shared.set_paused(&store, false);
         }
         drop(store);
-        if !active {
-            shared.embedder.release();
-        }
     }
 }
 
@@ -72,6 +70,7 @@ fn count_files(shared: &Shared, ticket: u64, root: &Path) {
             subdirs
         });
     } else if root.is_file()
+        && shared.is_indexed(root)
         && root
             .file_name()
             .is_some_and(|name| browse::category_of(&name.to_string_lossy()).is_some())
@@ -126,7 +125,7 @@ fn walk(shared: &Shared, ticket: u64, root: &Path) -> bool {
             }
         });
     } else {
-        match scan_file(root) {
+        match scan_file(root).filter(|_| shared.is_indexed(root)) {
             Some(scan) => walker.add(scan),
             None => lock(&shared.pending).release(root),
         }
@@ -364,45 +363,13 @@ fn each_entry(dir: &Path, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -
         };
         if matches!(shown, Shown::Folder)
             && (item.file_type().map_or(true, |kind| kind.is_symlink())
-                || (is_called_like_the_operating_system(&name) && is_operating_system(&item.path())))
+                || (unindexable::could_be_unindexable(&name) && unindexable::is_unindexable(&item.path())))
         {
             continue;
         }
         visit(&item, name, shown);
     }
     Some(complete)
-}
-
-fn is_operating_system(path: &Path) -> bool {
-    #[cfg(windows)]
-    {
-        path.as_os_str().eq_ignore_ascii_case(windows_folder().as_os_str())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-fn is_called_like_the_operating_system(name: &str) -> bool {
-    #[cfg(windows)]
-    {
-        windows_folder()
-            .file_name()
-            .is_some_and(|called| called.eq_ignore_ascii_case(name))
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = name;
-        false
-    }
-}
-
-#[cfg(windows)]
-fn windows_folder() -> &'static PathBuf {
-    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    ROOT.get_or_init(|| std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from))
 }
 
 fn scan_dir(dir: &Path) -> Option<Found> {

@@ -235,7 +235,9 @@ impl<B: Backend> Embedder for Pipeline<B> {
     fn warm_up(&self) {
         let backend = self.backend.clone();
         let _ = thread::Builder::new().name("embedder-warm-up".into()).spawn(move || {
-            let _ = backend.start();
+            if let Err(e) = backend.start() {
+                eprintln!("Mesa: couldn't start the embedding model: {e}");
+            }
         });
     }
 

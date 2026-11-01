@@ -12,20 +12,17 @@ interface Badge {
   className: string;
 }
 
+const LOCK = { Icon: Lock, size: 12, strokeWidth: 2.4, className: styles.lock };
+
 const BADGES: Partial<Record<IndexStatus, Badge>> = {
   indexing: { label: "Indexing", Icon: LoaderCircle, size: 18, strokeWidth: 2.4, className: styles.indexing },
   queued: { label: "Queued", Icon: Clock, size: 18, strokeWidth: 2.2, className: styles.waiting },
   paused: { label: "Paused", Icon: CirclePause, size: 18, strokeWidth: 2.2, className: styles.paused },
   indexed: { label: "Indexed", Icon: CircleCheck, size: 20, className: styles.indexed },
+  unindexable: { label: "Can't be indexed", ...LOCK },
 };
 
-const LOCKED: Badge = {
-  label: "Can't be opened",
-  Icon: Lock,
-  size: 12,
-  strokeWidth: 2.4,
-  className: styles.lock,
-};
+const LOCKED: Badge = { label: "Can't be opened", ...LOCK };
 
 function badgeOf(entry: Entry): Badge | null {
   return entry.readable ? (BADGES[entry.index] ?? null) : LOCKED;
