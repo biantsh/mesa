@@ -2,7 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 
 export type Kind = "drive" | "folder" | "file";
 export type Category = "image" | "video" | "audio" | "document";
-export type IndexStatus = "notIndexed" | "indexing" | "indexed";
+export type IndexStatus = "notIndexed" | "indexing" | "paused" | "queued" | "indexed";
 
 export interface Entry {
   name: string;
@@ -12,6 +12,12 @@ export interface Entry {
   readable: boolean;
   hasContents: boolean;
   index: IndexStatus;
+  droppable: boolean;
+}
+
+export interface IndexState {
+  status: IndexStatus;
+  droppable: boolean;
 }
 
 export interface Crumb {
@@ -26,11 +32,26 @@ export interface Listing {
   entries: Entry[];
 }
 
+export interface Progress {
+  name: string;
+  queued: number;
+  counting: boolean;
+  found: number;
+  done: number;
+  total: number;
+  paused: boolean;
+}
+
 export const COMPUTER = "";
 
 export const api = {
   homeDir: () => invoke<string>("home_dir"),
   listDir: (path: string) => invoke<Listing>("list_dir", { path }),
+  indexStatuses: (paths: string[]) => invoke<IndexState[]>("index_statuses", { paths }),
+  indexProgress: () => invoke<Progress | null>("index_progress"),
+  setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),
+  cancelIndexing: () => invoke<void>("cancel_indexing"),
+  dropFromQueue: (path: string) => invoke<void>("drop_from_queue", { path }),
   addToIndex: (path: string) => invoke<void>("add_to_index", { path }),
   removeFromIndex: (path: string) => invoke<void>("remove_from_index", { path }),
   indexEverything: () => invoke<void>("index_everything"),

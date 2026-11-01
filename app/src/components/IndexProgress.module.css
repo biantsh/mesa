@@ -1,0 +1,107 @@
+.root {
+  flex: 1;
+  min-width: 0;
+  container-type: inline-size;
+  display: flex;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.label {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  font-weight: 600;
+  white-space: pre;
+}
+
+.fixed {
+  flex: none;
+}
+
+.name {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track {
+  width: 180px;
+  flex: 0 10 auto;
+  min-width: 32px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-border);
+}
+
+.fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-primary);
+  transition: width 400ms ease;
+}
+
+.paused .fill {
+  background: var(--color-text-disabled);
+}
+
+.indeterminate .fill {
+  width: 35%;
+  animation: sweep 1400ms ease-in-out infinite;
+}
+
+.count {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pausedTag {
+  display: block;
+  margin-right: 6px;
+}
+
+.figures {
+  display: grid;
+}
+
+.sizer,
+.text {
+  grid-area: 1 / 1;
+}
+
+.sizer {
+  visibility: hidden;
+}
+
+@container (max-width: 440px) {
+  .count {
+    display: none;
+  }
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(290%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indeterminate .fill {
+    animation: none;
+    transform: none;
+    width: 35%;
+  }
+}

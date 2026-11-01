@@ -77,7 +77,7 @@ function Tile({ entry, selected, onSelect, onOpen, onContextMenu }: TileProps) {
     <button
       type="button"
       className={cx(styles.tile, selected && styles.selected, !usable && styles.unreadable)}
-      title={status ? `${entry.name} — ${status}` : entry.name}
+      title={status ? `${entry.name} (${status})` : entry.name}
       aria-pressed={usable ? selected : undefined}
       aria-disabled={usable ? undefined : true}
       onClick={() => usable && onSelect(entry.path)}

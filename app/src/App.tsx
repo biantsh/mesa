@@ -7,6 +7,7 @@ import { ContextMenu, type MenuItem } from "./components/ContextMenu";
 import { FileGrid } from "./components/FileGrid";
 import { NavBar } from "./components/NavBar";
 import { TopBar } from "./components/TopBar";
+import { useLiveIndexStatus } from "./useLiveIndexStatus";
 import styles from "./App.module.css";
 
 interface MenuState {
@@ -20,8 +21,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [confirming, setConfirming] = useState<Confirmation | null>(null);
+  const [confirming, setConfirming] = useState<{ which: Confirmation; subject: string } | null>(null);
   const latestRequest = useRef(0);
+  const [stoppedAt, setStoppedAt] = useState(0);
+
+  useLiveIndexStatus(listing, setListing);
 
   const load = useCallback(async (path: string) => {
     const request = ++latestRequest.current;
@@ -85,24 +89,38 @@ export default function App() {
         disabled: entry.index !== "notIndexed",
         onSelect: () => changeIndex(() => api.addToIndex(entry.path)),
       },
+      ...(entry.droppable
+        ? [
+            {
+              label: "Drop from queue",
+              onSelect: () => {
+                setStoppedAt(Date.now());
+                changeIndex(() => api.dropFromQueue(entry.path));
+              },
+            },
+          ]
+        : []),
     ],
     [
       {
         label: "Remove from index",
         danger: true,
-        disabled: entry.index === "notIndexed",
+        disabled: entry.index !== "indexed",
         onSelect: () => changeIndex(() => api.removeFromIndex(entry.path)),
       },
     ],
   ];
 
-  const confirmation = confirming ? CONFIRMATIONS[confirming] : null;
+  const confirmation = confirming ? CONFIRMATIONS[confirming.which](confirming.subject) : null;
 
   return (
     <div className={styles.app}>
       <TopBar
-        onIndexAll={() => setConfirming("indexAll")}
-        onClearIndex={() => setConfirming("clearIndex")}
+        onIndexAll={() => setConfirming({ which: "indexAll", subject: "" })}
+        onClearIndex={() => setConfirming({ which: "clearIndex", subject: "" })}
+        onCancelIndexing={(subject) => setConfirming({ which: "cancelIndexing", subject })}
+        onError={setError}
+        stoppedAt={stoppedAt}
       />
 
       <main className={styles.explorer} aria-busy={loading}>
@@ -149,6 +167,7 @@ export default function App() {
         onCancel={() => setConfirming(null)}
         onConfirm={() => {
           setConfirming(null);
+          if (confirmation?.stopsIndexing) setStoppedAt(Date.now());
           if (confirmation) changeIndex(confirmation.run);
         }}
       >

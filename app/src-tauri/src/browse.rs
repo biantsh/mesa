@@ -46,6 +46,7 @@ pub struct Entry {
     pub readable: bool,
     pub has_contents: bool,
     pub index: IndexStatus,
+    pub droppable: bool,
 }
 
 impl Entry {
@@ -58,6 +59,7 @@ impl Entry {
             readable: true,
             has_contents: false,
             index: IndexStatus::NotIndexed,
+            droppable: false,
         }
     }
 
@@ -147,12 +149,12 @@ fn read_entries(dir: &Path) -> io::Result<Vec<Entry>> {
     Ok(entries)
 }
 
-enum Shown {
+pub enum Shown {
     Folder,
     File(Category),
 }
 
-fn classify(item: &fs::DirEntry) -> Option<(String, Shown)> {
+pub fn classify(item: &fs::DirEntry) -> Option<(String, Shown)> {
     let name = item.file_name().to_string_lossy().into_owned();
     if is_hidden(item, &name) {
         return None;
@@ -206,7 +208,7 @@ fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
     false
 }
 
-fn category_of(name: &str) -> Option<Category> {
+pub fn category_of(name: &str) -> Option<Category> {
     let extension = Path::new(name).extension()?.to_str()?;
     INDEXABLE
         .iter()
@@ -241,7 +243,7 @@ fn breadcrumbs(path: &str) -> Vec<Crumb> {
     crumbs
 }
 
-fn display_name(path: &Path) -> String {
+pub fn display_name(path: &Path) -> String {
     match path.file_name() {
         Some(name) => name.to_string_lossy().into_owned(),
         None => {

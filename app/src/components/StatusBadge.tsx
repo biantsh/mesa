@@ -1,35 +1,47 @@
-import { CircleCheck, Lock, LoaderCircle } from "lucide-react";
-import type { Entry } from "../api";
+import type { ComponentType } from "react";
+import { CircleCheck, CirclePause, Clock, Lock, LoaderCircle, type LucideProps } from "lucide-react";
+import type { Entry, IndexStatus } from "../api";
+import { cx } from "../cx";
 import styles from "./StatusBadge.module.css";
 
+interface Badge {
+  label: string;
+  Icon: ComponentType<LucideProps>;
+  size: number;
+  strokeWidth?: number;
+  className: string;
+}
+
+const BADGES: Partial<Record<IndexStatus, Badge>> = {
+  indexing: { label: "Indexing", Icon: LoaderCircle, size: 18, strokeWidth: 2.4, className: styles.indexing },
+  queued: { label: "Queued", Icon: Clock, size: 18, strokeWidth: 2.2, className: styles.waiting },
+  paused: { label: "Paused", Icon: CirclePause, size: 18, strokeWidth: 2.2, className: styles.paused },
+  indexed: { label: "Indexed", Icon: CircleCheck, size: 20, className: styles.indexed },
+};
+
+const LOCKED: Badge = {
+  label: "Can't be opened",
+  Icon: Lock,
+  size: 12,
+  strokeWidth: 2.4,
+  className: styles.lock,
+};
+
+function badgeOf(entry: Entry): Badge | null {
+  return entry.readable ? (BADGES[entry.index] ?? null) : LOCKED;
+}
+
 export function statusText(entry: Entry): string | null {
-  if (!entry.readable) return "Can't be opened";
-  if (entry.index === "indexed") return "Indexed";
-  if (entry.index === "indexing") return "Indexing";
-  return null;
+  return badgeOf(entry)?.label ?? null;
 }
 
 export function StatusBadge({ entry }: { entry: Entry }) {
-  const label = statusText(entry);
-  if (!label) return null;
-
-  if (!entry.readable) {
-    return (
-      <span className={`${styles.badge} ${styles.lock}`} role="img" aria-label={label}>
-        <Lock size={12} strokeWidth={2.4} />
-      </span>
-    );
-  }
-  if (entry.index === "indexing") {
-    return (
-      <span className={`${styles.badge} ${styles.indexing}`} role="img" aria-label={label}>
-        <LoaderCircle size={18} strokeWidth={2.4} />
-      </span>
-    );
-  }
+  const badge = badgeOf(entry);
+  if (!badge) return null;
+  const { Icon, label } = badge;
   return (
-    <span className={`${styles.badge} ${styles.indexed}`} role="img" aria-label={label}>
-      <CircleCheck size={20} />
+    <span className={cx(styles.badge, badge.className)} role="img" aria-label={label}>
+      <Icon size={badge.size} strokeWidth={badge.strokeWidth} />
     </span>
   );
 }

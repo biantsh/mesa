@@ -19,6 +19,11 @@
   animation: spin 900ms linear infinite;
 }
 
+.paused,
+.waiting {
+  color: var(--color-text-muted);
+}
+
 .lock {
   background: var(--color-surface);
   color: var(--color-lock);
