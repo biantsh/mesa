@@ -1,40 +1,159 @@
-import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { api, COMPUTER, errorText, type Entry, type Listing } from "./api";
+import { CONFIRMATIONS, type Confirmation } from "./confirmations";
+import { ConfirmDialog } from "./components/ConfirmDialog";
+import { ContextMenu, type MenuItem } from "./components/ContextMenu";
+import { FileGrid } from "./components/FileGrid";
+import { NavBar } from "./components/NavBar";
+import { TopBar } from "./components/TopBar";
+import styles from "./App.module.css";
+
+interface MenuState {
+  entry: Entry;
+  x: number;
+  y: number;
+}
 
 export default function App() {
-  const [name, setName] = useState("world");
-  const [greeting, setGreeting] = useState("");
-  const [ticks, setTicks] = useState<number[]>([]);
+  const [listing, setListing] = useState<Listing | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [confirming, setConfirming] = useState<Confirmation | null>(null);
+  const latestRequest = useRef(0);
 
-  async function sayHello() {
-    setGreeting(await invoke<string>("greet", { name }));
-  }
-
-  useEffect(() => {
-    const unlisten = listen<number>("tick", (e) => setTicks((t) => [...t, e.payload]));
-    return () => {
-      unlisten.then((fn) => fn());
-    };
+  const load = useCallback(async (path: string) => {
+    const request = ++latestRequest.current;
+    setLoading(true);
+    try {
+      const next = await api.listDir(path);
+      if (request !== latestRequest.current) return;
+      setListing(next);
+      setError(null);
+    } catch (e) {
+      if (request !== latestRequest.current) return;
+      setError(`Couldn't open this folder. ${errorText(e)}`);
+    } finally {
+      if (request === latestRequest.current) setLoading(false);
+    }
   }, []);
 
-  async function startCounting() {
-    setTicks([]);
-    await invoke("start_counting", { to: 5 });
-  }
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .homeDir()
+      .then((home) => {
+        if (!cancelled) load(home || COMPUTER);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(errorText(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [load]);
+
+  useEffect(() => {
+    const block = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener("contextmenu", block);
+    return () => window.removeEventListener("contextmenu", block);
+  }, []);
+
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  const changeIndex = useCallback(
+    async (action: () => Promise<void>) => {
+      try {
+        await action();
+        if (listing) await load(listing.path);
+      } catch (e) {
+        setError(`Couldn't update the index. ${errorText(e)}`);
+      }
+    },
+    [listing, load],
+  );
+
+  const openEntry = (entry: Entry) => {
+    if (entry.kind !== "file" && entry.readable) load(entry.path);
+  };
+
+  const menuGroups = (entry: Entry): MenuItem[][] => [
+    [
+      {
+        label: "Add to index",
+        disabled: entry.index !== "notIndexed",
+        onSelect: () => changeIndex(() => api.addToIndex(entry.path)),
+      },
+    ],
+    [
+      {
+        label: "Remove from index",
+        danger: true,
+        disabled: entry.index === "notIndexed",
+        onSelect: () => changeIndex(() => api.removeFromIndex(entry.path)),
+      },
+    ],
+  ];
+
+  const confirmation = confirming ? CONFIRMATIONS[confirming] : null;
 
   return (
-    <main style={{ fontFamily: "sans-serif", padding: 24 }}>
-      <h1>Hello Tauri</h1>
+    <div className={styles.app}>
+      <TopBar
+        onIndexAll={() => setConfirming("indexAll")}
+        onClearIndex={() => setConfirming("clearIndex")}
+      />
 
-      <h2>1. Command (React asks, Rust answers)</h2>
-      <input value={name} onChange={(e) => setName(e.target.value)} />
-      <button onClick={sayHello}>Greet</button>
-      <p>{greeting}</p>
+      <main className={styles.explorer} aria-busy={loading}>
+        <NavBar crumbs={listing?.breadcrumbs ?? []} parent={listing?.parent ?? null} onOpen={load} />
 
-      <h2>2. Event (Rust pushes, React listens)</h2>
-      <button onClick={startCounting}>Count to 5 in Rust</button>
-      <p>Received: {ticks.join(", ")}</p>
-    </main>
+        {error && (
+          <div className={styles.error} role="alert">
+            <span>{error}</span>
+            <button
+              type="button"
+              className={styles.dismiss}
+              onClick={() => setError(null)}
+              aria-label="Dismiss"
+            >
+              <X size={16} aria-hidden />
+            </button>
+          </div>
+        )}
+
+        <FileGrid
+          key={listing?.path ?? ""}
+          entries={listing?.entries ?? []}
+          loading={loading}
+          onOpen={openEntry}
+          onContextMenu={(entry, x, y) => setMenu({ entry, x, y })}
+        />
+      </main>
+
+      {menu && (
+        <ContextMenu
+          key={`${menu.entry.path}:${menu.x}:${menu.y}`}
+          x={menu.x}
+          y={menu.y}
+          groups={menuGroups(menu.entry)}
+          onClose={closeMenu}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmation !== null}
+        title={confirmation?.title ?? ""}
+        confirmLabel={confirmation?.confirmLabel ?? ""}
+        danger={confirmation?.danger}
+        onCancel={() => setConfirming(null)}
+        onConfirm={() => {
+          setConfirming(null);
+          if (confirmation) changeIndex(confirmation.run);
+        }}
+      >
+        {confirmation?.message.map((paragraph) => <p key={paragraph}>{paragraph}</p>)}
+      </ConfirmDialog>
+    </div>
   );
 }

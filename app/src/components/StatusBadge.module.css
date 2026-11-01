@@ -1,0 +1,32 @@
+.badge {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+}
+
+.indexed svg {
+  fill: var(--color-primary);
+  stroke: var(--color-on-primary);
+}
+
+.indexing {
+  color: var(--color-primary);
+}
+
+.indexing svg {
+  animation: spin 900ms linear infinite;
+}
+
+.lock {
+  background: var(--color-surface);
+  color: var(--color-lock);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

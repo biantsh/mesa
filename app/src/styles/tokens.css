@@ -1,0 +1,49 @@
+:root {
+  color-scheme: light;
+
+  --color-primary: #2478c8;
+  --color-primary-hover: #1f6ab0;
+  --color-primary-active: #195a97;
+  --color-on-primary: #ffffff;
+
+  --color-bg: #f4f6f9;
+  --color-surface: #ffffff;
+  --color-border: #dfe4ea;
+  --color-border-strong: #c9d1da;
+
+  --color-text: #17212b;
+  --color-text-muted: #5a6978;
+  --color-text-disabled: #9aa6b2;
+
+  --color-danger: #c62f45;
+  --color-danger-hover: #b32a3e;
+  --color-danger-active: #9e2436;
+  --color-on-danger: #ffffff;
+  --color-danger-bg: rgba(198, 47, 69, 0.09);
+  --color-danger-border: rgba(198, 47, 69, 0.28);
+  --color-lock: #d64545;
+
+  --color-folder: #f6c244;
+  --color-folder-paper: #fffaf0;
+  --color-file: #6f8093;
+  --color-preview-bg: #eef1f5;
+
+  --color-hover-bg: rgba(36, 120, 200, 0.08);
+  --color-selected-bg: rgba(36, 120, 200, 0.17);
+  --color-selected-border: rgba(36, 120, 200, 0.45);
+  --color-overlay: rgba(15, 23, 32, 0.42);
+  --color-scrollbar: rgba(23, 33, 43, 0.22);
+  --color-scrollbar-hover: rgba(23, 33, 43, 0.38);
+  --color-scrollbar-active: rgba(23, 33, 43, 0.52);
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 32, 0.08);
+  --shadow-menu: 0 10px 30px rgba(15, 23, 32, 0.18), 0 2px 6px rgba(15, 23, 32, 0.08);
+  --shadow-dialog: 0 24px 60px rgba(15, 23, 32, 0.28);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --font: "Inter Variable", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+}

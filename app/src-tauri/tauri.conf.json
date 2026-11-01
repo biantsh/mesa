@@ -10,7 +10,17 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Mesa", "width": 600, "height": 500 }],
+    "windows": [
+      {
+        "title": "Mesa",
+        "width": 1080,
+        "height": 630,
+        "minWidth": 640,
+        "minHeight": 480,
+        "center": true,
+        "theme": "Light"
+      }
+    ],
     "security": { "csp": null }
   },
   "bundle": {

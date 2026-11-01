@@ -1,0 +1,133 @@
+.grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+  overflow-y: auto;
+  scrollbar-gutter: stable both-edges;
+  transition: opacity 120ms ease;
+}
+
+.loading {
+  opacity: 0.55;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: center;
+  cursor: default;
+}
+
+.tile:not(.unreadable):hover {
+  background: var(--color-hover-bg);
+}
+
+.tile.selected {
+  background: var(--color-selected-bg);
+  border-color: var(--color-selected-border);
+}
+
+.preview {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 84px;
+}
+
+.thumb {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 4px);
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--color-preview-bg);
+  opacity: 0;
+}
+
+.loaded {
+  opacity: 1;
+}
+
+.contain {
+  object-fit: contain;
+}
+
+.iconBox {
+  position: relative;
+  display: grid;
+}
+
+.folder {
+  color: var(--color-folder);
+}
+
+.drive,
+.file {
+  color: var(--color-file);
+}
+
+.badgeOnIcon {
+  position: absolute;
+  right: -6px;
+  bottom: -2px;
+  display: flex;
+}
+
+.badgeOnPreview {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+}
+
+.name {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 400;
+  min-height: 2.8em;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.unreadable .iconBox > svg,
+.unreadable .name {
+  opacity: 0.5;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 24px;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.empty p {
+  margin: 0;
+}
+
+.emptyTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}

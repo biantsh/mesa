@@ -1,0 +1,51 @@
+.dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-dialog);
+}
+
+.dialog[open] {
+  animation: pop 140ms ease-out;
+}
+
+.dialog::backdrop {
+  background: var(--color-overlay);
+}
+
+.content {
+  padding: 24px;
+}
+
+.title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.body {
+  min-height: 121px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.body p {
+  margin: 0 0 8px;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}
