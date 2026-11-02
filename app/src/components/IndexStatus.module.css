@@ -6,8 +6,13 @@
   height: 36px;
 }
 
+.slot {
+  pointer-events: none;
+}
+
 .progress,
 .empty {
+  pointer-events: auto;
   animation: arrive 220ms ease-out backwards;
 }
 

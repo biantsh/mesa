@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cx } from "../cx";
 import styles from "./ContextMenu.module.css";
 
@@ -67,7 +68,7 @@ export function ContextMenu({ x, y, groups, onClose }: Props) {
     items[(current + step + items.length) % items.length].focus();
   };
 
-  return (
+  return createPortal(
     <div
       ref={menu}
       className={styles.menu}
@@ -96,6 +97,7 @@ export function ContextMenu({ x, y, groups, onClose }: Props) {
           ))}
         </div>
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }

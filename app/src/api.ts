@@ -64,6 +64,28 @@ export interface Settings {
   gpuAcceleration: boolean;
 }
 
+export interface SearchHit {
+  path: string;
+  name: string;
+  folder: string;
+  category: Category;
+  modified: number;
+  size: number;
+  score: number;
+}
+
+export interface SearchPage {
+  id: number;
+  hits: SearchHit[];
+  more: boolean;
+}
+
+export interface SearchFilter {
+  category: Category | null;
+  from: number | null;
+  to: number | null;
+}
+
 export const COMPUTER = "";
 
 export type ModelStatus =
@@ -80,6 +102,8 @@ export const api = {
   indexStatuses: (paths: string[]) => invoke<IndexState[]>("index_statuses", { paths }),
   indexProgress: () => invoke<Progress | null>("index_progress"),
   indexOverview: () => invoke<Overview>("index_overview"),
+  search: (query: string, filter: SearchFilter) => invoke<SearchPage>("search", { query, ...filter }),
+  searchMore: (id: number) => invoke<SearchPage>("search_more", { id }),
   setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),
   cancelIndexing: () => invoke<void>("cancel_indexing"),
   dropFromQueue: (paths: string[]) => invoke<void>("drop_from_queue", { paths }),
@@ -87,6 +111,7 @@ export const api = {
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
   openProjectPage: () => invoke<void>("open_project_page"),
   openFile: (path: string) => invoke<void>("open_file", { path }),
+  copyFiles: (paths: string[]) => invoke<void>("copy_files", { paths }),
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   excludeFromIndex: (paths: string[]) => invoke<void>("exclude_from_index", { paths }),
   stopExcluding: (paths: string[]) => invoke<void>("stop_excluding", { paths }),

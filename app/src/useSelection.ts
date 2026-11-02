@@ -36,7 +36,7 @@ export function useSelection(folder: string, entries: Entry[], enabled = true) {
   return { selected, select, clear };
 }
 
-function isForSomethingElse(target: EventTarget | null): boolean {
+export function isForSomethingElse(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
     (target.isContentEditable || target.closest("input, textarea, select, dialog, [role='menu']") !== null)

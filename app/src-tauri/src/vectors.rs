@@ -15,6 +15,8 @@ const MAGIC: &[u8; 8] = b"MESAVEC\0";
 const VERSION: u32 = 1;
 const F16: u32 = 1;
 pub type Record = [u8; RECORD_BYTES];
+const RUN_SLOTS: u64 = 4096;
+const MAX_GAP_SLOTS: u64 = 16;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Located {
@@ -92,6 +94,34 @@ impl VectorFile {
         self.file.sync_data()
     }
 
+    pub fn read_each(&mut self, slots: &[u64], visit: &mut dyn FnMut(u64, &Record)) -> io::Result<()> {
+        debug_assert!(
+            slots.windows(2).all(|pair| pair[0] < pair[1]),
+            "the slots are in ascending order"
+        );
+        let mut buffer = Vec::new();
+        let mut start = 0;
+        while start < slots.len() {
+            let first = slots[start];
+            let mut end = start + 1;
+            while end < slots.len() && slots[end] - slots[end - 1] <= MAX_GAP_SLOTS && slots[end] - first < RUN_SLOTS {
+                end += 1;
+            }
+            let count = (slots[end - 1] - first + 1) as usize;
+            buffer.resize(count * RECORD_BYTES, 0);
+            self.file
+                .seek(SeekFrom::Start(HEADER_BYTES + first * RECORD_BYTES as u64))?;
+            self.file.read_exact(&mut buffer)?;
+            for &slot in &slots[start..end] {
+                let at = (slot - first) as usize * RECORD_BYTES;
+                let record = <&Record>::try_from(&buffer[at..at + RECORD_BYTES]).expect("a record is this long");
+                visit(slot, record);
+            }
+            start = end;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn read(&mut self, slot: u64) -> io::Result<Vec<f16>> {
         let mut bytes = [0u8; RECORD_BYTES];
@@ -130,6 +160,22 @@ pub fn record_from(output: &[f32]) -> Option<Record> {
         out.copy_from_slice(&f16::from_f32(v / length).to_le_bytes());
     }
     Some(record)
+}
+
+pub fn to_floats(record: &Record) -> [f32; DIMS] {
+    let mut values = [0f32; DIMS];
+    for (value, bytes) in values.iter_mut().zip(record.chunks_exact(ELEMENT_BYTES)) {
+        *value = f16::from_le_bytes([bytes[0], bytes[1]]).to_f32();
+    }
+    values
+}
+
+pub fn similarity(query: &[f32; DIMS], record: &Record) -> f32 {
+    query
+        .iter()
+        .zip(record.chunks_exact(ELEMENT_BYTES))
+        .map(|(q, bytes)| q * f16::from_le_bytes([bytes[0], bytes[1]]).to_f32())
+        .sum()
 }
 
 #[cfg(test)]

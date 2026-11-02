@@ -7,12 +7,12 @@ use std::{
     path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
 
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params, params_from_iter, types::Value};
 
 use crate::{
     browse::Category,
     embed,
-    vectors::{DIMS, Located, Record, VectorFile},
+    vectors::{DIMS, Located, Record, VectorFile, similarity, to_floats},
 };
 
 const CONFIG_ID: u32 = 3;
@@ -119,6 +119,24 @@ pub struct ScannedFile {
     pub modified_ms: i64,
     pub size: u64,
     pub vectors: Vec<Located>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Filter {
+    pub category: Option<Category>,
+    pub from_ms: Option<i64>,
+    pub to_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub file: i64,
+    pub path: PathBuf,
+    pub folder: String,
+    pub category: Category,
+    pub modified_ms: i64,
+    pub size: u64,
+    pub score: f32,
 }
 
 pub struct ScannedDir {
@@ -382,6 +400,89 @@ impl Store {
     pub fn file_count(&self) -> Result<u64> {
         Ok(self.conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?)
     }
+
+    pub fn rank(&mut self, query: &Record, filter: Filter) -> Result<Vec<(i64, f32)>> {
+        let mut sql = String::from(
+            "SELECT e.slot, e.file_id FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?",
+        );
+        let mut values: Vec<Value> = vec![i64::from(CONFIG_ID).into()];
+        if let Some(category) = filter.category {
+            sql.push_str(" AND f.category = ?");
+            values.push(category_code(category).into());
+        }
+        if let Some(from) = filter.from_ms {
+            sql.push_str(" AND f.modified_ms >= ?");
+            values.push(from.into());
+        }
+        if let Some(to) = filter.to_ms {
+            sql.push_str(" AND f.modified_ms < ?");
+            values.push(to.into());
+        }
+        let mut candidates: Vec<(u64, i64)> = {
+            let mut statement = self.conn.prepare(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |r| {
+                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)?))
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        candidates.sort_unstable();
+        let slots: Vec<u64> = candidates.iter().map(|(slot, _)| *slot).collect();
+
+        let query = to_floats(query);
+        let mut closest: HashMap<i64, f32> = HashMap::new();
+        let mut next = 0;
+        self.vectors.read_each(&slots, &mut |slot, record| {
+            let (expected, file) = candidates[next];
+            debug_assert_eq!(slot, expected);
+            next += 1;
+            let score = similarity(&query, record);
+            closest
+                .entry(file)
+                .and_modify(|best| *best = best.max(score))
+                .or_insert(score);
+        })?;
+
+        let mut ranked: Vec<(i64, f32)> = closest.into_iter().collect();
+        ranked.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        Ok(ranked)
+    }
+
+    pub fn hits(&self, ranked: &[(i64, f32)]) -> Result<Vec<Hit>> {
+        let mut folders: HashMap<i64, PathBuf> = HashMap::new();
+        let mut hits = Vec::with_capacity(ranked.len());
+        for &(file, score) in ranked {
+            let stored: Option<(i64, String, i64, i64, i64)> = self
+                .conn
+                .prepare_cached("SELECT dir_id, name, category, modified_ms, size FROM files WHERE id = ?1")?
+                .query_row([file], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+                .optional()?;
+            let Some((dir_id, name, category, modified_ms, size)) = stored else {
+                continue;
+            };
+            let Some(category) = category_from_code(category) else {
+                continue;
+            };
+            if !folders.contains_key(&dir_id) {
+                folders.insert(dir_id, dir_path(&self.conn, dir_id)?);
+            }
+            let dir = &folders[&dir_id];
+            let folder = dir
+                .file_name()
+                .unwrap_or(dir.as_os_str())
+                .to_string_lossy()
+                .into_owned();
+            hits.push(Hit {
+                file,
+                path: dir.join(&name),
+                folder,
+                category,
+                modified_ms,
+                size: size as u64,
+                score,
+            });
+        }
+        Ok(hits)
+    }
 }
 
 #[cfg(test)]
@@ -467,6 +568,28 @@ fn category_code(category: Category) -> i64 {
         Category::Audio => 2,
         Category::Document => 3,
     }
+}
+
+fn category_from_code(code: i64) -> Option<Category> {
+    Some(match code {
+        0 => Category::Image,
+        1 => Category::Video,
+        2 => Category::Audio,
+        3 => Category::Document,
+        _ => return None,
+    })
+}
+
+fn dir_path(conn: &Connection, mut id: i64) -> Result<PathBuf> {
+    let mut names = Vec::new();
+    while id != 0 {
+        let (parent, name): (i64, String) = conn
+            .prepare_cached("SELECT parent_id, name FROM dirs WHERE id = ?1")?
+            .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        names.push(name);
+        id = parent;
+    }
+    Ok(names.into_iter().rev().collect())
 }
 
 fn segments(path: &Path) -> Vec<String> {
@@ -766,5 +889,107 @@ mod tests {
             conn.execute_batch("PRAGMA user_version = 99").unwrap();
         }
         assert!(Store::open(&dir).is_err());
+    }
+
+    fn pointing(x: f32, y: f32) -> Record {
+        let mut output = vec![0.0; DIMS];
+        output[0] = x;
+        output[1] = y;
+        vectors::record_from(&output).unwrap()
+    }
+
+    fn found_as(name: &str, category: Category, modified_ms: i64, vector: Record) -> ScannedFile {
+        ScannedFile {
+            category,
+            vectors: vec![Located {
+                locator: 0,
+                record: vector,
+            }],
+            ..file(name, modified_ms)
+        }
+    }
+
+    fn names(hits: &[Hit]) -> Vec<&str> {
+        hits.iter()
+            .map(|hit| hit.path.file_name().unwrap().to_str().unwrap())
+            .collect()
+    }
+
+    const EVERYTHING: Filter = Filter {
+        category: None,
+        from_ms: None,
+        to_ms: None,
+    };
+
+    fn top(store: &mut Store, query: &Record, filter: Filter, limit: usize) -> Result<Vec<Hit>> {
+        let ranked = store.rank(query, filter)?;
+        store.hits(&ranked[..limit.min(ranked.len())])
+    }
+
+    #[test]
+    fn search_orders_by_similarity() {
+        let mut store = Store::open(&temp_dir("search-order")).unwrap();
+        write(
+            &mut store,
+            &[
+                scan(
+                    "a",
+                    vec![found_as("opposite.jpg", Category::Image, 1, pointing(-1.0, 0.0))],
+                ),
+                scan(
+                    "b",
+                    vec![
+                        found_as("same.jpg", Category::Image, 1, pointing(1.0, 0.0)),
+                        found_as("unrelated.jpg", Category::Image, 1, pointing(0.0, 1.0)),
+                        found_as("near.jpg", Category::Image, 1, pointing(3.0, 1.0)),
+                    ],
+                ),
+            ],
+        );
+        let hits = top(&mut store, &pointing(1.0, 0.0), EVERYTHING, 10).unwrap();
+        assert_eq!(names(&hits), ["same.jpg", "near.jpg", "unrelated.jpg", "opposite.jpg"]);
+        assert!(
+            (hits[0].score - 1.0).abs() < 1e-2 && (hits[3].score + 1.0).abs() < 1e-2,
+            "{hits:?}"
+        );
+        assert_eq!(hits[0].path, folder("b").join("same.jpg"));
+        assert_eq!((hits[0].folder.as_str(), hits[3].folder.as_str()), ("b", "a"));
+        assert_eq!(
+            (hits[0].category, hits[0].modified_ms, hits[0].size),
+            (Category::Image, 1, 100)
+        );
+    }
+
+    #[test]
+    fn multi_vector_file_listed_once() {
+        let mut store = Store::open(&temp_dir("search-parts")).unwrap();
+        let song = ScannedFile {
+            category: Category::Audio,
+            vectors: vec![
+                Located {
+                    locator: 0,
+                    record: pointing(0.0, 1.0),
+                },
+                Located {
+                    locator: 25_000,
+                    record: pointing(1.0, 0.0),
+                },
+                Located {
+                    locator: 50_000,
+                    record: pointing(1.0, 1.0),
+                },
+            ],
+            ..file("song.mp3", 1)
+        };
+        write(
+            &mut store,
+            &[scan(
+                "a",
+                vec![song, found_as("between.jpg", Category::Image, 1, pointing(5.0, 1.0))],
+            )],
+        );
+        let hits = top(&mut store, &pointing(1.0, 0.0), EVERYTHING, 10).unwrap();
+        assert_eq!(names(&hits), ["song.mp3", "between.jpg"]);
+        assert!((hits[0].score - 1.0).abs() < 1e-2, "{}", hits[0].score);
     }
 }

@@ -20,9 +20,24 @@ use crate::{
     indexer,
     progress::{Progress, ProgressState},
     rules::{self, Rules, effective, gaps_of, inclusions_of},
-    store::{self, Store},
+    store::{self, Filter, Hit, Store},
     unindexable,
 };
+
+pub const SEARCH_RESULTS: usize = 24;
+
+struct Ranking {
+    id: u64,
+    ranked: Vec<(i64, f32)>,
+    next: Mutex<usize>,
+}
+
+#[derive(Debug)]
+pub struct Page {
+    pub id: u64,
+    pub hits: Vec<Hit>,
+    pub more: bool,
+}
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +168,8 @@ pub struct Index {
     queue: Mutex<Sender<Job>>,
     dir: PathBuf,
     counted: Mutex<Option<Counted>>,
+    latest_search: Mutex<Option<Arc<Ranking>>>,
+    search_ids: AtomicU64,
 }
 
 #[derive(Clone, Copy)]
@@ -213,6 +230,8 @@ impl Index {
             queue: Mutex::new(sender),
             dir: dir.to_owned(),
             counted: Mutex::new(None),
+            latest_search: Mutex::new(None),
+            search_ids: AtomicU64::new(0),
         };
         for (id, root) in unfinished {
             index.queue_job(id, root);
@@ -427,6 +446,7 @@ impl Index {
 
     pub fn clear(&self) -> Result<(), String> {
         *lock(&self.counted) = None;
+        *lock(&self.latest_search) = None;
         let mut store = lock(&self.shared.store);
         lock(&self.shared.rules).clear();
         lock(&self.shared.gaps).clear();
@@ -435,6 +455,67 @@ impl Index {
         lock(&self.shared.progress).cancel_all();
         self.shared.control.set_paused(false);
         Ok(store.reset()?)
+    }
+
+    pub fn search(&self, text: &str, filter: Filter) -> Result<Page, String> {
+        self.search_where(text, filter, |path| path.is_file())
+    }
+
+    fn search_where(&self, text: &str, filter: Filter, exists: impl Fn(&Path) -> bool) -> Result<Page, String> {
+        if text.trim().is_empty() {
+            return Ok(Page {
+                id: 0,
+                hits: Vec::new(),
+                more: false,
+            });
+        }
+        let query = self.shared.embedder.embed_query(text).map_err(|e| e.to_string())?;
+        let ranked = lock(&self.shared.store).rank(&query, filter)?;
+        let id = self.search_ids.fetch_add(1, Ordering::SeqCst) + 1;
+        let ranking = Arc::new(Ranking {
+            id,
+            ranked,
+            next: Mutex::new(0),
+        });
+        *lock(&self.latest_search) = Some(ranking.clone());
+        self.next_page(&ranking, exists)
+    }
+
+    pub fn search_more(&self, id: u64) -> Result<Page, String> {
+        let ranking = lock(&self.latest_search).clone().filter(|ranking| ranking.id == id);
+        let ranking = ranking.ok_or_else(|| "That search has been replaced by a newer one.".to_owned())?;
+        self.next_page(&ranking, |path| path.is_file())
+    }
+
+    fn next_page(&self, ranking: &Ranking, exists: impl Fn(&Path) -> bool) -> Result<Page, String> {
+        let mut next = lock(&ranking.next);
+        let mut found = Vec::with_capacity(SEARCH_RESULTS);
+        while *next < ranking.ranked.len() && found.len() < SEARCH_RESULTS {
+            let end = (*next + SEARCH_RESULTS).min(ranking.ranked.len());
+            let batch = &ranking.ranked[*next..end];
+            let hits = lock(&self.shared.store).hits(batch)?;
+            let mut used = batch.len();
+            for hit in hits {
+                if !exists(&hit.path) {
+                    continue;
+                }
+                let file = hit.file;
+                found.push(hit);
+                if found.len() == SEARCH_RESULTS {
+                    used = batch
+                        .iter()
+                        .position(|(id, _)| *id == file)
+                        .map_or(batch.len(), |at| at + 1);
+                    break;
+                }
+            }
+            *next += used;
+        }
+        Ok(Page {
+            id: ranking.id,
+            hits: found,
+            more: *next < ranking.ranked.len(),
+        })
     }
 
     pub fn gpu(&self) -> Option<String> {
@@ -642,9 +723,13 @@ mod tests {
 
     impl Fixture {
         fn new(tag: &str) -> Self {
+            Self::with_embedder(tag, embedder())
+        }
+
+        fn with_embedder(tag: &str, embedder: Arc<dyn Embedder>) -> Self {
             let (root, photos) = make_photos(tag);
             let data = root.join("data");
-            let index = Index::open(&data, embedder()).unwrap();
+            let index = Index::open(&data, embedder).unwrap();
             Self {
                 data,
                 photos,

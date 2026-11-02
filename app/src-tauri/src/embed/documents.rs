@@ -146,6 +146,10 @@ fn send_passages(
     Ok(())
 }
 
+pub fn query_prompt(text: &str) -> String {
+    format!("task: search result | query: {text}")
+}
+
 fn titled(path: &Path, passage: &str) -> String {
     let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
     format!("title: {name} | text: {passage}")

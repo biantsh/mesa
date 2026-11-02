@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{index::IndexStatus, indexer};
 
@@ -27,7 +27,7 @@ pub enum Kind {
     File,
 }
 
-#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum Category {
     Image,

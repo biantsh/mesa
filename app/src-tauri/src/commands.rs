@@ -5,11 +5,12 @@ use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
-    browse::{self, Listing},
+    browse::{self, Category, Listing},
     embed::ModelStatus,
-    index::{Index, IndexState, Stats},
+    index::{Index, IndexState, Page, Stats},
     progress::Progress,
     settings::{Settings, SettingsStore},
+    store::{Filter, Hit},
 };
 
 #[tauri::command]
@@ -64,6 +65,75 @@ pub fn index_overview(index: State<'_, Index>) -> Overview {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchHit {
+    pub path: String,
+    pub name: String,
+    pub folder: String,
+    pub category: Category,
+    pub modified: i64,
+    pub size: u64,
+    pub score: f32,
+}
+
+impl From<Hit> for SearchHit {
+    fn from(hit: Hit) -> Self {
+        Self {
+            name: hit
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: hit.path.to_string_lossy().into_owned(),
+            folder: hit.folder,
+            category: hit.category,
+            modified: hit.modified_ms,
+            size: hit.size,
+            score: hit.score,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPage {
+    pub id: u64,
+    pub hits: Vec<SearchHit>,
+    pub more: bool,
+}
+
+impl From<Page> for SearchPage {
+    fn from(page: Page) -> Self {
+        Self {
+            id: page.id,
+            hits: page.hits.into_iter().map(SearchHit::from).collect(),
+            more: page.more,
+        }
+    }
+}
+
+#[tauri::command(async)]
+pub fn search(
+    query: String,
+    category: Option<Category>,
+    from: Option<i64>,
+    to: Option<i64>,
+    index: State<'_, Index>,
+) -> Result<SearchPage, String> {
+    let filter = Filter {
+        category,
+        from_ms: from,
+        to_ms: to,
+    };
+    Ok(index.search(&query, filter)?.into())
+}
+
+#[tauri::command(async)]
+pub fn search_more(id: u64, index: State<'_, Index>) -> Result<SearchPage, String> {
+    Ok(index.search_more(id)?.into())
+}
+
 #[tauri::command(async)]
 pub fn set_indexing_paused(paused: bool, index: State<'_, Index>) -> Result<(), String> {
     index.set_paused(paused)
@@ -98,6 +168,27 @@ pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
         return Err("That isn't a file Mesa opens.".into());
     }
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn copy_files(paths: Vec<String>, window: tauri::WebviewWindow) -> Result<(), String> {
+    let files: Vec<PathBuf> = to_paths(paths)
+        .into_iter()
+        .filter(|path| browse::is_listed_file(path))
+        .collect();
+    if files.is_empty() {
+        return Err("Those files aren't there any more.".into());
+    }
+    #[cfg(windows)]
+    {
+        let owner = window.hwnd().map_err(|e| e.to_string())?;
+        crate::clipboard::copy_files(owner, &files)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        Err("Copying files isn't supported on this platform yet.".into())
+    }
 }
 
 const PROJECT_URL: &str = "https://github.com/biantsh/mesa";

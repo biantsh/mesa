@@ -1,16 +1,33 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { ArrowRight, ArrowUpRight, Database, Image as ImageIcon, Search, Settings, X } from "lucide-react";
-import { api, type ModelStatus, type Overview } from "../api";
-import { describeIndexTotals } from "../format";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { ArrowRight, ArrowUpRight, Database, Search, Settings, X } from "lucide-react";
+import { api, errorText, type Category, type ModelStatus, type Overview, type SearchHit, type SearchPage } from "../api";
+import { CATEGORY_LABELS, describeIndexTotals } from "../format";
 import { Button } from "../components/Button";
+import { ContextMenu } from "../components/ContextMenu";
 import { IndexStatus } from "../components/IndexStatus";
+import { CATEGORY_ICONS, ResultGrid } from "../components/ResultGrid";
 import { cx } from "../cx";
 import logo from "../logo";
+import { resultMenuGroups, type ResultActions } from "../resultMenu";
+import { isForSomethingElse } from "../useSelection";
+import { useForwardedWheel } from "../useForwardedWheel";
+import { useResultSelection } from "../useResultSelection";
 import styles from "./HomeScreen.module.css";
 
 const LICENSE = "MIT License";
 const TOP_GAP_PX = 20;
 const BOTTOM_GAP_PX = 16;
+const CLEAR_RESULTS_MS = 500;
+const SEARCH_DELAY_MS = 150;
+
+const NO_HITS: SearchHit[] = [];
+const NO_BATCHES: SearchHit[][] = [];
+
+interface Found {
+  id: number;
+  batches: SearchHit[][];
+  more: boolean;
+}
 
 export interface HomeHandle {
   restoreFocus: () => boolean;
@@ -40,16 +57,26 @@ function placeholder(model: ModelStatus | null): string {
   }
 }
 
+interface Period {
+  label: string;
+  start: number;
+  end: number;
+}
+
+function year(number: number): Period {
+  return { label: String(number), start: new Date(number, 0, 1).getTime(), end: new Date(number + 1, 0, 1).getTime() };
+}
+
 interface Understood {
-  fileType: string | null;
-  from: string | null;
-  to: string | null;
+  fileType: Category | null;
+  from: Period | null;
+  to: Period | null;
   text: string;
 }
 
 function understand(query: string): Understood {
   if (query.trim() === "") return { fileType: null, from: null, to: null, text: "" };
-  return { fileType: "Image", from: "Apr 2023", to: "Jul 2023", text: query };
+  return { fileType: "image", from: year(2021), to: year(2026), text: query };
 }
 
 function Token({ icon, ghost, children }: { icon?: ReactNode; ghost?: boolean; children: ReactNode }) {
@@ -62,39 +89,40 @@ function Token({ icon, ghost, children }: { icon?: ReactNode; ghost?: boolean; c
 }
 
 function Understanding({ understood }: { understood: Understood }) {
+  const TypeIcon = understood.fileType && CATEGORY_ICONS[understood.fileType];
   return (
     <div className={styles.parsed}>
-                  <div>
-                    <div className={styles.parsedLabel}>File type</div>
-                    <div className={styles.parsedValue}>
-                      {understood.fileType ? (
-                        <Token icon={<ImageIcon size={12} aria-hidden />}>{understood.fileType}</Token>
-                      ) : (
-                        <Token ghost>Any type</Token>
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className={styles.parsedLabel}>Date range</div>
-                    <div className={styles.parsedValue}>
-                      {understood.from && understood.to ? (
-                        <>
-                          <Token>{understood.from}</Token>
-                          <ArrowRight className={styles.range} size={12} aria-hidden />
-                          <Token>{understood.to}</Token>
-                        </>
-                      ) : (
-                        <Token ghost>Any time</Token>
-                      )}
-                    </div>
-                  </div>
-                  <div>
-                    <div className={styles.parsedLabel}>Query</div>
-                    <div className={cx(styles.parsedValue, styles.parsedText, !understood.text && styles.parsedNone)}>
-                      {understood.text || "Anything"}
-                    </div>
-                  </div>
-                </div>
+      <div>
+        <div className={styles.parsedLabel}>File type</div>
+        <div className={styles.parsedValue}>
+          {understood.fileType && TypeIcon ? (
+            <Token icon={<TypeIcon size={12} aria-hidden />}>{CATEGORY_LABELS[understood.fileType]}</Token>
+          ) : (
+            <Token ghost>Any type</Token>
+          )}
+        </div>
+      </div>
+      <div>
+        <div className={styles.parsedLabel}>Date range</div>
+        <div className={styles.parsedValue}>
+          {understood.from && understood.to ? (
+            <>
+              <Token>{understood.from.label}</Token>
+              <ArrowRight className={styles.range} size={12} aria-hidden />
+              <Token>{understood.to.label}</Token>
+            </>
+          ) : (
+            <Token ghost>Any time</Token>
+          )}
+        </div>
+      </div>
+      <div>
+        <div className={styles.parsedLabel}>Query</div>
+        <div className={cx(styles.parsedValue, styles.parsedText, !understood.text && styles.parsedNone)}>
+          {understood.text || "Anything"}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -104,6 +132,8 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const input = useRef<HTMLInputElement>(null);
   const home = useRef<HTMLElement>(null);
   const search = useRef<HTMLDivElement>(null);
+  const resultsPane = useRef<HTMLDivElement>(null);
+  const forwardWheel = useForwardedWheel(resultsPane);
   const actions = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
   const [attention, setAttention] = useState(0);
@@ -114,6 +144,103 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const dim = focused && !results;
   const engaged = focused || results;
   const refuse = useCallback(() => setAttention((count) => count + 1), []);
+  const text = understood.text.trim();
+  const fileType = understood.fileType;
+  const fromMs = understood.from?.start ?? null;
+  const toMs = understood.to?.end ?? null;
+  const searchable = model?.state === "ready" || model?.state === "preparing";
+  const [found, setFound] = useState<Found | { error: string } | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [searching, setSearching] = useState(false);
+  useEffect(() => {
+    if (!results) {
+      setSearching(false);
+      const timer = setTimeout(() => setFound(null), CLEAR_RESULTS_MS);
+      return () => clearTimeout(timer);
+    }
+    if (!searchable) return;
+    let current = true;
+    setSearching(true);
+    const timer = setTimeout(() => {
+      api
+        .search(text, { category: fileType, from: fromMs, to: toMs })
+        .then(
+          (page: SearchPage) => current && setFound({ id: page.id, batches: [page.hits], more: page.more }),
+          (error) => current && setFound({ error: errorText(error) }),
+        )
+        .finally(() => current && setSearching(false));
+    }, SEARCH_DELAY_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [results, searchable, text, fileType, fromMs, toMs]);
+  const batches = found && "batches" in found ? found.batches : NO_BATCHES;
+  const hits = useMemo(() => (batches.length === 0 ? NO_HITS : batches.flat()), [batches]);
+  const viewMore = useCallback(() => {
+    if (!found || !("id" in found) || loadingMore) return;
+    const { id } = found;
+    setLoadingMore(true);
+    api
+      .searchMore(id)
+      .then((page) =>
+        setFound((now) =>
+          now && "id" in now && now.id === id ? { ...now, batches: [...now.batches, page.hits], more: page.more } : now,
+        ),
+      )
+      .catch(() => {})
+      .finally(() => setLoadingMore(false));
+  }, [found, loadingMore]);
+
+  const [barAway, setBarAway] = useState(false);
+  const stowed = results && barAway;
+  useEffect(() => setBarAway(false), [query]);
+  useEffect(() => {
+    if (focused) setBarAway(false);
+  }, [focused]);
+  const { selected, select, selectAll, clear: clearSelection } = useResultSelection(hits);
+  const selectedHits = useMemo(() => hits.filter((hit) => selected.has(hit.path)), [hits, selected]);
+  const resultActions = useMemo<ResultActions>(
+    () => ({
+      open: (hit) => void api.openFile(hit.path).catch(() => {}),
+      showInFolder: (hit) => void api.showInFolder(hit.path).catch(() => {}),
+      copyFiles: (files) => api.copyFiles(files.map((file) => file.path)),
+      copyPaths: async (files) => {
+        await navigator.clipboard.writeText(files.map((file) => file.path).join("\n"));
+      },
+    }),
+    [],
+  );
+  const [menu, setMenu] = useState<{ hits: SearchHit[]; x: number; y: number } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const openMenu = (hit: SearchHit, x: number, y: number) => {
+    const inSelection = selected.has(hit.path);
+    if (!inSelection) select(hit.path, false);
+    setMenu({ hits: inSelection ? selectedHits : [hit], x, y });
+  };
+  useEffect(() => {
+    if (!results) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key !== "a" && key !== "c") return;
+      if (isForSomethingElse(e.target) || home.current?.closest("[inert]")) return;
+      if (key === "a") {
+        e.preventDefault();
+        if (e.shiftKey) clearSelection();
+        else selectAll();
+      } else if (selectedHits.length > 0) {
+        e.preventDefault();
+        void (e.shiftKey ? resultActions.copyPaths(selectedHits) : resultActions.copyFiles(selectedHits)).catch(() => {});
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [results, selectedHits, selectAll, clearSelection, resultActions]);
+  let message: string | null = null;
+  if (!searchable) message = model?.state === "failed" ? "Search isn’t available." : "Waiting for the search model to load…";
+  else if (found && "error" in found) message = `The search failed: ${found.error}`;
+  else if (found && !searching && hits.length === 0) message = "Nothing found.";
   const setFocus = useCallback((next: boolean) => {
     setFocused(next);
     onFocusChange(next && query.trim() === "");
@@ -172,6 +299,8 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       const gap = parseFloat(getComputedStyle(row.current).columnGap) || 0;
       const lift = Math.max(0, block.top - around.top - TOP_GAP_PX);
       const set = (name: string, px: number) => root.style.setProperty(name, `${px}px`);
+      set("--top-gap", TOP_GAP_PX);
+      set("--bottom-gap", BOTTOM_GAP_PX);
       set("--lift", lift);
       set("--drop", Math.max(0, around.bottom - BOTTOM_GAP_PX - block.bottom));
       set("--actions-width", actions.current.offsetWidth + gap);
@@ -190,13 +319,46 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   return (
     <main
       ref={home}
-      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results)}
+      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed)}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+        if (!target.closest(`button, input, label, [role='menu'], [data-selection-bar], .${styles.tagsBox}`)) clearSelection();
+      }}
     >
       <div className={styles.scrim} aria-hidden />
+      <ResultGrid
+        paneRef={resultsPane}
+        batches={batches}
+        searchId={found && "id" in found ? found.id : 0}
+        more={found !== null && "more" in found && found.more}
+        loadingMore={loadingMore}
+        onMore={viewMore}
+        shown={results}
+        busy={searching}
+        message={message}
+        progress={overview?.progress != null}
+        selected={selected}
+        selection={selectedHits}
+        actions={resultActions}
+        onClearSelection={clearSelection}
+        onSelect={select}
+        onOpen={resultActions.open}
+        onContextMenu={openMenu}
+        away={stowed}
+        onAway={setBarAway}
+      />
       <img className={styles.logo} src={logo} alt="Mesa" draggable={false} />
-      <div ref={search} className={styles.search}>
+      <div
+        ref={search}
+        className={styles.search}
+        onWheel={(e) => {
+          if (results) forwardWheel(e);
+        }}
+      >
         <div ref={row} className={styles.row}>
           <div className={styles.spot} aria-hidden />
+          <div className={styles.halo} aria-hidden />
+          <div className={styles.separator} aria-hidden />
           <label
             className={styles.field}
             onMouseDown={
@@ -275,6 +437,15 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           </button>
         </span>
       </footer>
+      {menu && (
+        <ContextMenu
+          key={`${menu.hits[0].path}:${menu.x}:${menu.y}`}
+          x={menu.x}
+          y={menu.y}
+          groups={resultMenuGroups(menu.hits, resultActions)}
+          onClose={closeMenu}
+        />
+      )}
     </main>
   );
 }

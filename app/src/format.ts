@@ -1,4 +1,4 @@
-import type { Entry } from "./api";
+import type { Category, Entry } from "./api";
 
 const UNITS = ["B", "KB", "MB", "GB", "TB"];
 const decimals = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
@@ -19,12 +19,18 @@ export function formatModified(milliseconds: number): string {
   return when.format(new Date(milliseconds));
 }
 
-const CATEGORIES = { image: "Image", video: "Video", audio: "Audio", document: "Document" } as const;
+const month = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
+
+export function formatMonth(milliseconds: number): string {
+  return month.format(new Date(milliseconds));
+}
+
+export const CATEGORY_LABELS: Record<Category, string> = { image: "Image", video: "Video", audio: "Audio", document: "Document" };
 
 export function typeLabel(entry: Entry): string {
   if (entry.kind === "drive") return "Drive";
   if (entry.kind === "folder") return "Folder";
-  return entry.category ? CATEGORIES[entry.category] : "File";
+  return entry.category ? CATEGORY_LABELS[entry.category] : "File";
 }
 
 const counts = new Intl.NumberFormat();

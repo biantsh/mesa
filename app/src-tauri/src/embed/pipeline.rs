@@ -10,12 +10,12 @@ use std::{
 use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
 
 use super::{
-    Device, Embedder, Error, Item, ModelStatus, Outcome,
+    Device, Embedder, Error, Item, ModelStatus, Outcome, documents,
     prepare::{self, Prepared, Unit},
 };
 use crate::{
     index::lock,
-    vectors::{self, Located},
+    vectors::{self, Located, Record},
 };
 
 pub trait Backend: Send + Sync + 'static {
@@ -246,6 +246,17 @@ impl<B: Backend> Embedder for Pipeline<B> {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    fn embed_query(&self, text: &str) -> Result<Record, Error> {
+        let prompt = Prepared::Text(documents::query_prompt(text.trim()));
+        let output = self
+            .backend
+            .embed_batch(&[&prompt])?
+            .pop()
+            .ok_or_else(|| Error("the model gave no answer for the query".into()))?
+            .map_err(Error)?;
+        vectors::record_from(&output).ok_or_else(|| Error("the model gave no usable vector for the query".into()))
     }
 
     fn warm_up(&self) {

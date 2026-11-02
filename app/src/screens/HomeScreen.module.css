@@ -1,11 +1,13 @@
 .home {
   --focus-time: 360ms;
   --focus-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --widen-time: var(--focus-time);
   --field-height: 44px;
   --tags-height: 61px;
   --gap: 4px;
   --tags-gap: var(--gap);
-  --open-height: calc(var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px);
+  --reach: 3px;
+  --open-height: calc(var(--field-height) + var(--tags-height) + 4px);
   --focus-edge: var(--color-text-disabled);
   --focus-glow: color-mix(in srgb, var(--color-text) 12%, transparent);
   --wave-edge: transparent;
@@ -171,6 +173,12 @@
   align-items: center;
   gap: 6px;
   width: min(720px, 100%);
+  pointer-events: none;
+}
+
+.field,
+.actions {
+  pointer-events: auto;
 }
 
 .row {
@@ -187,20 +195,160 @@
   transform: translateY(calc(-1 * var(--lift, 0px)));
 }
 
+.stowed .row {
+  transform: translateY(calc(-1 * (var(--lift, 0px) + var(--top-gap, 20px) + var(--open-height) + 28px)));
+}
+
+.field,
+.tagsBox {
+  --slab-top: 0px;
+  --slab-right: 0px;
+  --slab-bottom: 0px;
+  --slab-top-radius: var(--radius-md);
+  --slab-bottom-radius: var(--radius-md);
+  --slab-edge: var(--color-border-strong);
+  --merge-time: var(--focus-time);
+  --merge-delay: 0ms;
+  --merge-ease: var(--focus-ease);
+}
+
+.field::before,
+.field::after,
+.tagsBox::before,
+.tagsBox::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--slab-top);
+  right: var(--slab-right);
+  bottom: var(--slab-bottom);
+  border-radius: var(--slab-top-radius) var(--slab-top-radius) var(--slab-bottom-radius) var(--slab-bottom-radius);
+  transition:
+    top var(--merge-time) var(--merge-ease) var(--merge-delay),
+    right var(--focus-time) var(--focus-ease),
+    bottom var(--merge-time) var(--merge-ease) var(--merge-delay),
+    border-radius var(--merge-time) var(--focus-ease) var(--merge-delay),
+    background-color 120ms ease;
+}
+
+.field::before,
+.tagsBox::before {
+  z-index: 1;
+  background-color: var(--slab-edge);
+}
+
+.field::after,
+.tagsBox::after {
+  z-index: 2;
+  box-sizing: border-box;
+  border: 2px solid transparent;
+  background-color: var(--color-surface);
+  background-clip: padding-box;
+}
+
+.wide .field,
+.wide .tagsBox {
+  --slab-edge: var(--focus-edge);
+  --merge-time: calc(var(--focus-time) * 0.75);
+  --merge-delay: calc(var(--focus-time) * 0.25);
+}
+
+.wide .field {
+  --slab-bottom: calc(-1 * var(--reach));
+  --slab-bottom-radius: 0px;
+}
+
+.wide .tagsBox {
+  top: var(--field-height);
+  --slab-top: calc(-1 * var(--reach));
+  --slab-top-radius: 0px;
+}
+
+.results.wide {
+  --widen-time: calc(var(--focus-time) * 0.6);
+}
+
+.results.wide .field,
+.results.wide .tagsBox {
+  --merge-ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.engaged:not(.wide) .field,
+.engaged:not(.wide) .tagsBox {
+  --merge-time: calc(var(--focus-time) * 0.6);
+  --merge-delay: calc(var(--focus-time) * 0.08);
+}
+
+.engaged:not(.wide) .field {
+  --narrow-delay: calc(var(--focus-time) * 0.25);
+}
+
+.home:not(.engaged) .tagsBox {
+  --slab-top: calc(-1 * (var(--field-height) + var(--tags-gap)));
+  --slab-right: var(--actions-width, 0px);
+  --slab-bottom: calc(var(--tags-height) + 4px + var(--tags-gap));
+}
+
+.halo {
+  position: absolute;
+  z-index: 0;
+  left: 0;
+  top: 0;
+  right: var(--actions-width, 0px);
+  height: var(--field-height);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 3px var(--focus-glow), var(--shadow-field);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    right var(--widen-time) var(--focus-ease),
+    height var(--focus-time) var(--focus-ease),
+    opacity calc(var(--focus-time) * 0.2) ease-out;
+}
+
+.wide .halo {
+  right: 0;
+  height: var(--open-height);
+  opacity: 1;
+  transition:
+    right var(--widen-time) var(--focus-ease),
+    height var(--focus-time) var(--focus-ease),
+    opacity calc(var(--focus-time) * 0.6) ease calc(var(--focus-time) * 0.3);
+}
+
+.separator {
+  position: absolute;
+  z-index: 3;
+  left: 15px;
+  right: 15px;
+  top: var(--field-height);
+  height: 1px;
+  background: var(--color-border-strong);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity calc(var(--focus-time) * 0.12) ease-out;
+}
+
+.wide .separator {
+  opacity: 1;
+  transition: opacity calc(var(--focus-time) * 0.5) ease calc(var(--focus-time) * 0.35);
+}
+
+.results.wide .separator {
+  transition: opacity calc(var(--focus-time) * 0.42) ease calc(var(--focus-time) * 0.55);
+}
+
 .field {
   flex: 1;
   min-width: 0;
   position: relative;
-  z-index: 1;
   display: flex;
   flex-direction: column;
-  border: 2px solid var(--color-border-strong);
+  padding: 2px;
   border-radius: var(--radius-md);
-  background: var(--color-surface);
   box-shadow: var(--shadow-field);
   transition:
-    margin-right var(--focus-time) var(--focus-ease),
-    border-color 120ms ease,
+    margin-right var(--widen-time) var(--focus-ease) var(--narrow-delay, 0ms),
     box-shadow 120ms ease;
 }
 
@@ -209,19 +357,21 @@
 }
 
 .field:hover {
-  border-color: var(--color-text-disabled);
+  --slab-edge: var(--color-text-disabled);
   box-shadow: var(--shadow-field-hover);
 }
 
-.field:focus-within {
-  border-color: var(--focus-edge);
-  box-shadow: 0 0 0 3px var(--focus-glow), var(--shadow-field);
+.wide .field,
+.wide .field:hover {
+  --slab-edge: var(--focus-edge);
+  box-shadow: none;
 }
 
 .searchIcon {
   position: absolute;
-  left: 12px;
-  top: calc((var(--field-height) - 4px) / 2);
+  z-index: 3;
+  left: 14px;
+  top: calc(var(--field-height) / 2);
   transform: translateY(-50%);
   color: var(--color-text-faint);
   pointer-events: none;
@@ -229,6 +379,8 @@
 
 .input {
   flex: none;
+  position: relative;
+  z-index: 3;
   min-width: 0;
   height: calc(var(--field-height) - 4px);
   padding: 0 40px 0 42px;
@@ -256,43 +408,55 @@
   top: calc(var(--field-height) + var(--tags-gap));
   height: calc(var(--tags-height) + 4px);
   box-sizing: border-box;
-  overflow: hidden;
-  border: 2px solid var(--color-border-strong);
+  padding: 2px;
   border-radius: var(--radius-md);
-  background: var(--color-surface);
-  box-shadow: var(--shadow-field);
-  opacity: 0;
-  transform: translateY(-8px);
+  visibility: hidden;
   pointer-events: none;
   transition:
-    opacity calc(var(--focus-time) * 0.4) ease-out,
-    transform var(--focus-time) var(--focus-ease),
-    border-color 120ms ease,
+    top var(--merge-time) var(--merge-ease) var(--merge-delay),
+    visibility 0s linear var(--focus-time),
     box-shadow 120ms ease;
 }
 
 .engaged .tagsBox {
-  opacity: 1;
-  transform: none;
+  visibility: visible;
   pointer-events: auto;
   transition:
-    opacity calc(var(--focus-time) * 0.6) ease calc(var(--focus-time) * 0.15),
-    transform var(--focus-time) var(--focus-ease),
-    border-color 120ms ease,
+    top var(--merge-time) var(--merge-ease) var(--merge-delay),
+    visibility 0s,
     box-shadow 120ms ease;
 }
 
-.engaged .tagsBox:hover {
-  border-color: var(--color-text-disabled);
+.engaged:not(.wide) .tagsBox {
+  box-shadow: var(--shadow-field);
+}
+
+.engaged:not(.wide) .tagsBox:hover {
+  --slab-edge: var(--color-text-disabled);
   box-shadow: var(--shadow-field-hover);
 }
 
 .parsed {
+  position: relative;
+  z-index: 3;
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 4fr) minmax(0, 6fr);
   column-gap: 16px;
   margin: 0 12px;
   padding: 10px 0 9px;
+  opacity: 0;
+  clip-path: inset(0 0 calc(100% + 6px) 0);
+  transition:
+    opacity calc(var(--focus-time) * 0.4) ease-out,
+    clip-path var(--merge-time) var(--focus-ease) var(--merge-delay);
+}
+
+.engaged .parsed {
+  opacity: 1;
+  clip-path: inset(0 0 0 0);
+  transition:
+    opacity calc(var(--focus-time) * 0.6) ease calc(var(--focus-time) * 0.15),
+    clip-path var(--merge-time) var(--focus-ease) var(--merge-delay);
 }
 
 .parsedLabel {
@@ -366,8 +530,9 @@
 
 .clear {
   position: absolute;
-  right: 8px;
-  top: calc((var(--field-height) - 4px) / 2);
+  z-index: 3;
+  right: 10px;
+  top: calc(var(--field-height) / 2);
   transform: translateY(-50%);
   display: grid;
   place-items: center;
@@ -396,6 +561,7 @@
 
 .actions {
   flex: none;
+  z-index: 0;
   display: flex;
   align-items: stretch;
   gap: var(--gap);
@@ -412,6 +578,10 @@
   transition:
     opacity calc(var(--focus-time) * 0.4) ease,
     transform calc(var(--focus-time) * 0.5) ease-in;
+}
+
+.home:not(.engaged) .actions {
+  z-index: 4;
 }
 
 .status {

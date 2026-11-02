@@ -1,24 +1,22 @@
 import type { Entry } from "../api";
 import { statusText } from "./StatusBadge";
 
-interface Handlers {
+interface Handlers<T> {
   selected: boolean;
   onSelect: (path: string, toggle: boolean) => void;
-  onOpen: (entry: Entry) => void;
-  onContextMenu: (entry: Entry, x: number, y: number) => void;
+  onOpen: (item: T) => void;
+  onContextMenu: (item: T, x: number, y: number) => void;
 }
 
-export function entryProps(entry: Entry, { selected, onSelect, onOpen, onContextMenu }: Handlers) {
-  const usable = entry.readable;
-  const status = statusText(entry);
+export function pressProps<T extends { path: string }>(item: T, usable: boolean, title: string, { selected, onSelect, onOpen, onContextMenu }: Handlers<T>) {
   return {
-    title: status ? `${entry.name} (${status})` : entry.name,
+    title,
     "aria-pressed": usable ? selected : undefined,
     "aria-disabled": usable ? undefined : true,
-    onClick: (e: React.MouseEvent) => usable && onSelect(entry.path, e.ctrlKey || e.metaKey),
-    onDoubleClick: () => usable && onOpen(entry),
+    onClick: (e: React.MouseEvent) => usable && onSelect(item.path, e.ctrlKey || e.metaKey),
+    onDoubleClick: () => usable && onOpen(item),
     onKeyDown: (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && usable) onOpen(entry);
+      if (e.key === "Enter" && usable) onOpen(item);
     },
     onContextMenu: (e: React.MouseEvent<HTMLElement>) => {
       e.preventDefault();
@@ -27,10 +25,15 @@ export function entryProps(entry: Entry, { selected, onSelect, onOpen, onContext
       const rect = e.currentTarget.getBoundingClientRect();
       const fromKeyboard = e.clientX === 0 && e.clientY === 0;
       onContextMenu(
-        entry,
+        item,
         fromKeyboard ? rect.left + rect.width / 2 : e.clientX,
         fromKeyboard ? rect.top + rect.height / 2 : e.clientY,
       );
     },
   };
+}
+
+export function entryProps(entry: Entry, handlers: Handlers<Entry>) {
+  const status = statusText(entry);
+  return pressProps(entry, entry.readable, status ? `${entry.name} (${status})` : entry.name, handlers);
 }

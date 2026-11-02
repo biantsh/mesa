@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::vectors::Located;
+use crate::vectors::{Located, Record};
 
 pub use llama::Locations;
 pub use model::ModelStatus;
@@ -63,6 +63,10 @@ pub trait Embedder: Send + Sync {
         stop: &(dyn Fn() -> bool + Sync),
         done: &mut dyn FnMut(usize, Outcome),
     ) -> Result<(), Error>;
+
+    fn embed_query(&self, _text: &str) -> Result<Record, Error> {
+        Err(Error("Searching isn't available.".into()))
+    }
 
     fn warm_up(&self) {}
 
@@ -133,6 +137,10 @@ pub mod testing {
                 );
             }
             Ok(())
+        }
+
+        fn embed_query(&self, _: &str) -> Result<Record, Error> {
+            Ok(crate::vectors::random_record())
         }
     }
 }

@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod browse;
+mod clipboard;
 mod commands;
 mod crawl;
 mod embed;
@@ -57,6 +58,8 @@ fn main() {
             commands::index_statuses,
             commands::index_progress,
             commands::index_overview,
+            commands::search,
+            commands::search_more,
             commands::set_indexing_paused,
             commands::cancel_indexing,
             commands::add_to_index,
@@ -67,6 +70,7 @@ fn main() {
             commands::count_with_data,
             commands::exclusion_count,
             commands::open_file,
+            commands::copy_files,
             commands::open_project_page,
             commands::show_in_folder,
             commands::index_everything,

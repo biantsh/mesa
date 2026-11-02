@@ -1,4 +1,4 @@
-use super::{audio, picture, prepare::Prepared, resample::MODEL_RATE};
+use super::{audio, documents, picture, prepare::Prepared, resample::MODEL_RATE};
 
 const PICTURE_SIDE: u32 = 528;
 const PASSAGE_CHARS: usize = 1500;
@@ -11,7 +11,7 @@ pub fn batches() -> Vec<Vec<Prepared>> {
 fn texts() -> Vec<Prepared> {
     let sentence = "The quarterly report lists the sales and the costs of every office, and the menu of the café. ";
     let passage: String = sentence.chars().cycle().take(PASSAGE_CHARS).collect();
-    let query = Prepared::Text("task: search result | query: a photo of a dog".into());
+    let query = Prepared::Text(documents::query_prompt("a photo of a dog"));
     let passages = (1..=8).map(|n| Prepared::Text(format!("title: file{n}.txt | text: {passage}")));
     std::iter::once(query).chain(passages).collect()
 }
