@@ -1,18 +1,27 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { ArrowUpRight, Database, Search, Settings } from "lucide-react";
 import { api, type ModelStatus, type Overview } from "../api";
 import { describeIndexTotals } from "../format";
 import { Button } from "../components/Button";
 import { IndexStatus } from "../components/IndexStatus";
+import { cx } from "../cx";
 import logo from "../logo";
 import styles from "./HomeScreen.module.css";
 
 const LICENSE = "MIT License";
+const TOP_GAP_PX = 20;
+const BOTTOM_GAP_PX = 16;
+
+export interface HomeHandle {
+  restoreFocus: () => boolean;
+}
 
 interface Props {
+  ref?: Ref<HomeHandle>;
   overview: Overview | null;
   model: ModelStatus | null;
   onRetryModel: () => void;
+  onFocusChange: (focused: boolean) => void;
   onOpenIndex: () => void;
   onOpenSettings: () => void;
 }
@@ -31,27 +40,75 @@ function placeholder(model: ModelStatus | null): string {
   }
 }
 
-export function HomeScreen({ overview, model, onRetryModel, onOpenIndex, onOpenSettings }: Props) {
+export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings }: Props) {
   const blocked = overview?.empty === true;
   const modelFailed = model?.state === "failed";
   const input = useRef<HTMLInputElement>(null);
+  const home = useRef<HTMLElement>(null);
+  const search = useRef<HTMLDivElement>(null);
+  const actions = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
   const [attention, setAttention] = useState(0);
+  const [focused, setFocused] = useState(false);
   const refuse = useCallback(() => setAttention((count) => count + 1), []);
+  const setFocus = useCallback((next: boolean) => {
+    setFocused(next);
+    onFocusChange(next);
+  }, [onFocusChange]);
+  const away = useRef(false);
+  useImperativeHandle(ref, () => ({
+    restoreFocus() {
+      if (!away.current) return false;
+      away.current = false;
+      if (!input.current || input.current.readOnly) return false;
+      input.current.focus({ preventScroll: true });
+      return true;
+    },
+  }));
+  const openIndexFromProgress = useCallback(() => {
+    away.current = focused;
+    onOpenIndex();
+  }, [focused, onOpenIndex]);
   useEffect(() => {
-    if (blocked) input.current?.blur();
-  }, [blocked]);
+    if (!blocked) return;
+    away.current = false;
+    input.current?.blur();
+    setFocus(false);
+  }, [blocked, setFocus]);
+
+  useLayoutEffect(() => {
+    const root = home.current;
+    if (!root) return;
+    const measure = () => {
+      if (!search.current || !actions.current || !row.current) return;
+      const around = root.getBoundingClientRect();
+      const block = search.current.getBoundingClientRect();
+      const gap = parseFloat(getComputedStyle(row.current).columnGap) || 0;
+      root.style.setProperty("--lift", `${Math.max(0, block.top - around.top - TOP_GAP_PX)}px`);
+      root.style.setProperty("--drop", `${Math.max(0, around.bottom - BOTTOM_GAP_PX - block.bottom)}px`);
+      root.style.setProperty("--actions-width", `${actions.current.offsetWidth + gap}px`);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    observer.observe(actions.current!);
+    return () => observer.disconnect();
+  }, []);
 
   return (
-    <main className={styles.home}>
+    <main ref={home} className={cx(styles.home, focused && styles.focused)}>
+      <div className={styles.scrim} aria-hidden />
       <img className={styles.logo} src={logo} alt="Mesa" draggable={false} />
-      <div className={styles.search}>
-        <div className={styles.row}>
+      <div ref={search} className={styles.search}>
+        <div ref={row} className={styles.row}>
           <label
             className={styles.field}
             onMouseDown={
               modelFailed
                 ? (e) => { e.preventDefault(); onRetryModel(); }
-                : blocked ? (e) => { e.preventDefault(); refuse(); } : undefined
+                : blocked
+                  ? (e) => { e.preventDefault(); refuse(); }
+                  : (e) => { if (e.target !== input.current) e.preventDefault(); }
             }
             onClick={blocked || modelFailed ? (e) => e.preventDefault() : undefined}
           >
@@ -66,26 +123,35 @@ export function HomeScreen({ overview, model, onRetryModel, onOpenIndex, onOpenS
               readOnly={blocked}
               aria-disabled={blocked || undefined}
               tabIndex={blocked ? -1 : undefined}
-              onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : undefined}
+              onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : () => setFocus(true)}
+              onBlur={() => { if (document.hasFocus() && !away.current) setFocus(false); }}
+              onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }}
               spellCheck={false}
               autoComplete="off"
             />
+            <div className={styles.extra} aria-hidden>
+              <div className={styles.tags} />
+            </div>
           </label>
-          <Button variant="primary" className={styles.indexButton} onClick={onOpenIndex}>
-            <Database size={16} aria-hidden />
-            Index
-          </Button>
-          <Button
-            variant="neutral"
-            className={styles.iconOnly}
-            onClick={onOpenSettings}
-            title="Settings"
-            aria-label="Settings"
-          >
-            <Settings size={18} aria-hidden />
-          </Button>
+          <div ref={actions} className={styles.actions}>
+            <Button variant="primary" className={styles.indexButton} onClick={onOpenIndex}>
+              <Database size={16} aria-hidden />
+              Index
+            </Button>
+            <Button
+              variant="neutral"
+              className={styles.iconOnly}
+              onClick={onOpenSettings}
+              title="Settings"
+              aria-label="Settings"
+            >
+              <Settings size={18} aria-hidden />
+            </Button>
+          </div>
         </div>
-        <IndexStatus overview={overview} onOpenIndex={onOpenIndex} attention={attention} />
+        <div className={styles.status}>
+          <IndexStatus overview={overview} onOpenIndex={openIndexFromProgress} attention={attention} raised={focused} />
+        </div>
       </div>
       <footer className={styles.footer}>
         <span className={styles.totals}>

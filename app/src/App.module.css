@@ -6,6 +6,29 @@
   border: var(--window-border) solid var(--color-border-strong);
   border-radius: var(--window-radius);
   background: var(--color-bg);
+  transition: border-color 360ms ease;
+}
+
+.dimmedWindow {
+  border-color: var(--color-border-strong-dimmed);
+}
+
+.titleArea {
+  position: relative;
+  flex: none;
+}
+
+.titleDim {
+  position: absolute;
+  inset: 0;
+  background: var(--color-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 360ms ease;
+}
+
+.dimmed {
+  opacity: 1;
 }
 
 .screens {
@@ -46,6 +69,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .window,
+  .titleDim {
+    transition: none;
+  }
+
   .pane,
   .before,
   .after {

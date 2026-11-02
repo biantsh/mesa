@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import type { Overview } from "../api";
+import { cx } from "../cx";
 import { Bar, figures, Label } from "./IndexProgress";
 import styles from "./IndexStatus.module.css";
 
@@ -8,11 +9,12 @@ interface Props {
   overview: Overview | null;
   onOpenIndex: () => void;
   attention: number;
+  raised?: boolean;
 }
 
 const SWELL_PX = 3;
 
-export function IndexStatus({ overview, onOpenIndex, attention }: Props) {
+export function IndexStatus({ overview, onOpenIndex, attention, raised = false }: Props) {
   const empty = useRef<HTMLParagraphElement>(null);
   const attended = useRef(attention);
   useEffect(() => {
@@ -34,7 +36,9 @@ export function IndexStatus({ overview, onOpenIndex, attention }: Props) {
     const count = figures(progress);
     const text = progress.paused ? (count ? `Paused · ${count}` : "Paused") : count;
     content = (
-      <button key="progress" type="button" className={styles.progress} onClick={onOpenIndex} title="Show the index">
+      <button key="progress" type="button" className={cx(styles.progress, raised && styles.raised)}
+        onMouseDown={raised ? (e) => e.preventDefault() : undefined}
+        onClick={onOpenIndex} title="Show the index">
         <Label progress={progress} />
         <Bar progress={progress} />
         {text && <span className={styles.count}>{text}</span>}

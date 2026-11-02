@@ -30,6 +30,36 @@
   color: var(--color-text);
 }
 
+.progress {
+  position: relative;
+  isolation: isolate;
+}
+
+.progress::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--color-surface);
+  box-shadow: 0 0 0 1px var(--color-border-strong), var(--shadow-field);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--focus-time, 360ms) ease;
+}
+
+.raised {
+  color: var(--color-text);
+}
+
+.raised::before {
+  opacity: 1;
+}
+
+.raised:hover::before {
+  background-image: linear-gradient(var(--color-hover-bg), var(--color-hover-bg));
+}
+
 .count {
   flex: none;
   white-space: nowrap;

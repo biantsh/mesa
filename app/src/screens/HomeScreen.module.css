@@ -1,4 +1,7 @@
 .home {
+  --focus-time: 360ms;
+  --focus-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --field-height: 44px;
   position: relative;
   height: 100%;
   display: flex;
@@ -21,6 +24,29 @@
   font-size: 12px;
   white-space: nowrap;
   pointer-events: none;
+  transition:
+    transform var(--focus-time) var(--focus-ease),
+    opacity calc(var(--focus-time) * 0.5) ease-out;
+}
+
+.focused .footer {
+  transform: translateY(10px);
+  opacity: 0;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--color-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--focus-time) ease;
+}
+
+.focused .scrim {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .legal {
@@ -63,9 +89,16 @@
 .logo {
   height: 120px;
   width: auto;
+  transition: opacity calc(var(--focus-time) * 0.4) ease-out;
+}
+
+.focused .logo {
+  opacity: 0;
 }
 
 .search {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -75,56 +108,135 @@
 
 .row {
   display: flex;
-  align-items: stretch;
+  align-items: flex-start;
   gap: 4px;
   width: 100%;
+  height: var(--field-height);
+  transition: transform var(--focus-time) var(--focus-ease);
+}
+
+.focused .row {
+  transform: translateY(calc(-1 * var(--lift, 0px)));
 }
 
 .field {
   flex: 1;
   min-width: 0;
   position: relative;
+  z-index: 1;
   display: flex;
+  flex-direction: column;
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-field);
+  transition:
+    margin-right var(--focus-time) var(--focus-ease),
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.focused .field {
+  margin-right: calc(-1 * var(--actions-width, 0px));
+}
+
+.field:hover {
+  border-color: var(--color-text-disabled);
+  box-shadow: var(--shadow-field-hover);
+}
+
+.field:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring), var(--shadow-field);
 }
 
 .searchIcon {
   position: absolute;
-  left: 14px;
-  top: 50%;
+  left: 12px;
+  top: calc((var(--field-height) - 4px) / 2);
   transform: translateY(-50%);
   color: var(--color-text-faint);
   pointer-events: none;
 }
 
 .input {
-  flex: 1;
+  flex: none;
   min-width: 0;
-  height: 44px;
+  height: calc(var(--field-height) - 4px);
   padding: 0 14px 0 42px;
-  border: 2px solid var(--color-border-strong);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
+  border: 0;
+  outline: none;
+  background: transparent;
   color: var(--color-text);
   font: inherit;
   font-size: 15px;
   user-select: text;
-  box-shadow: var(--shadow-field);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .input::placeholder {
   color: var(--color-text-faint);
 }
 
-.input:hover {
-  border-color: var(--color-text-disabled);
-  box-shadow: var(--shadow-field-hover);
-}
-
 .input:focus-visible {
   outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-focus-ring), var(--shadow-field);
+}
+
+.extra {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--focus-time) var(--focus-ease);
+}
+
+.focused .extra {
+  grid-template-rows: 1fr;
+}
+
+.tags {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tags::after {
+  content: "";
+  display: block;
+  height: 44px;
+}
+
+.actions {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  height: var(--field-height);
+  transition:
+    opacity calc(var(--focus-time) * 0.55) ease calc(var(--focus-time) * 0.35),
+    transform calc(var(--focus-time) * 0.7) var(--focus-ease) calc(var(--focus-time) * 0.35);
+}
+
+.focused .actions {
+  opacity: 0;
+  transform: translateX(12px) scale(0.92);
+  pointer-events: none;
+  transition:
+    opacity calc(var(--focus-time) * 0.4) ease,
+    transform calc(var(--focus-time) * 0.5) ease-in;
+}
+
+.status {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  transition: transform var(--focus-time) var(--focus-ease);
+}
+
+.focused .status {
+  transform: translateY(var(--drop, 0px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home {
+    --focus-time: 0.001ms;
+  }
 }
 
 .row .indexButton {

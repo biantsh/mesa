@@ -3,7 +3,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
 import { cx } from "./cx";
-import { HomeScreen } from "./screens/HomeScreen";
+import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { IndexScreen } from "./screens/IndexScreen";
 import { api, type ModelStatus } from "./api";
 import { startup } from "./ready";
@@ -24,7 +24,9 @@ const OPEN_ON_TOP = "dialog[open], [role='menu']";
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [querying, setQuerying] = useState(false);
   const onIndex = screen === "index";
+  const dimmed = querying && !onIndex;
   const maximized = useMaximized();
   const overview = useIndexOverview(!onIndex);
   const model = useModelStatus();
@@ -42,6 +44,7 @@ export default function App() {
   const retryModel = useCallback(() => void api.retryModelSetup().catch(() => {}), []);
 
   const home = useRef<HTMLDivElement>(null);
+  const homeScreen = useRef<HomeHandle>(null);
   const index = useRef<HTMLDivElement>(null);
   const goHome = useCallback(() => setScreen("home"), []);
   const goToIndex = useCallback(() => setScreen("index"), []);
@@ -53,6 +56,7 @@ export default function App() {
       first.current = false;
       return;
     }
+    if (!onIndex && homeScreen.current?.restoreFocus()) return;
     (onIndex ? index : home).current?.focus({ preventScroll: true });
   }, [onIndex]);
 
@@ -84,8 +88,11 @@ export default function App() {
   }, [onIndex, goHome]);
 
   return (
-    <div className={styles.window}>
-      <TitleBar maximized={maximized} />
+    <div className={cx(styles.window, dimmed && styles.dimmedWindow)}>
+      <div className={styles.titleArea}>
+        <TitleBar maximized={maximized} />
+        <div className={cx(styles.titleDim, dimmed && styles.dimmed)} aria-hidden />
+      </div>
       <div className={styles.screens}>
         <div
           ref={home}
@@ -94,9 +101,11 @@ export default function App() {
           inert={onIndex || covered}
         >
           <HomeScreen
+            ref={homeScreen}
             overview={overview}
             model={model}
             onRetryModel={retryModel}
+            onFocusChange={setQuerying}
             onOpenIndex={goToIndex}
             onOpenSettings={openSettings}
           />
