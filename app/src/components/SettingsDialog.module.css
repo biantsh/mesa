@@ -85,6 +85,12 @@
   margin-top: 0;
 }
 
+.switchSpace {
+  flex: none;
+  width: 44px;
+  height: 28px;
+}
+
 .error {
   padding: 10px 16px;
   color: var(--color-danger-ink);

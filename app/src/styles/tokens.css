@@ -1,10 +1,194 @@
+@property --color-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f7f4f1;
+}
+
+@property --color-surface {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #ffffff;
+}
+
+@property --color-surface-raised {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #ffffff;
+}
+
+@property --color-border {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #e6dfd8;
+}
+
+@property --color-border-strong {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #d3c9bf;
+}
+
+@property --color-neutral {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #e6dfd8;
+}
+
+@property --color-neutral-hover {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #ddd4cb;
+}
+
+@property --color-neutral-active {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #d3c9bf;
+}
+
+@property --color-text {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2a1a14;
+}
+
+@property --color-text-muted {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #6b5d52;
+}
+
+@property --color-text-disabled {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #a39689;
+}
+
+@property --color-text-faint {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #85786c;
+}
+
+@property --color-danger {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #b5362b;
+}
+
+@property --color-danger-hover {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #a32f25;
+}
+
+@property --color-danger-active {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #8f281f;
+}
+
+@property --color-danger-ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #b5362b;
+}
+
+@property --color-danger-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(181, 54, 43, 0.09);
+}
+
+@property --color-danger-border {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(181, 54, 43, 0.28);
+}
+
+@property --color-lock {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #cc4a3c;
+}
+
+@property --color-preview-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f1ece7;
+}
+
+@property --color-hover-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(226, 105, 49, 0.08);
+}
+
+@property --color-selected-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(226, 105, 49, 0.15);
+}
+
+@property --color-selected-border {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(226, 105, 49, 0.5);
+}
+
+@property --color-overlay {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(42, 26, 20, 0.42);
+}
+
+@property --color-primary-ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #b9461b;
+}
+
+@property --color-focus-ring {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(226, 105, 49, 0.28);
+}
+
 :root {
   color-scheme: light;
+  transition:
+    --color-bg 300ms ease,
+    --color-surface 300ms ease,
+    --color-surface-raised 300ms ease,
+    --color-border 300ms ease,
+    --color-border-strong 300ms ease,
+    --color-neutral 300ms ease,
+    --color-neutral-hover 300ms ease,
+    --color-neutral-active 300ms ease,
+    --color-text 300ms ease,
+    --color-text-muted 300ms ease,
+    --color-text-disabled 300ms ease,
+    --color-text-faint 300ms ease,
+    --color-danger 300ms ease,
+    --color-danger-hover 300ms ease,
+    --color-danger-active 300ms ease,
+    --color-danger-ink 300ms ease,
+    --color-danger-bg 300ms ease,
+    --color-danger-border 300ms ease,
+    --color-lock 300ms ease,
+    --color-preview-bg 300ms ease,
+    --color-hover-bg 300ms ease,
+    --color-selected-bg 300ms ease,
+    --color-selected-border 300ms ease,
+    --color-overlay 300ms ease,
+    --color-focus-ring 300ms ease,
+    --color-primary-ink 300ms ease;
 
   --color-primary: #e26931;
   --color-primary-hover: #d25a29;
   --color-primary-active: #bd4d22;
   --color-on-primary: #ffffff;
+  --color-primary-ink: #b9461b;
 
   --color-bg: #f7f4f1;
   --color-surface: #ffffff;
@@ -46,12 +230,15 @@
 
   --shadow-sm: 0 1px 2px rgba(42, 26, 20, 0.08);
   --shadow-primary: 0 1px 3px rgba(42, 26, 20, 0.22);
+  --gradient-primary: linear-gradient(135deg, rgba(181, 54, 43, 0), rgba(181, 54, 43, 0.4));
   --shadow-field: 0 1px 2px rgba(42, 26, 20, 0.06), 0 4px 14px rgba(42, 26, 20, 0.06);
   --shadow-field-hover: 0 1px 2px rgba(42, 26, 20, 0.08), 0 6px 18px rgba(42, 26, 20, 0.1);
   --color-focus-ring: rgba(226, 105, 49, 0.28);
   --shadow-menu: 0 10px 30px rgba(42, 26, 20, 0.18), 0 2px 6px rgba(42, 26, 20, 0.08);
   --shadow-dialog: 0 24px 60px rgba(42, 26, 20, 0.28);
 
+  --window-radius: 14px;
+  --window-border: 1px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -77,6 +264,8 @@
   --color-text-disabled: #766a60;
   --color-text-faint: #9a8d82;
 
+  --color-primary-ink: #ee7a40;
+
   --color-danger: #c1402f;
   --color-danger-hover: #ad3829;
   --color-danger-active: #98311f;
@@ -99,4 +288,15 @@
   --color-focus-ring: rgba(226, 105, 49, 0.4);
   --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
   --shadow-dialog: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    transition: none;
+  }
+}
+
+:root[data-maximized] {
+  --window-radius: 0px;
+  --window-border: 0px;
 }

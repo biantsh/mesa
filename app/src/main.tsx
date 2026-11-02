@@ -1,15 +1,20 @@
 import React from "react";
+import { flushSync } from "react-dom";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ready } from "./ready";
+import { showWhenPainted } from "./window";
 import "@fontsource-variable/inter";
 import "./styles/tokens.css";
 import "./styles/global.css";
 
 ready().then(() => {
-  ReactDOM.createRoot(document.getElementById("root")!).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>
+  flushSync(() =>
+    ReactDOM.createRoot(document.getElementById("root")!).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    ),
   );
+  showWhenPainted();
 });

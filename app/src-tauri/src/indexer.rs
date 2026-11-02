@@ -1,7 +1,8 @@
 use std::{
+    collections::HashSet,
     fs, mem,
     path::{Path, PathBuf},
-    sync::mpsc::Receiver,
+    sync::{atomic::Ordering, mpsc::Receiver},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -143,6 +144,7 @@ struct Walker<'a> {
     failed: bool,
     stored: bool,
     warmed_up: bool,
+    new_files: HashSet<PathBuf>,
 }
 
 impl<'a> Walker<'a> {
@@ -155,6 +157,7 @@ impl<'a> Walker<'a> {
             failed: false,
             stored: true,
             warmed_up: false,
+            new_files: HashSet::new(),
         }
     }
 
@@ -174,14 +177,20 @@ impl<'a> Walker<'a> {
             }
             return;
         }
-        let changed = lock(&self.shared.store).changed(&scan).ok();
+        let changes = lock(&self.shared.store).changes(&scan).ok();
         let index = self.folders.len();
         let mut up_to_date = 0;
         for (n, file) in scan.files.iter().enumerate() {
-            if changed.as_ref().is_some_and(|changed| !changed.contains(&file.name)) {
+            if changes
+                .as_ref()
+                .is_some_and(|changes| !changes.changed.contains(&file.name))
+            {
                 self.batch.finished.push(scan.path.join(&file.name));
                 up_to_date += 1;
             } else {
+                if changes.as_ref().is_some_and(|changes| changes.new.contains(&file.name)) {
+                    self.new_files.insert(scan.path.join(&file.name));
+                }
                 self.waiting.push((index, n));
             }
         }
@@ -242,6 +251,7 @@ impl<'a> Walker<'a> {
             let mut finished = vec![false; items.len()];
             let batch = &mut self.batch;
             let stored = &mut self.stored;
+            let new_files = &mut self.new_files;
 
             let result = shared
                 .embedder
@@ -252,6 +262,10 @@ impl<'a> Walker<'a> {
                         Outcome::Vectors(vectors) => vectors,
                         Outcome::NoVector(_) => Vec::new(),
                     };
+                    if new_files.remove(&items[i].path) {
+                        batch.new += 1;
+                        shared.finished_new.fetch_add(1, Ordering::SeqCst);
+                    }
                     batch.finished.push(items[i].path.clone());
                     batch.scans.push(ScannedDir {
                         path: folders[folder].path.clone(),
@@ -286,6 +300,8 @@ impl<'a> Walker<'a> {
             left.retain(|_| !finished.next().unwrap_or(false));
         }
 
+        self.new_files.clear();
+
         if !self.failed {
             for folder in folders.drain(..).filter(|folder| folder.complete) {
                 self.batch.files += folder.files.len();
@@ -299,6 +315,7 @@ struct Batch {
     scans: Vec<ScannedDir>,
     finished: Vec<PathBuf>,
     files: usize,
+    new: u64,
     started: Instant,
     ticket: u64,
 }
@@ -309,6 +326,7 @@ impl Batch {
             scans: Vec::new(),
             finished: Vec::new(),
             files: 0,
+            new: 0,
             started: Instant::now(),
             ticket,
         }
@@ -331,11 +349,14 @@ impl Batch {
     fn store(&mut self, shared: &Shared) -> bool {
         let mut stored = true;
         if !self.scans.is_empty() {
-            let result = lock(&shared.store).write_scans(&self.scans, &|path| shared.is_indexed(path));
+            let mut store = lock(&shared.store);
+            let result = store.write_scans(&self.scans, &|path| shared.is_indexed(path));
             if let Err(e) = result {
                 eprintln!("Mesa: couldn't store indexed files: {e}");
                 stored = false;
             }
+            shared.landed_new.fetch_add(mem::take(&mut self.new), Ordering::SeqCst);
+            drop(store);
         }
         let mut pending = lock(&shared.pending);
         self.finished.drain(..).for_each(|path| pending.release(&path));
@@ -344,6 +365,14 @@ impl Batch {
         self.files = 0;
         self.started = Instant::now();
         stored
+    }
+}
+
+impl Drop for Walker<'_> {
+    fn drop(&mut self) {
+        self.shared
+            .landed_new
+            .fetch_add(mem::take(&mut self.batch.new), Ordering::SeqCst);
     }
 }
 
@@ -550,6 +579,8 @@ mod tests {
             excluded: Mutex::new(HashSet::new()),
             pending: Mutex::new(Pending::default()),
             progress: Mutex::new(ProgressState::default()),
+            finished_new: std::sync::atomic::AtomicU64::new(0),
+            landed_new: std::sync::atomic::AtomicU64::new(0),
             control: Control::new(false),
             embedder: embedder.clone(),
         });

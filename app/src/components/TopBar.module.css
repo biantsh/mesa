@@ -1,8 +1,9 @@
 .bar {
+  --gap: 16px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 14px 16px;
+  gap: var(--gap);
+  padding: 14px 16px var(--gap);
 }
 
 .heading {

@@ -47,7 +47,7 @@ export function TopBar({
     <header className={styles.bar}>
       <div className={styles.heading}>
         <IconButton label="Back to search" onClick={onBack}>
-          <ChevronLeft size={20} aria-hidden />
+          <ChevronLeft size={24} absoluteStrokeWidth strokeWidth={1.67} aria-hidden />
         </IconButton>
         <h1 className={styles.title}>Index</h1>
       </div>

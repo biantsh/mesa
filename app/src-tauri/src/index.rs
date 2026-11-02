@@ -4,10 +4,12 @@ use std::{
     ops::Bound,
     path::{Path, PathBuf},
     sync::{
-        Arc, Condvar, Mutex, MutexGuard,
+        Arc, Condvar, Mutex, MutexGuard, TryLockError,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Sender},
     },
     thread,
+    time::{Duration, Instant},
 };
 
 use serde::Serialize;
@@ -59,6 +61,8 @@ pub struct Shared {
     pub progress: Mutex<ProgressState>,
     pub control: Control,
     pub embedder: Arc<dyn Embedder>,
+    pub finished_new: AtomicU64,
+    pub landed_new: AtomicU64,
 }
 
 pub struct Control {
@@ -147,7 +151,24 @@ impl Shared {
 pub struct Index {
     shared: Arc<Shared>,
     queue: Mutex<Sender<Job>>,
+    dir: PathBuf,
+    counted: Mutex<Option<Counted>>,
 }
+
+#[derive(Clone, Copy)]
+struct Counted {
+    at: Instant,
+    without_new: i64,
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct Stats {
+    pub files: u64,
+    pub bytes: u64,
+}
+
+const COUNT_MAX_AGE: Duration = Duration::from_millis(750);
 
 impl Index {
     pub fn open(dir: &Path, embedder: Arc<dyn Embedder>) -> store::Result<Self> {
@@ -176,6 +197,8 @@ impl Index {
             progress: Mutex::new(ProgressState::default()),
             control: Control::new(paused && !unfinished.is_empty()),
             embedder,
+            finished_new: AtomicU64::new(0),
+            landed_new: AtomicU64::new(0),
         });
 
         let (sender, receiver) = mpsc::channel();
@@ -188,6 +211,8 @@ impl Index {
         let index = Self {
             shared,
             queue: Mutex::new(sender),
+            dir: dir.to_owned(),
+            counted: Mutex::new(None),
         };
         for (id, root) in unfinished {
             index.queue_job(id, root);
@@ -401,6 +426,7 @@ impl Index {
     }
 
     pub fn clear(&self) -> Result<(), String> {
+        *lock(&self.counted) = None;
         let mut store = lock(&self.shared.store);
         lock(&self.shared.rules).clear();
         lock(&self.shared.gaps).clear();
@@ -417,6 +443,49 @@ impl Index {
 
     pub fn set_device(&self, device: Device) -> Result<(), String> {
         self.shared.embedder.set_device(device).map_err(|e| e.to_string())
+    }
+
+    pub fn stats(&self) -> Stats {
+        self.stats_within(COUNT_MAX_AGE)
+    }
+
+    fn stats_within(&self, max_age: Duration) -> Stats {
+        Stats {
+            files: self.file_count(max_age),
+            bytes: store::disk_bytes(&self.dir),
+        }
+    }
+
+    fn file_count(&self, max_age: Duration) -> u64 {
+        let made = self.shared.finished_new.load(Ordering::SeqCst) as i64;
+        let mut counted = lock(&self.counted);
+        if let Some(last) = *counted {
+            if last.at.elapsed() <= max_age {
+                return (last.without_new + made).max(0) as u64;
+            }
+        }
+        let now = match self.shared.store.try_lock() {
+            Ok(store) => self.count_with(&store),
+            Err(TryLockError::Poisoned(poisoned)) => self.count_with(&poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) if counted.is_some() => None,
+            Err(TryLockError::WouldBlock) => self.count_with(&lock(&self.shared.store)),
+        };
+        if let Some(without_new) = now {
+            *counted = Some(Counted {
+                at: Instant::now(),
+                without_new,
+            });
+        }
+        counted.map_or(0, |last| (last.without_new + made).max(0) as u64)
+    }
+
+    fn count_with(&self, store: &Store) -> Option<i64> {
+        let landed = self.shared.landed_new.load(Ordering::SeqCst) as i64;
+        store.file_count().ok().map(|files| files as i64 - landed)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        lock(&self.shared.included).is_empty()
     }
 
     pub fn progress(&self) -> Option<Progress> {

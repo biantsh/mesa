@@ -13,6 +13,7 @@
 
 .dialog::backdrop {
   background: var(--color-overlay);
+  border-radius: var(--window-radius);
 }
 
 @keyframes pop {

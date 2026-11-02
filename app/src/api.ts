@@ -53,6 +53,13 @@ export interface Progress {
   paused: boolean;
 }
 
+export interface Overview {
+  empty: boolean;
+  progress: Progress | null;
+  files: number;
+  bytes: number;
+}
+
 export interface Settings {
   gpuAcceleration: boolean;
 }
@@ -64,11 +71,13 @@ export const api = {
   listDir: (path: string) => invoke<Listing>("list_dir", { path }),
   indexStatuses: (paths: string[]) => invoke<IndexState[]>("index_statuses", { paths }),
   indexProgress: () => invoke<Progress | null>("index_progress"),
+  indexOverview: () => invoke<Overview>("index_overview"),
   setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),
   cancelIndexing: () => invoke<void>("cancel_indexing"),
   dropFromQueue: (paths: string[]) => invoke<void>("drop_from_queue", { paths }),
   addToIndex: (paths: string[], completing?: string) => invoke<void>("add_to_index", { paths, completing }),
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
+  openProjectPage: () => invoke<void>("open_project_page"),
   openFile: (path: string) => invoke<void>("open_file", { path }),
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   excludeFromIndex: (paths: string[]) => invoke<void>("exclude_from_index", { paths }),

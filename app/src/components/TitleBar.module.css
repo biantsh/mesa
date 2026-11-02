@@ -1,0 +1,75 @@
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding-left: 12px;
+  user-select: none;
+}
+
+.logo,
+.title {
+  pointer-events: none;
+}
+
+.title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.logo {
+  height: 14px;
+  width: auto;
+  margin-right: 8px;
+}
+
+.name {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.version {
+  color: var(--color-text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.controls {
+  display: flex;
+  align-self: stretch;
+  margin-left: auto;
+}
+
+.control {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: default;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.control:hover {
+  background: var(--color-neutral);
+  color: var(--color-text);
+}
+
+.control:active {
+  background: var(--color-neutral-active);
+}
+
+.control:focus-visible {
+  outline-offset: -3px;
+}
+
+.close:hover,
+.close:active {
+  background: var(--color-danger);
+  color: var(--color-on-danger);
+}

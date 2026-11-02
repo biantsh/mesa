@@ -1,0 +1,23 @@
+import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
+
+export function currentWindow(): Window | null {
+  try {
+    return getCurrentWindow();
+  } catch {
+    return null;
+  }
+}
+
+export const windowControls = {
+  minimize: () => void currentWindow()?.minimize().catch(() => {}),
+  toggleMaximize: () => void currentWindow()?.toggleMaximize().catch(() => {}),
+  close: () => void currentWindow()?.close().catch(() => {}),
+};
+
+export function showWhenPainted() {
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      void currentWindow()?.show().catch(() => {});
+    }),
+  );
+}

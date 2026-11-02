@@ -1,4 +1,5 @@
 .home {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -9,16 +10,74 @@
   padding-bottom: 8vh;
 }
 
+.footer {
+  position: absolute;
+  inset: auto 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 16px 12px;
+  color: var(--color-text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.legal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.divider {
+  width: 1px;
+  height: 11px;
+  background: var(--color-border-strong);
+}
+
+.project {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color 120ms ease;
+}
+
+.project:hover {
+  background: var(--color-hover-bg);
+}
+
+.totals {
+  font-variant-numeric: tabular-nums;
+}
+
 .logo {
   height: 120px;
   width: auto;
+}
+
+.search {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: min(720px, 100%);
 }
 
 .row {
   display: flex;
   align-items: stretch;
   gap: 4px;
-  width: min(720px, 100%);
+  width: 100%;
 }
 
 .field {
@@ -70,6 +129,18 @@
 
 .row .indexButton {
   box-shadow: var(--shadow-primary);
+  position: relative;
+  isolation: isolate;
+}
+
+.row .indexButton::before {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--button-border));
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--gradient-primary);
+  pointer-events: none;
 }
 
 .row .iconOnly {

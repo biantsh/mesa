@@ -14,11 +14,14 @@
       {
         "title": "Mesa",
         "width": 1080,
-        "height": 630,
+        "height": 640,
         "minWidth": 640,
         "minHeight": 480,
         "center": true,
-        "theme": "Light"
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "visible": false
       }
     ],
     "security": { "csp": null }

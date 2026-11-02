@@ -14,6 +14,7 @@ interface Props {
 
 export function SettingsDialog({ open, onClose }: Props) {
   const titleId = useId();
+  const gpu = useGpuAcceleration();
   return (
     <Modal open={open} onClose={onClose} className={styles.dialog} labelledBy={titleId}>
       {open && (
@@ -31,7 +32,7 @@ export function SettingsDialog({ open, onClose }: Props) {
               <ThemeRow />
             </Group>
             <Group title="Indexing">
-              <GpuRow />
+              <GpuRow {...gpu} />
             </Group>
           </div>
         </div>
@@ -86,19 +87,24 @@ function ThemeRow() {
   );
 }
 
-function GpuRow() {
-  const { enabled, gpu, pending, error, change } = useGpuAcceleration();
+function GpuRow({ enabled, gpu, pending, error, change }: ReturnType<typeof useGpuAcceleration>) {
   const on = pending ?? (enabled === true && gpu != null);
   const known = enabled !== null && gpu !== undefined;
   const disabled = !known || gpu === null || pending !== null;
-  const note = gpu === undefined ? "Looking for a GPU…" : (gpu ?? "No usable GPU found");
+  const note = !known ? "\u00a0" : (gpu ?? "No usable GPU found");
 
   return (
     <>
       <Row
         title="GPU acceleration"
         note={note}
-        control={(ids) => <Switch checked={on} disabled={disabled} onChange={change} {...ids} />}
+        control={(ids) =>
+          known ? (
+            <Switch checked={on} disabled={disabled} onChange={change} {...ids} />
+          ) : (
+            <span className={styles.switchSpace} aria-hidden />
+          )
+        }
       />
       {error && (
         <div className={styles.error} role="alert">

@@ -87,7 +87,7 @@ function cancelSubject({ name, queued }: Progress): string {
   return queued > 0 ? `${quoted(name)} and ${queued} more` : quoted(name);
 }
 
-function Label({ progress: { name, queued } }: { progress: Progress }) {
+export function Label({ progress: { name, queued } }: { progress: Progress }) {
   return (
     <span
       className={styles.label}
@@ -117,12 +117,12 @@ function Count({ progress }: { progress: Progress }) {
   );
 }
 
-function figures({ counting, found, done, total, paused }: Progress): string {
+export function figures({ counting, found, done, total, paused }: Progress): string {
   if (!counting && total > 0) return `${number.format(done)} of ${number.format(total)}`;
   return counting && !paused ? `Finding files\u2026 ${number.format(found)}` : "";
 }
 
-function Bar({ progress }: { progress: Progress }) {
+export function Bar({ progress }: { progress: Progress }) {
   const { counting, done, total, paused } = progress;
   const determinate = !counting && total > 0;
   const percent = determinate ? Math.floor((done / total) * 100) : 0;

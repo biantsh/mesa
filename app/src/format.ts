@@ -5,14 +5,14 @@ const decimals = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 const whole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const when = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-export function formatSize(bytes: number): string {
+export function formatSize(bytes: number, precise = false): string {
   let value = bytes;
   let unit = 0;
   while (value >= 1024 && unit < UNITS.length - 1) {
     value /= 1024;
     unit++;
   }
-  return `${(value < 10 && unit > 0 ? decimals : whole).format(value)} ${UNITS[unit]}`;
+  return `${((value < 10 || precise) && unit > 0 ? decimals : whole).format(value)} ${UNITS[unit]}`;
 }
 
 export function formatModified(milliseconds: number): string {
@@ -25,6 +25,12 @@ export function typeLabel(entry: Entry): string {
   if (entry.kind === "drive") return "Drive";
   if (entry.kind === "folder") return "Folder";
   return entry.category ? CATEGORIES[entry.category] : "File";
+}
+
+const counts = new Intl.NumberFormat();
+
+export function describeIndexTotals(files: number, bytes: number): string {
+  return `${counts.format(files)} ${files === 1 ? "file" : "files"} indexed (${files === 0 ? "0 MB" : formatSize(bytes, true)})`;
 }
 
 function plural(count: number, one: string): string {

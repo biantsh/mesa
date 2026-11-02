@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     browse::{self, Listing},
-    index::{Index, IndexState},
+    index::{Index, IndexState, Stats},
     progress::Progress,
     settings::{Settings, SettingsStore},
 };
@@ -43,6 +44,25 @@ pub fn index_progress(index: State<'_, Index>) -> Option<Progress> {
     index.progress()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Overview {
+    pub empty: bool,
+    pub progress: Option<Progress>,
+    #[serde(flatten)]
+    pub stats: Stats,
+}
+
+#[tauri::command(async)]
+pub fn index_overview(index: State<'_, Index>) -> Overview {
+    let progress = index.progress();
+    Overview {
+        empty: progress.is_none() && index.is_empty(),
+        progress,
+        stats: index.stats(),
+    }
+}
+
 #[tauri::command(async)]
 pub fn set_indexing_paused(paused: bool, index: State<'_, Index>) -> Result<(), String> {
     index.set_paused(paused)
@@ -77,6 +97,15 @@ pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
         return Err("That isn't a file Mesa opens.".into());
     }
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+const PROJECT_URL: &str = "https://github.com/biantsh/mesa";
+
+#[tauri::command(async)]
+pub fn open_project_page(app: AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url(PROJECT_URL, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

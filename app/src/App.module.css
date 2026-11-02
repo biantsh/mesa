@@ -1,8 +1,19 @@
+.window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border: var(--window-border) solid var(--color-border-strong);
+  border-radius: var(--window-radius);
+  background: var(--color-bg);
+}
+
 .screens {
   --slide-time: 400ms;
   --slide-curve: cubic-bezier(0.32, 0.72, 0, 1);
   position: relative;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
 }
 

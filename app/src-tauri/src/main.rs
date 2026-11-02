@@ -16,6 +16,17 @@ mod vectors;
 
 use tauri::Manager;
 
+fn show_window_if_the_page_does_not(app: &tauri::App) {
+    const GIVE_UP: std::time::Duration = std::time::Duration::from_secs(6);
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(GIVE_UP);
+        let _ = window.show();
+    });
+}
+
 fn main() {
     let previews = thumbnail::PreviewServer::start();
 
@@ -31,6 +42,7 @@ fn main() {
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             app.manage(index);
             app.manage(settings);
+            show_window_if_the_page_does_not(app);
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("thumb", move |_ctx, request, responder| {
@@ -41,6 +53,7 @@ fn main() {
             commands::list_dir,
             commands::index_statuses,
             commands::index_progress,
+            commands::index_overview,
             commands::set_indexing_paused,
             commands::cancel_indexing,
             commands::add_to_index,
@@ -51,6 +64,7 @@ fn main() {
             commands::count_with_data,
             commands::exclusion_count,
             commands::open_file,
+            commands::open_project_page,
             commands::show_in_folder,
             commands::index_everything,
             commands::clear_index,

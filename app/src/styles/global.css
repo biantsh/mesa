@@ -11,8 +11,13 @@ body,
   margin: 0;
 }
 
+html,
+body,
+#root {
+  background: transparent;
+}
+
 body {
-  background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font);
   font-size: 14px;
@@ -57,6 +62,12 @@ button {
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+}
+
+:root[data-theme-changing] *:not([role="switch"], [role="switch"] *),
+:root[data-theme-changing] *::before,
+:root[data-theme-changing] *::after {
+  transition: none !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

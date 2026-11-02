@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SettingsDialog } from "./components/SettingsDialog";
+import { TitleBar } from "./components/TitleBar";
 import { cx } from "./cx";
 import { HomeScreen } from "./screens/HomeScreen";
 import { IndexScreen } from "./screens/IndexScreen";
+import { useIndexOverview } from "./useIndexOverview";
+import { useMaximized } from "./useMaximized";
 import styles from "./App.module.css";
 
 type Screen = "home" | "index";
@@ -12,6 +15,8 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const onIndex = screen === "index";
+  const maximized = useMaximized();
+  const overview = useIndexOverview(!onIndex);
 
   const home = useRef<HTMLDivElement>(null);
   const index = useRef<HTMLDivElement>(null);
@@ -56,22 +61,25 @@ export default function App() {
   }, [onIndex, goHome]);
 
   return (
-    <div className={styles.screens}>
-      <div
-        ref={home}
-        className={cx(styles.pane, onIndex && styles.before)}
-        tabIndex={-1}
-        inert={onIndex}
-      >
-        <HomeScreen onOpenIndex={goToIndex} onOpenSettings={openSettings} />
-      </div>
-      <div
-        ref={index}
-        className={cx(styles.pane, !onIndex && styles.after)}
-        tabIndex={-1}
-        inert={!onIndex}
-      >
-        <IndexScreen onBack={goHome} active={onIndex} />
+    <div className={styles.window}>
+      <TitleBar maximized={maximized} />
+      <div className={styles.screens}>
+        <div
+          ref={home}
+          className={cx(styles.pane, onIndex && styles.before)}
+          tabIndex={-1}
+          inert={onIndex}
+        >
+          <HomeScreen overview={overview} onOpenIndex={goToIndex} onOpenSettings={openSettings} />
+        </div>
+        <div
+          ref={index}
+          className={cx(styles.pane, !onIndex && styles.after)}
+          tabIndex={-1}
+          inert={!onIndex}
+        >
+          <IndexScreen onBack={goHome} active={onIndex} />
+        </div>
       </div>
       <SettingsDialog open={settingsOpen} onClose={closeSettings} />
     </div>

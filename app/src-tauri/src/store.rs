@@ -335,17 +335,25 @@ impl Store {
         )?)
     }
 
-    pub fn changed(&self, scan: &ScannedDir) -> Result<HashSet<String>> {
+    pub fn changes(&self, scan: &ScannedDir) -> Result<Changes> {
         let existing = match find_dir(&self.conn, &scan.path)? {
             Some(dir) => existing_files(&self.conn, dir)?,
             None => HashMap::new(),
         };
-        Ok(scan
-            .files
-            .iter()
-            .filter(|file| !existing.get(&file.name).is_some_and(|old| is_current(old, file)))
-            .map(|file| file.name.clone())
-            .collect())
+        let mut changes = Changes::default();
+        for file in &scan.files {
+            match existing.get(&file.name) {
+                Some(old) if is_current(old, file) => {}
+                Some(_) => {
+                    changes.changed.insert(file.name.clone());
+                }
+                None => {
+                    changes.changed.insert(file.name.clone());
+                    changes.new.insert(file.name.clone());
+                }
+            }
+        }
+        Ok(changes)
     }
 
     #[cfg(test)]
@@ -370,6 +378,10 @@ impl Store {
         }
         Ok(tx.commit()?)
     }
+
+    pub fn file_count(&self) -> Result<u64> {
+        Ok(self.conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?)
+    }
 }
 
 #[cfg(test)]
@@ -381,8 +393,24 @@ impl Store {
     }
 }
 
+#[derive(Default, Debug)]
+pub struct Changes {
+    pub changed: HashSet<String>,
+    pub new: HashSet<String>,
+}
+
 fn vectors_path(dir: &Path) -> PathBuf {
     dir.join(format!("vectors-{CONFIG_ID}.bin"))
+}
+
+pub fn disk_bytes(dir: &Path) -> u64 {
+    ["mesa.db", "mesa.db-wal"]
+        .iter()
+        .map(|name| dir.join(name))
+        .chain(std::iter::once(vectors_path(dir)))
+        .filter_map(|path| fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .sum()
 }
 
 fn open_db(dir: &Path) -> Result<Connection> {
