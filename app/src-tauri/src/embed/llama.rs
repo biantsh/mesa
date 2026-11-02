@@ -13,9 +13,14 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
-use super::{Error, pipeline::Backend, prepare::Prepared};
+use super::{Device, Error, pipeline::Backend, prepare::Prepared};
 use crate::index::lock;
-use std::sync::Mutex;
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering},
+};
 
 pub const TEXT_MODEL: &str = "embeddinggemma-2-Q8_0.gguf";
 pub const PICTURE_MODEL: &str = "mmproj-embeddinggemma-2-Q8_0.gguf";
@@ -107,6 +112,7 @@ struct Connection {
     agent: ureq::Agent,
     url: String,
     key: String,
+    generation: u64,
 }
 
 struct Running {
@@ -125,15 +131,29 @@ impl Drop for Running {
 
 pub struct LlamaServer {
     locations: Locations,
+    device: Mutex<Device>,
     running: Mutex<Option<Running>>,
+    generation: AtomicU64,
+    gpu: OnceLock<Option<String>>,
 }
+
+#[cfg(test)]
+pub(super) static RETRIED: AtomicUsize = AtomicUsize::new(0);
+const RETRIES_AFTER_A_CHANGE: usize = 3;
 
 impl LlamaServer {
     pub fn new(locations: Locations) -> Self {
         Self {
             locations,
+            device: Mutex::new(Device::Auto),
             running: Mutex::new(None),
+            generation: AtomicU64::new(0),
+            gpu: OnceLock::new(),
         }
+    }
+
+    pub fn choose_device(&self, device: Device) {
+        *lock(&self.device) = device;
     }
 
     fn connection(&self) -> Result<Connection, Error> {
@@ -148,14 +168,43 @@ impl LlamaServer {
             }
             *running = None;
         }
-        let server = launch(&self.locations)?;
+        let server = self.launch_new(*lock(&self.device))?;
         let connection = server.connection.clone();
         *running = Some(server);
         Ok(connection)
     }
 
-    fn lost(&self) {
-        *lock(&self.running) = None;
+    fn launch_new(&self, device: Device) -> Result<Running, Error> {
+        let mut server = launch(&self.locations, device)?;
+        server.connection.generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(server)
+    }
+
+    fn lost(&self, generation: u64) {
+        let mut running = lock(&self.running);
+        if running
+            .as_ref()
+            .is_some_and(|server| server.connection.generation == generation)
+        {
+            *running = None;
+        }
+    }
+
+    fn attempt(&self, batch: &[&Prepared]) -> Result<Vec<Result<Vec<f32>, String>>, Error> {
+        let connection = self.connection()?;
+        match self.post(&connection, batch)? {
+            Ok(vectors) => Ok(vectors.into_iter().map(Ok).collect()),
+            Err(_) if batch.len() > 1 => batch
+                .iter()
+                .map(|one| {
+                    Ok(match self.post(&connection, &[*one])? {
+                        Ok(mut vectors) => Ok(vectors.remove(0)),
+                        Err(why) => Err(why),
+                    })
+                })
+                .collect(),
+            Err(why) => Ok(vec![Err(why)]),
+        }
     }
 
     fn post(&self, connection: &Connection, batch: &[&Prepared]) -> Result<Result<Vec<Vec<f32>>, String>, Error> {
@@ -176,7 +225,7 @@ impl LlamaServer {
         let body = json!({"input": inputs, "encoding_format": "float"}).to_string();
 
         let lost = |what: String| {
-            self.lost();
+            self.lost(connection.generation);
             Error(format!("lost contact with the embedding server: {what}"))
         };
         let mut response = connection
@@ -201,29 +250,89 @@ impl Backend for LlamaServer {
     }
 
     fn embed_batch(&self, batch: &[&Prepared]) -> Result<Vec<Result<Vec<f32>, String>>, Error> {
-        let connection = self.connection()?;
-        match self.post(&connection, batch)? {
-            Ok(vectors) => Ok(vectors.into_iter().map(Ok).collect()),
-            Err(_) if batch.len() > 1 => batch
-                .iter()
-                .map(|one| {
-                    Ok(match self.post(&connection, &[*one])? {
-                        Ok(mut vectors) => Ok(vectors.remove(0)),
-                        Err(why) => Err(why),
-                    })
-                })
-                .collect(),
-            Err(why) => Ok(vec![Err(why)]),
+        for _ in 0..RETRIES_AFTER_A_CHANGE {
+            let before = self.generation.load(Ordering::SeqCst);
+            match self.attempt(batch) {
+                Err(_) if self.generation.load(Ordering::SeqCst) != before => {
+                    #[cfg(test)]
+                    RETRIED.fetch_add(1, Ordering::SeqCst);
+                    continue;
+                }
+                result => return result,
+            }
         }
+        self.attempt(batch)
     }
 
     fn stop(&self) {
-        self.lost();
+        *lock(&self.running) = None;
+    }
+
+    fn set_device(&self, device: Device) -> Result<(), Error> {
+        let mut running = lock(&self.running);
+        let mut current = lock(&self.device);
+        let alive = running.as_mut().is_some_and(|server| {
+            server
+                .child
+                .as_mut()
+                .is_none_or(|child| matches!(child.try_wait(), Ok(None)))
+        });
+        if *current == device && alive {
+            return Ok(());
+        }
+        *current = device;
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *running = None;
+        *running = Some(self.launch_new(device)?);
+        Ok(())
+    }
+
+    fn gpu(&self) -> Option<String> {
+        self.gpu.get_or_init(|| find_gpu(&self.locations)).clone()
     }
 
     fn max_batch(&self) -> usize {
         SLOTS
     }
+}
+
+fn device_args(device: Device) -> &'static [&'static str] {
+    match device {
+        Device::Auto => &["-ngl", "all"],
+        Device::Cpu => &["-dev", "none", "-ngl", "0"],
+    }
+}
+
+fn find_gpu(locations: &Locations) -> Option<String> {
+    let mut command = Command::new(locations.server());
+    command
+        .current_dir(&locations.runtime)
+        .arg("--list-devices")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().ok()?;
+    parse_gpu(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_gpu(listing: &str) -> Option<String> {
+    let mut devices = listing
+        .lines()
+        .skip_while(|line| !line.trim().starts_with("Available devices"))
+        .skip(1);
+    devices.find_map(|line| {
+        let (id, rest) = line.trim().split_once(": ")?;
+        if id.is_empty() || id.starts_with("CPU") || id.contains(char::is_whitespace) {
+            return None;
+        }
+        let name = rest.rfind(" (").map_or(rest, |end| &rest[..end]).trim();
+        (!name.is_empty()).then(|| name.to_owned())
+    })
 }
 
 fn parse_embeddings(reply: &str, expected: usize) -> Result<Vec<Vec<f32>>, String> {
@@ -250,7 +359,7 @@ fn brief(text: &str) -> String {
     }
 }
 
-fn launch(locations: &Locations) -> Result<Running, Error> {
+fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
     if let Some(problem) = locations.problem() {
         return Err(Error(problem));
     }
@@ -279,7 +388,7 @@ fn launch(locations: &Locations) -> Result<Running, Error> {
         .arg("--mmproj")
         .arg(locations.models.join(PICTURE_MODEL))
         .args(["--embedding", "--pooling", "mean"])
-        .args(["-ngl", "all"])
+        .args(device_args(device))
         .args(["-np", &SLOTS.to_string(), "-c", &(SLOTS * TOKENS_PER_SLOT).to_string()])
         .args(["-b", &TOKENS_PER_SLOT.to_string(), "-ub", &TOKENS_PER_SLOT.to_string()])
         .args(["--image-min-tokens", "1", "--image-max-tokens", "1024"])
@@ -311,6 +420,7 @@ fn launch(locations: &Locations) -> Result<Running, Error> {
                 .into(),
             url: format!("http://127.0.0.1:{port}"),
             key,
+            generation: 0,
         },
     };
 
@@ -387,6 +497,14 @@ mod tests {
         assert!(parse_embeddings(r#"{"data":[{"index":5,"embedding":[1]}]}"#, 1).is_err());
     }
 
+    #[test]
+    fn parses_gpu_name() {
+        let listing = "Available devices:\n  Vulkan0: NVIDIA GeForce RTX 3070 Ti (8017 MiB, 7249 MiB free)\n";
+        assert_eq!(parse_gpu(listing).as_deref(), Some("NVIDIA GeForce RTX 3070 Ti"));
+        let two = "Available devices:\n  Vulkan0: AMD Radeon(TM) Graphics (2048 MiB, 1900 MiB free)\n  Vulkan1: Other (1 MiB, 1 MiB free)\n";
+        assert_eq!(parse_gpu(two).as_deref(), Some("AMD Radeon(TM) Graphics"));
+    }
+
     fn fake_server(requests: Arc<AtomicUsize>) -> Connection {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -441,21 +559,21 @@ mod tests {
             agent: ureq::Agent::config_builder().http_status_as_error(false).build().into(),
             url: format!("http://127.0.0.1:{port}"),
             key: "k".into(),
+            generation: 0,
         }
     }
 
     fn server_at(connection: Connection) -> LlamaServer {
-        LlamaServer {
-            locations: Locations {
-                runtime: PathBuf::new(),
-                models: PathBuf::new(),
-                log: PathBuf::new(),
-            },
-            running: Mutex::new(Some(Running {
-                child: None,
-                connection,
-            })),
-        }
+        let server = LlamaServer::new(Locations {
+            runtime: PathBuf::new(),
+            models: PathBuf::new(),
+            log: PathBuf::new(),
+        });
+        *lock(&server.running) = Some(Running {
+            child: None,
+            connection,
+        });
+        server
     }
 
     fn text(content: &str) -> Prepared {

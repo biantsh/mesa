@@ -7,6 +7,7 @@ use crate::{
     browse::{self, Listing},
     index::{Index, IndexState},
     progress::Progress,
+    settings::{Settings, SettingsStore},
 };
 
 #[tauri::command]
@@ -118,4 +119,33 @@ pub fn clear_index(index: State<'_, Index>) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn index_everything(index: State<'_, Index>) -> Result<(), String> {
     index.set_everything(&browse::roots())
+}
+
+#[tauri::command]
+pub fn get_settings(settings: State<'_, SettingsStore>) -> Settings {
+    settings.get()
+}
+
+#[tauri::command(async)]
+pub fn embedding_gpu(index: State<'_, Index>) -> Option<String> {
+    index.gpu()
+}
+
+#[tauri::command(async)]
+pub fn set_gpu_acceleration(
+    enabled: bool,
+    settings: State<'_, SettingsStore>,
+    index: State<'_, Index>,
+) -> Result<(), String> {
+    let before = settings.get();
+    let after = Settings {
+        gpu_acceleration: enabled,
+        ..before
+    };
+    index.set_device(after.device())?;
+    if let Err(e) = settings.set(after) {
+        let _ = index.set_device(before.device());
+        return Err(format!("Couldn't save the setting. {e}"));
+    }
+    Ok(())
 }

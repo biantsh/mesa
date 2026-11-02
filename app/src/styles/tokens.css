@@ -8,8 +8,12 @@
 
   --color-bg: #f7f4f1;
   --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
   --color-border: #e6dfd8;
   --color-border-strong: #d3c9bf;
+  --color-neutral: #e6dfd8;
+  --color-neutral-hover: #ddd4cb;
+  --color-neutral-active: #d3c9bf;
 
   --color-text: #2a1a14;
   --color-text-muted: #6b5d52;
@@ -17,13 +21,14 @@
   --color-text-faint: #85786c;
   --color-paused: #85786c;
 
-  --color-danger: #c42a4d;
-  --color-danger-hover: #b0243f;
-  --color-danger-active: #9b1f37;
+  --color-danger: #b5362b;
+  --color-danger-hover: #a32f25;
+  --color-danger-active: #8f281f;
   --color-on-danger: #ffffff;
-  --color-danger-bg: rgba(196, 42, 77, 0.09);
-  --color-danger-border: rgba(196, 42, 77, 0.28);
-  --color-lock: #d23c52;
+  --color-danger-ink: #b5362b;
+  --color-danger-bg: rgba(181, 54, 43, 0.09);
+  --color-danger-border: rgba(181, 54, 43, 0.28);
+  --color-lock: #cc4a3c;
 
   --color-folder: #fdbd64;
   --color-folder-back: #f39d3e;
@@ -40,6 +45,10 @@
   --color-scrollbar-active: var(--color-text-muted);
 
   --shadow-sm: 0 1px 2px rgba(42, 26, 20, 0.08);
+  --shadow-primary: 0 1px 3px rgba(42, 26, 20, 0.22);
+  --shadow-field: 0 1px 2px rgba(42, 26, 20, 0.06), 0 4px 14px rgba(42, 26, 20, 0.06);
+  --shadow-field-hover: 0 1px 2px rgba(42, 26, 20, 0.08), 0 6px 18px rgba(42, 26, 20, 0.1);
+  --color-focus-ring: rgba(226, 105, 49, 0.28);
   --shadow-menu: 0 10px 30px rgba(42, 26, 20, 0.18), 0 2px 6px rgba(42, 26, 20, 0.08);
   --shadow-dialog: 0 24px 60px rgba(42, 26, 20, 0.28);
 
@@ -49,4 +58,45 @@
 
   --font: "Inter Variable", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system,
     "Helvetica Neue", Arial, sans-serif;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #1c1512;
+  --color-surface: #261d19;
+  --color-surface-raised: #2e2420;
+  --color-border: #3a2e28;
+  --color-border-strong: #4d3f37;
+  --color-neutral: #3a2e28;
+  --color-neutral-hover: #463830;
+  --color-neutral-active: #52433a;
+
+  --color-text: #f3ebe4;
+  --color-text-muted: #b3a498;
+  --color-text-disabled: #766a60;
+  --color-text-faint: #9a8d82;
+
+  --color-danger: #c1402f;
+  --color-danger-hover: #ad3829;
+  --color-danger-active: #98311f;
+  --color-danger-ink: #ea7a68;
+  --color-danger-bg: rgba(234, 122, 104, 0.12);
+  --color-danger-border: rgba(234, 122, 104, 0.35);
+  --color-lock: #e5675a;
+
+  --color-preview-bg: #2f2520;
+
+  --color-hover-bg: rgba(226, 105, 49, 0.14);
+  --color-selected-bg: rgba(226, 105, 49, 0.24);
+  --color-selected-border: rgba(226, 105, 49, 0.6);
+  --color-overlay: rgba(0, 0, 0, 0.6);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-primary: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-field: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.25);
+  --shadow-field-hover: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+  --color-focus-ring: rgba(226, 105, 49, 0.4);
+  --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-dialog: 0 24px 60px rgba(0, 0, 0, 0.6);
 }

@@ -8,6 +8,7 @@ mod index;
 mod indexer;
 mod progress;
 mod rules;
+mod settings;
 mod store;
 mod thumbnail;
 mod unindexable;
@@ -23,11 +24,13 @@ fn main() {
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             let resources = app.path().resource_dir().ok();
-            let embedder = embed::for_this_platform(&dir, resources.as_deref());
+            let settings = settings::SettingsStore::open(&dir);
+            let embedder = embed::for_this_platform(&dir, resources.as_deref(), settings.get().device());
             embedder.warm_up();
             let index = index::Index::open(&dir, embedder)
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             app.manage(index);
+            app.manage(settings);
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("thumb", move |_ctx, request, responder| {
@@ -51,6 +54,9 @@ fn main() {
             commands::show_in_folder,
             commands::index_everything,
             commands::clear_index,
+            commands::get_settings,
+            commands::embedding_gpu,
+            commands::set_gpu_acceleration,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

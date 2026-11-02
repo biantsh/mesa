@@ -1,0 +1,48 @@
+.switch {
+  --width: 44px;
+  --height: 28px;
+  --thumb: 20px;
+  --inset: 4px;
+  flex: none;
+  position: relative;
+  width: var(--width);
+  height: var(--height);
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--color-border-strong);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+
+.on {
+  background: var(--color-primary);
+}
+
+.thumb {
+  position: absolute;
+  top: var(--inset);
+  left: var(--inset);
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: 50%;
+  background: var(--color-on-primary);
+  box-shadow: var(--shadow-primary);
+  transition: transform 160ms ease;
+}
+
+.on .thumb {
+  transform: translateX(calc(var(--width) - var(--thumb) - 2 * var(--inset)));
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .thumb {
+    transition: none;
+  }
+}

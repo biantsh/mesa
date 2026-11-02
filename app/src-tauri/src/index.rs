@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::{
     browse,
-    embed::Embedder,
+    embed::{Device, Embedder},
     indexer,
     progress::{Progress, ProgressState},
     rules::{self, Rules, effective, gaps_of, inclusions_of},
@@ -409,6 +409,14 @@ impl Index {
         lock(&self.shared.progress).cancel_all();
         self.shared.control.set_paused(false);
         Ok(store.reset()?)
+    }
+
+    pub fn gpu(&self) -> Option<String> {
+        self.shared.embedder.gpu()
+    }
+
+    pub fn set_device(&self, device: Device) -> Result<(), String> {
+        self.shared.embedder.set_device(device).map_err(|e| e.to_string())
     }
 
     pub fn progress(&self) -> Option<Progress> {

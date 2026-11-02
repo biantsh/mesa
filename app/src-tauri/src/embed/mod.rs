@@ -25,6 +25,12 @@ pub use pipeline::Pipeline;
 pub const MODEL_NAME: &str = "google/embeddinggemma-2, Q8_0, llama.cpp, 140 image tokens, 256 dimensions; pictures, video frames, 30 s of sound, passages of text";
 pub const IMAGE_TOKENS: u32 = 140;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Device {
+    Auto,
+    Cpu,
+}
+
 #[derive(Clone, Debug)]
 pub struct Item {
     pub path: PathBuf,
@@ -58,19 +64,26 @@ pub trait Embedder: Send + Sync {
     fn warm_up(&self) {}
 
     fn release(&self) {}
+
+    fn set_device(&self, _device: Device) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn gpu(&self) -> Option<String> {
+        None
+    }
 }
 
-pub fn for_this_platform(data_dir: &Path, resource_dir: Option<&Path>) -> Arc<dyn Embedder> {
+pub fn for_this_platform(data_dir: &Path, resource_dir: Option<&Path>, device: Device) -> Arc<dyn Embedder> {
     #[cfg(windows)]
     {
-        Arc::new(Pipeline::new(llama::LlamaServer::new(Locations::new(
-            data_dir,
-            resource_dir,
-        ))))
+        let server = llama::LlamaServer::new(Locations::new(data_dir, resource_dir));
+        server.choose_device(device);
+        Arc::new(Pipeline::new(server))
     }
     #[cfg(not(windows))]
     {
-        let _ = (data_dir, resource_dir);
+        let _ = (data_dir, resource_dir, device);
         Arc::new(Unavailable)
     }
 }

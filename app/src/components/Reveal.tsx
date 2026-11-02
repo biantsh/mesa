@@ -6,12 +6,13 @@ const LOOK: "slide" | "expand" = "expand";
 
 interface Props {
   show: boolean;
+  from?: "left" | "right";
   hold?: boolean;
   onExited?: () => void;
   children: ReactNode;
 }
 
-export function Reveal({ show, hold = false, onExited, children }: Props) {
+export function Reveal({ show, from = "left", hold = false, onExited, children }: Props) {
   const [present, setPresent] = useState(show);
   if (show && !present) setPresent(true);
   if (!present) return null;
@@ -19,7 +20,13 @@ export function Reveal({ show, hold = false, onExited, children }: Props) {
   const leaving = !show;
   return (
     <div
-      className={cx(styles.box, styles[LOOK], leaving && styles.leaving, leaving && hold && styles.hold)}
+      className={cx(
+        styles.box,
+        styles[LOOK],
+        from === "right" && styles.fromRight,
+        leaving && styles.leaving,
+        leaving && hold && styles.hold,
+      )}
       inert={leaving}
       onAnimationEnd={(e) => {
         if (leaving && e.target === e.currentTarget) {

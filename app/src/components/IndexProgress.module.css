@@ -3,6 +3,7 @@
   min-width: 0;
   container-type: inline-size;
   display: flex;
+  justify-content: flex-end;
 }
 
 .row {
@@ -86,6 +87,12 @@
 
 @container (max-width: 440px) {
   .count {
+    display: none;
+  }
+}
+
+@container (max-width: 300px) {
+  .label {
     display: none;
   }
 }

@@ -1,4 +1,5 @@
 .box {
+  --shift: -16px;
   display: grid;
   grid-template-columns: 1fr;
   flex: 0 1 auto;
@@ -6,6 +7,20 @@
 }
 
 .clip {
+  min-width: 0;
+}
+
+.fromRight {
+  --shift: 16px;
+  justify-content: end;
+}
+
+.fromRight .clip {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.fromRight .content {
   min-width: 0;
 }
 
@@ -30,7 +45,7 @@
 }
 
 .expand.leaving .content {
-  animation: hold-size 240ms forwards;
+  animation: hold-size-out 240ms forwards;
 }
 
 .hold.leaving,
@@ -41,7 +56,7 @@
 @keyframes slide-in {
   from {
     opacity: 0;
-    transform: translateX(-16px);
+    transform: translateX(var(--shift));
   }
   to {
     opacity: 1;
@@ -56,7 +71,7 @@
   }
   to {
     opacity: 0;
-    transform: translateX(-16px);
+    transform: translateX(var(--shift));
   }
 }
 
@@ -64,7 +79,7 @@
   from {
     grid-template-columns: 0fr;
     opacity: 0;
-    transform: translateX(-16px);
+    transform: translateX(var(--shift));
     overflow: hidden;
   }
   to {
@@ -85,7 +100,7 @@
   to {
     grid-template-columns: 0fr;
     opacity: 0;
-    transform: translateX(-16px);
+    transform: translateX(var(--shift));
     overflow: hidden;
   }
 }
@@ -93,7 +108,18 @@
 @keyframes hold-size {
   from,
   to {
-    min-width: max-content;
+    width: max-content;
+    max-width: 100cqw;
+    flex-shrink: 0;
+  }
+}
+
+@keyframes hold-size-out {
+  from,
+  to {
+    width: max-content;
+    max-width: 100cqw;
+    flex-shrink: 0;
   }
 }
 

@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { Button } from "./Button";
+import { Modal } from "./Modal";
 import styles from "./ConfirmDialog.module.css";
 
 interface Props {
@@ -21,29 +22,10 @@ export function ConfirmDialog({
   onCancel,
   children,
 }: Props) {
-  const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
-  useEffect(() => {
-    const el = dialog.current;
-    if (!el) return;
-    if (open && !el.open) el.showModal();
-    if (!open && el.open) el.close();
-  }, [open]);
-
   return (
-    <dialog
-      ref={dialog}
-      className={styles.dialog}
-      aria-labelledby={titleId}
-      onCancel={(e) => {
-        e.preventDefault();
-        onCancel();
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-    >
+    <Modal open={open} onClose={onCancel} className={styles.dialog} labelledBy={titleId}>
       <div className={styles.content}>
         <h2 id={titleId} className={styles.title}>
           {title}
@@ -58,6 +40,6 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </dialog>
+    </Modal>
   );
 }

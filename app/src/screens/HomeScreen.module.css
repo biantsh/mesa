@@ -1,0 +1,84 @@
+.home {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  padding: 0 24px;
+  padding-bottom: 8vh;
+}
+
+.logo {
+  height: 120px;
+  width: auto;
+}
+
+.row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  width: min(720px, 100%);
+}
+
+.field {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-faint);
+  pointer-events: none;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 14px 0 42px;
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 15px;
+  user-select: text;
+  box-shadow: var(--shadow-field);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.input::placeholder {
+  color: var(--color-text-faint);
+}
+
+.input:hover {
+  border-color: var(--color-text-disabled);
+  box-shadow: var(--shadow-field-hover);
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-focus-ring), var(--shadow-field);
+}
+
+.row .indexButton {
+  box-shadow: var(--shadow-primary);
+}
+
+.row .iconOnly {
+  flex: none;
+  width: 46px;
+  padding: 0;
+  color: var(--color-text-muted);
+}
+
+.row .iconOnly:hover {
+  color: var(--color-text);
+}

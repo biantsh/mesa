@@ -1,5 +1,6 @@
-import { DatabaseZap, Eraser } from "lucide-react";
+import { ChevronLeft, DatabaseZap, Eraser } from "lucide-react";
 import type { Progress } from "../api";
+import { IconButton } from "./IconButton";
 import { MorphButton } from "./MorphButton";
 import { IndexProgress } from "./IndexProgress";
 import styles from "./TopBar.module.css";
@@ -13,6 +14,7 @@ interface SelectionActions {
 }
 
 interface Props {
+  onBack: () => void;
   progress: Progress | null;
   onRefreshProgress: () => Promise<void>;
   onIndexAll: () => void;
@@ -30,6 +32,7 @@ function plural(count: number): string {
 }
 
 export function TopBar({
+  onBack,
   progress,
   onRefreshProgress,
   onIndexAll,
@@ -42,6 +45,21 @@ export function TopBar({
   const selecting = selection.selected >= SELECTING_FROM;
   return (
     <header className={styles.bar}>
+      <div className={styles.heading}>
+        <IconButton label="Back to search" onClick={onBack}>
+          <ChevronLeft size={20} aria-hidden />
+        </IconButton>
+        <h1 className={styles.title}>Index</h1>
+      </div>
+      <div className={styles.middle}>
+        <IndexProgress
+          progress={progress}
+          onRefresh={onRefreshProgress}
+          onCancel={onCancelIndexing}
+          onError={onError}
+          stoppedAt={stoppedAt}
+        />
+      </div>
       <MorphButton
         variant="primary"
         selecting={selecting}
@@ -58,15 +76,6 @@ export function TopBar({
               : `Index ${selection.add} selected ${plural(selection.add)}`
         }
       />
-      <div className={styles.middle}>
-        <IndexProgress
-          progress={progress}
-          onRefresh={onRefreshProgress}
-          onCancel={onCancelIndexing}
-          onError={onError}
-          stoppedAt={stoppedAt}
-        />
-      </div>
       <MorphButton
         variant="dangerOutline"
         selecting={selecting}

@@ -10,7 +10,7 @@ use std::{
 use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
 
 use super::{
-    Embedder, Error, Item, Outcome,
+    Device, Embedder, Error, Item, Outcome,
     prepare::{self, Prepared, Unit},
 };
 use crate::{
@@ -24,6 +24,14 @@ pub trait Backend: Send + Sync + 'static {
     fn embed_batch(&self, batch: &[&Prepared]) -> Result<Vec<Result<Vec<f32>, String>>, Error>;
 
     fn stop(&self) {}
+
+    fn set_device(&self, _device: Device) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn gpu(&self) -> Option<String> {
+        None
+    }
 
     fn max_batch(&self) -> usize {
         8
@@ -244,6 +252,14 @@ impl<B: Backend> Embedder for Pipeline<B> {
     fn release(&self) {
         self.backend.stop();
     }
+
+    fn set_device(&self, device: Device) -> Result<(), Error> {
+        self.backend.set_device(device)
+    }
+
+    fn gpu(&self) -> Option<String> {
+        self.backend.gpu()
+    }
 }
 
 #[cfg(test)]
@@ -261,6 +277,7 @@ mod tests {
         fail_after: Option<usize>,
         running: AtomicUsize,
         most_running: AtomicUsize,
+        devices: Mutex<Vec<Device>>,
     }
 
     impl Backend for Fake {
@@ -287,6 +304,15 @@ mod tests {
                     Prepared::Image(bytes) | Prepared::Audio(bytes) => Ok(vec![bytes.len() as f32; DIMS + 10]),
                 })
                 .collect())
+        }
+
+        fn set_device(&self, device: Device) -> Result<(), Error> {
+            lock(&self.devices).push(device);
+            Ok(())
+        }
+
+        fn gpu(&self) -> Option<String> {
+            Some("A fake GPU".into())
         }
 
         fn max_batch(&self) -> usize {

@@ -4,7 +4,7 @@ import { clicked, everything } from "./selection";
 
 const NOTHING: ReadonlySet<string> = new Set();
 
-export function useSelection(folder: string, entries: Entry[]) {
+export function useSelection(folder: string, entries: Entry[], enabled = true) {
   const [selection, setSelection] = useState({ folder, paths: NOTHING });
   if (selection.folder !== folder) setSelection({ folder, paths: NOTHING });
   const selected = selection.folder === folder ? selection.paths : NOTHING;
@@ -22,6 +22,7 @@ export function useSelection(folder: string, entries: Entry[]) {
   const clear = useCallback(() => setSelection({ folder, paths: NOTHING }), [folder]);
 
   useEffect(() => {
+    if (!enabled) return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
       if (isForSomethingElse(e.target)) return;
@@ -30,7 +31,7 @@ export function useSelection(folder: string, entries: Entry[]) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [folder, entries]);
+  }, [folder, entries, enabled]);
 
   return { selected, select, clear };
 }

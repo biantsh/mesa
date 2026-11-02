@@ -4,7 +4,7 @@
   justify-content: center;
   gap: 8px;
   padding: 8px 16px;
-  border: 1px solid transparent;
+  border: 2px solid transparent;
   border-radius: var(--radius-md);
   font-weight: 600;
   cursor: pointer;
@@ -35,6 +35,20 @@
   background: var(--color-hover-bg);
 }
 
+.neutral {
+  border-color: var(--color-border-strong);
+  background: var(--color-neutral);
+  color: var(--color-text);
+}
+
+.neutral:hover:not(:disabled) {
+  background: var(--color-neutral-hover);
+}
+
+.neutral:active:not(:disabled) {
+  background: var(--color-neutral-active);
+}
+
 .danger {
   background: var(--color-danger);
   color: var(--color-on-danger);
@@ -52,12 +66,13 @@
 .dangerOutline {
   border-width: 2px;
   padding: 7px 15px;
-  border-color: var(--color-danger);
+  border-color: var(--color-danger-ink);
   background: transparent;
-  color: var(--color-danger);
+  color: var(--color-danger-ink);
 }
 
 .dangerOutline:hover:not(:disabled) {
+  border-color: var(--color-danger);
   background: var(--color-danger);
   color: var(--color-on-danger);
 }

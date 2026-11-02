@@ -1,0 +1,23 @@
+.dialog {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  box-shadow: var(--shadow-dialog);
+}
+
+.dialog[open] {
+  animation: pop 140ms ease-out;
+}
+
+.dialog::backdrop {
+  background: var(--color-overlay);
+}
+
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+}

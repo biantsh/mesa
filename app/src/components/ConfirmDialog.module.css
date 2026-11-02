@@ -1,19 +1,5 @@
 .dialog {
   width: min(440px, calc(100vw - 32px));
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  color: var(--color-text);
-  box-shadow: var(--shadow-dialog);
-}
-
-.dialog[open] {
-  animation: pop 140ms ease-out;
-}
-
-.dialog::backdrop {
-  background: var(--color-overlay);
 }
 
 .content {
@@ -41,11 +27,4 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 20px;
-}
-
-@keyframes pop {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.98);
-  }
 }

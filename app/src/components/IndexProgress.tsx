@@ -57,7 +57,7 @@ export function IndexProgress({ progress: current, onRefresh, onCancel, onError,
 
   return (
     <div className={styles.root}>
-      <Reveal show={!isLeaving} hold={leaving?.completed} onExited={finish}>
+      <Reveal show={!isLeaving} from="right" hold={leaving?.completed} onExited={finish}>
         <div className={styles.row} role="group" aria-label="Indexing progress">
           <Label progress={progress} />
           <Bar progress={progress} />
@@ -93,9 +93,7 @@ function Label({ progress: { name, queued } }: { progress: Progress }) {
       className={styles.label}
       title={`Indexing ${quoted(name)}${queued > 0 ? ` + ${queued}` : ""}`}
     >
-      <span className={styles.fixed}>Indexing {"\u201c"}</span>
       <span className={styles.name}>{name}</span>
-      <span className={styles.fixed}>{"\u201d"}</span>
       {queued > 0 && <span className={styles.fixed}>{`\u00a0+\u00a0${queued}`}</span>}
     </span>
   );

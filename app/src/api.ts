@@ -53,6 +53,10 @@ export interface Progress {
   paused: boolean;
 }
 
+export interface Settings {
+  gpuAcceleration: boolean;
+}
+
 export const COMPUTER = "";
 
 export const api = {
@@ -73,6 +77,9 @@ export const api = {
   exclusionCount: () => invoke<number>("exclusion_count"),
   indexEverything: () => invoke<void>("index_everything"),
   clearIndex: () => invoke<void>("clear_index"),
+  getSettings: () => invoke<Settings>("get_settings"),
+  embeddingGpu: () => invoke<string | null>("embedding_gpu"),
+  setGpuAcceleration: (enabled: boolean) => invoke<void>("set_gpu_acceleration", { enabled }),
 };
 
 export function previewUrl(path: string): string {
