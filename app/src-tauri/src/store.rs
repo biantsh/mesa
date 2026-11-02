@@ -406,18 +406,7 @@ impl Store {
             "SELECT e.slot, e.file_id FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?",
         );
         let mut values: Vec<Value> = vec![i64::from(CONFIG_ID).into()];
-        if let Some(category) = filter.category {
-            sql.push_str(" AND f.category = ?");
-            values.push(category_code(category).into());
-        }
-        if let Some(from) = filter.from_ms {
-            sql.push_str(" AND f.modified_ms >= ?");
-            values.push(from.into());
-        }
-        if let Some(to) = filter.to_ms {
-            sql.push_str(" AND f.modified_ms < ?");
-            values.push(to.into());
-        }
+        push_filter(filter, &mut sql, &mut values);
         let mut candidates: Vec<(u64, i64)> = {
             let mut statement = self.conn.prepare(&sql)?;
             let rows = statement.query_map(params_from_iter(values), |r| {
@@ -445,6 +434,16 @@ impl Store {
         let mut ranked: Vec<(i64, f32)> = closest.into_iter().collect();
         ranked.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         Ok(ranked)
+    }
+
+    pub fn newest(&self, filter: Filter) -> Result<Vec<(i64, f32)>> {
+        let mut sql = String::from("SELECT f.id FROM files f WHERE 1 = 1");
+        let mut values: Vec<Value> = Vec::new();
+        push_filter(filter, &mut sql, &mut values);
+        sql.push_str(" ORDER BY f.modified_ms DESC, f.id");
+        let mut statement = self.conn.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values), |r| Ok((r.get::<_, i64>(0)?, 0.0)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn hits(&self, ranked: &[(i64, f32)]) -> Result<Vec<Hit>> {
@@ -482,6 +481,21 @@ impl Store {
             });
         }
         Ok(hits)
+    }
+}
+
+fn push_filter(filter: Filter, sql: &mut String, values: &mut Vec<Value>) {
+    if let Some(category) = filter.category {
+        sql.push_str(" AND f.category = ?");
+        values.push(category_code(category).into());
+    }
+    if let Some(from) = filter.from_ms {
+        sql.push_str(" AND f.modified_ms >= ?");
+        values.push(from.into());
+    }
+    if let Some(to) = filter.to_ms {
+        sql.push_str(" AND f.modified_ms < ?");
+        values.push(to.into());
     }
 }
 

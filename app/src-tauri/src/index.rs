@@ -462,15 +462,18 @@ impl Index {
     }
 
     fn search_where(&self, text: &str, filter: Filter, exists: impl Fn(&Path) -> bool) -> Result<Page, String> {
-        if text.trim().is_empty() {
+        let ranked = if !text.trim().is_empty() {
+            let query = self.shared.embedder.embed_query(text).map_err(|e| e.to_string())?;
+            lock(&self.shared.store).rank(&query, filter)?
+        } else if filter != Filter::default() {
+            lock(&self.shared.store).newest(filter)?
+        } else {
             return Ok(Page {
                 id: 0,
                 hits: Vec::new(),
                 more: false,
             });
-        }
-        let query = self.shared.embedder.embed_query(text).map_err(|e| e.to_string())?;
-        let ranked = lock(&self.shared.store).rank(&query, filter)?;
+        };
         let id = self.search_ids.fetch_add(1, Ordering::SeqCst) + 1;
         let ranking = Arc::new(Ranking {
             id,

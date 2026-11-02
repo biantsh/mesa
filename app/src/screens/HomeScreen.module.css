@@ -3,7 +3,7 @@
   --focus-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --widen-time: var(--focus-time);
   --field-height: 44px;
-  --tags-height: 61px;
+  --tags-height: 42px;
   --gap: 4px;
   --tags-gap: var(--gap);
   --reach: 3px;
@@ -390,6 +390,7 @@
   color: var(--color-text);
   font: inherit;
   font-size: 15px;
+  line-height: 26px;
   user-select: text;
 }
 
@@ -431,19 +432,14 @@
   box-shadow: var(--shadow-field);
 }
 
-.engaged:not(.wide) .tagsBox:hover {
-  --slab-edge: var(--color-text-disabled);
-  box-shadow: var(--shadow-field-hover);
-}
-
 .parsed {
   position: relative;
   z-index: 3;
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 4fr) minmax(0, 6fr);
-  column-gap: 16px;
-  margin: 0 12px;
-  padding: 10px 0 9px;
+  grid-template-columns: auto 256px minmax(0, 1fr);
+  column-gap: 20px;
+  margin: 0 13px;
+  padding: 9px 0;
   opacity: 0;
   clip-path: inset(0 0 calc(100% + 6px) 0);
   transition:
@@ -459,19 +455,27 @@
     clip-path var(--merge-time) var(--focus-ease) var(--merge-delay);
 }
 
+.parsed > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .parsedLabel {
+  flex: none;
   color: var(--color-text-faint);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 12px;
+  line-height: 24px;
 }
 
 .parsedValue {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   height: 24px;
-  margin-top: 2px;
-  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -480,6 +484,7 @@
   color: var(--color-text);
   font-size: 13px;
   line-height: 24px;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: pre;
 }
@@ -489,30 +494,46 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 22px;
+  height: 24px;
   padding: 0 10px;
+  border: 0;
   border-radius: 999px;
   background: var(--color-selected-bg);
   box-shadow: inset 0 0 0 1px var(--color-selected-border);
   color: var(--color-primary-ink);
+  font-family: inherit;
   font-size: 12px;
-  font-weight: 600;
+  line-height: 16px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: box-shadow 120ms ease, color 120ms ease;
   animation: token-in 220ms ease-out backwards;
+}
+
+.token:hover,
+.token.tokenOpen {
+  box-shadow: inset 0 0 0 1px var(--color-primary-ink);
 }
 
 .token.ghost {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--color-border-strong);
   color: var(--color-text-faint);
-  font-weight: 500;
   animation: none;
+}
+
+.token.ghost:hover,
+.token.ghost.tokenOpen {
+  box-shadow: inset 0 0 0 1px var(--color-text-disabled);
+  color: var(--color-text-muted);
 }
 
 .parsedNone {
   color: var(--color-text-faint);
 }
 
-.token:has(svg) {
+.token:has(> svg) {
   padding-left: 8px;
 }
 

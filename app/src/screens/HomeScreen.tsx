@@ -4,11 +4,13 @@ import { api, errorText, type Category, type ModelStatus, type Overview, type Se
 import { CATEGORY_LABELS, describeIndexTotals } from "../format";
 import { Button } from "../components/Button";
 import { ContextMenu } from "../components/ContextMenu";
+import { MonthPicker, TypePicker } from "../components/FilterPickers";
 import { IndexStatus } from "../components/IndexStatus";
 import { CATEGORY_ICONS, ResultGrid } from "../components/ResultGrid";
 import { cx } from "../cx";
 import logo from "../logo";
 import { resultMenuGroups, type ResultActions } from "../resultMenu";
+import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chosen, type Month, type Understood } from "../understand";
 import { isForSomethingElse } from "../useSelection";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { useResultSelection } from "../useResultSelection";
@@ -57,71 +59,100 @@ function placeholder(model: ModelStatus | null): string {
   }
 }
 
-interface Period {
-  label: string;
-  start: number;
-  end: number;
+interface Open {
+  what: "type" | "from" | "to";
+  pill: HTMLElement;
 }
 
-function year(number: number): Period {
-  return { label: String(number), start: new Date(number, 0, 1).getTime(), end: new Date(number + 1, 0, 1).getTime() };
-}
-
-interface Understood {
-  fileType: Category | null;
-  from: Period | null;
-  to: Period | null;
-  text: string;
-}
-
-function understand(query: string): Understood {
-  if (query.trim() === "") return { fileType: null, from: null, to: null, text: "" };
-  return { fileType: "image", from: year(2021), to: year(2026), text: query };
-}
-
-function Token({ icon, ghost, children }: { icon?: ReactNode; ghost?: boolean; children: ReactNode }) {
+function Token({ icon, ghost, open, label, onPress, children }: { icon?: ReactNode; ghost?: boolean; open: boolean; label: string; onPress: (pill: HTMLElement) => void; children: ReactNode }) {
   return (
-    <span className={cx(styles.token, ghost && styles.ghost)}>
+    <button
+      type="button"
+      className={cx(styles.token, ghost && styles.ghost, open && styles.tokenOpen)}
+      tabIndex={-1}
+      aria-label={label}
+      aria-haspopup="true"
+      aria-expanded={open}
+      onMouseDown={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onClick={(e) => onPress(e.currentTarget)}
+    >
       {icon}
       {children}
-    </span>
+    </button>
   );
 }
 
-function Understanding({ understood }: { understood: Understood }) {
+function Understanding({ understood, query, onChooseType, onChooseDate }: { understood: Understood; query: string; onChooseType: (value: Category | null) => void; onChooseDate: (end: "from" | "to", month: Month | null) => void }) {
+  const [open, setOpen] = useState<Open | null>(null);
+  const close = useCallback(() => setOpen(null), []);
+  const press = (what: Open["what"]) => (pill: HTMLElement) => setOpen((now) => (now?.pill === pill ? null : { what, pill }));
+  useEffect(close, [query, close]);
+
   const TypeIcon = understood.fileType && CATEGORY_ICONS[understood.fileType];
+  const dateEnd = (what: "from" | "to") => {
+    const period = understood[what];
+    const label = what === "from" ? "Change the start date" : "Change the end date";
+    return period ? (
+      <Token key={what} open={open?.what === what} label={label} onPress={press(what)}>
+        {period.label}
+      </Token>
+    ) : (
+      <Token key={what} ghost open={open?.what === what} label={label} onPress={press(what)}>
+        Any time
+      </Token>
+    );
+  };
   return (
     <div className={styles.parsed}>
       <div>
         <div className={styles.parsedLabel}>File type</div>
         <div className={styles.parsedValue}>
           {understood.fileType && TypeIcon ? (
-            <Token icon={<TypeIcon size={12} aria-hidden />}>{CATEGORY_LABELS[understood.fileType]}</Token>
+            <Token icon={<TypeIcon size={12} aria-hidden />} open={open?.what === "type"} label="Change the file type" onPress={press("type")}>
+              {CATEGORY_LABELS[understood.fileType]}
+            </Token>
           ) : (
-            <Token ghost>Any type</Token>
+            <Token ghost open={open?.what === "type"} label="Change the file type" onPress={press("type")}>
+              Any type
+            </Token>
           )}
         </div>
       </div>
       <div>
         <div className={styles.parsedLabel}>Date range</div>
         <div className={styles.parsedValue}>
-          {understood.from && understood.to ? (
+          {understood.from || understood.to ? (
             <>
-              <Token>{understood.from.label}</Token>
+              {dateEnd("from")}
               <ArrowRight className={styles.range} size={12} aria-hidden />
-              <Token>{understood.to.label}</Token>
+              {dateEnd("to")}
             </>
           ) : (
-            <Token ghost>Any time</Token>
+            dateEnd("from")
           )}
         </div>
       </div>
       <div>
         <div className={styles.parsedLabel}>Query</div>
         <div className={cx(styles.parsedValue, styles.parsedText, !understood.text && styles.parsedNone)}>
-          {understood.text || "Anything"}
+          {understood.text ? `“${understood.text}”` : "Anything"}
         </div>
       </div>
+      {open?.what === "type" && <TypePicker anchor={open.pill} value={understood.fileType} onChoose={onChooseType} onClose={close} />}
+      {(open?.what === "from" || open?.what === "to") && (
+        <MonthPicker
+          key={open.what}
+          anchor={open.pill}
+          title={open.what === "from" ? "Start date" : "End date"}
+          value={understood[open.what]?.month ?? null}
+          now={new Date()}
+          onChoose={(month) => onChooseDate(open.what as "from" | "to", month)}
+          onClose={close}
+        />
+      )}
     </div>
   );
 }
@@ -139,7 +170,10 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const [attention, setAttention] = useState(0);
   const [focused, setFocused] = useState(false);
   const [query, setQuery] = useState("");
-  const understood = understand(query);
+  const [chosen, setChosen] = useState<Chosen>({});
+  const understood = useMemo(() => understandChosen(query, new Date(), chosen), [query, chosen]);
+  const chooseType = useCallback((value: Category | null) => setChosen((now) => chooseFileType(now, query, new Date(), value)), [query]);
+  const chooseDate = useCallback((end: "from" | "to", month: Month | null) => setChosen((now) => chooseDateEnd(now, query, new Date(), end, month)), [query]);
   const results = query.trim() !== "";
   const dim = focused && !results;
   const engaged = focused || results;
@@ -244,14 +278,17 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const setFocus = useCallback((next: boolean) => {
     setFocused(next);
     onFocusChange(next && query.trim() === "");
+    if (!next && query.trim() === "") setChosen({});
   }, [query, onFocusChange]);
   const change = (text: string) => {
     setQuery(text);
+    setChosen((now) => keepChosen(now, text));
     onFocusChange(focused && text.trim() === "");
   };
   const leave = useCallback(() => {
     away.current = false;
     setQuery("");
+    setChosen({});
     onFocusChange(false);
     setFocused(false);
     input.current?.blur();
@@ -402,7 +439,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               if (!blocked && !modelFailed) input.current?.focus();
             }}
           >
-            <Understanding understood={understood} />
+            <Understanding understood={understood} query={query} onChooseType={chooseType} onChooseDate={chooseDate} />
           </div>
           <div ref={actions} className={styles.actions}>
             <Button variant="primary" className={styles.indexButton} onClick={onOpenIndex}>

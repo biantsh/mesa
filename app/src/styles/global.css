@@ -32,6 +32,11 @@ button {
   color: inherit;
 }
 
+::selection {
+  background: #e26931;
+  color: inherit;
+}
+
 ::-webkit-scrollbar {
   width: 12px;
   height: 12px;
