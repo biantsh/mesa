@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
-import { ArrowUpRight, Database, Search, Settings } from "lucide-react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { ArrowRight, ArrowUpRight, Database, Image as ImageIcon, Search, Settings } from "lucide-react";
 import { api, type ModelStatus, type Overview } from "../api";
 import { describeIndexTotals } from "../format";
 import { Button } from "../components/Button";
@@ -40,6 +40,27 @@ function placeholder(model: ModelStatus | null): string {
   }
 }
 
+interface Understood {
+  fileType: string | null;
+  from: string | null;
+  to: string | null;
+  text: string;
+}
+
+function understand(query: string): Understood {
+  if (query.trim() === "") return { fileType: null, from: null, to: null, text: "" };
+  return { fileType: "Image", from: "Apr 2023", to: "Jul 2023", text: query };
+}
+
+function Token({ icon, ghost, children }: { icon?: ReactNode; ghost?: boolean; children: ReactNode }) {
+  return (
+    <span className={cx(styles.token, ghost && styles.ghost)}>
+      {icon}
+      {children}
+    </span>
+  );
+}
+
 export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings }: Props) {
   const blocked = overview?.empty === true;
   const modelFailed = model?.state === "failed";
@@ -50,6 +71,8 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const row = useRef<HTMLDivElement>(null);
   const [attention, setAttention] = useState(0);
   const [focused, setFocused] = useState(false);
+  const [query, setQuery] = useState("");
+  const understood = understand(query);
   const refuse = useCallback(() => setAttention((count) => count + 1), []);
   const setFocus = useCallback((next: boolean) => {
     setFocused(next);
@@ -126,11 +149,46 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : () => setFocus(true)}
               onBlur={() => { if (document.hasFocus() && !away.current) setFocus(false); }}
               onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
               spellCheck={false}
               autoComplete="off"
             />
-            <div className={styles.extra} aria-hidden>
-              <div className={styles.tags} />
+            <div className={styles.extra} aria-hidden={!focused}>
+              <div className={styles.tags}>
+                <div className={styles.parsed}>
+                  <div>
+                    <div className={styles.parsedLabel}>File type</div>
+                    <div className={styles.parsedValue}>
+                      {understood.fileType ? (
+                        <Token icon={<ImageIcon size={12} aria-hidden />}>{understood.fileType}</Token>
+                      ) : (
+                        <Token ghost>Any type</Token>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.parsedLabel}>Date range</div>
+                    <div className={styles.parsedValue}>
+                      {understood.from && understood.to ? (
+                        <>
+                          <Token>{understood.from}</Token>
+                          <ArrowRight className={styles.range} size={12} aria-hidden />
+                          <Token>{understood.to}</Token>
+                        </>
+                      ) : (
+                        <Token ghost>Any time</Token>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className={styles.parsedLabel}>Query</div>
+                    <div className={cx(styles.parsedValue, styles.parsedText, !understood.text && styles.parsedNone)}>
+                      {understood.text || "Anything"}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </label>
           <div ref={actions} className={styles.actions}>
