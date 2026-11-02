@@ -2,6 +2,14 @@
   --focus-time: 360ms;
   --focus-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --field-height: 44px;
+  --tags-height: 61px;
+  --gap: 4px;
+  --tags-gap: var(--gap);
+  --open-height: calc(var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px);
+  --focus-edge: var(--color-text-disabled);
+  --focus-glow: color-mix(in srgb, var(--color-text) 12%, transparent);
+  --wave-edge: transparent;
+  --wave-glow: transparent;
   position: relative;
   height: 100%;
   display: flex;
@@ -29,24 +37,83 @@
     opacity calc(var(--focus-time) * 0.5) ease-out;
 }
 
-.focused .footer {
+.engaged .footer {
   transform: translateY(10px);
   opacity: 0;
+}
+
+.engaged .project {
+  pointer-events: none;
 }
 
 .scrim {
   position: absolute;
   inset: 0;
   z-index: 1;
-  background: var(--color-overlay);
-  opacity: 0;
   pointer-events: none;
-  transition: opacity var(--focus-time) ease;
 }
 
-.focused .scrim {
-  opacity: 1;
+.dim .scrim {
   pointer-events: auto;
+}
+
+.spot {
+  position: absolute;
+  z-index: -1;
+  --inset: -3px;
+  left: var(--inset);
+  top: var(--inset);
+  right: calc(var(--actions-width, 0px) + var(--inset));
+  height: calc(var(--field-height) - 2 * var(--inset));
+  border-radius: calc(var(--radius-md) - var(--inset));
+  box-shadow: 0 0 0 4000px var(--color-overlay);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    left var(--focus-time) var(--focus-ease),
+    top var(--focus-time) var(--focus-ease),
+    right var(--focus-time) var(--focus-ease),
+    height var(--focus-time) var(--focus-ease),
+    border-radius var(--focus-time) var(--focus-ease),
+    opacity var(--focus-time) ease;
+}
+
+.dim .spot {
+  right: var(--inset);
+  height: calc(var(--open-height) - 2 * var(--inset));
+  opacity: 1;
+}
+
+.results .spot {
+  left: calc(-1 * var(--hole-left, 0px));
+  right: calc(-1 * var(--hole-right, 0px));
+  top: calc(-1 * var(--hole-top, 0px));
+  height: var(--home-height, 100%);
+  border-radius: 0;
+  transition:
+    left var(--focus-time) var(--focus-ease),
+    top var(--focus-time) var(--focus-ease),
+    right var(--focus-time) var(--focus-ease),
+    height var(--focus-time) var(--focus-ease),
+    border-radius var(--focus-time) var(--focus-ease),
+    opacity calc(var(--focus-time) * 0.5) ease-in calc(var(--focus-time) * 0.5);
+}
+
+.spot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: 2px solid var(--wave-edge);
+  border-radius: inherit;
+  box-shadow: 0 0 0 3px var(--wave-glow);
+  opacity: 1;
+  transition: opacity calc(var(--focus-time) * 0.3) ease-out;
+}
+
+.results .spot::after {
+  opacity: 0;
+  transition: opacity var(--focus-time) ease-in;
 }
 
 .legal {
@@ -92,7 +159,7 @@
   transition: opacity calc(var(--focus-time) * 0.4) ease-out;
 }
 
-.focused .logo {
+.engaged .logo {
   opacity: 0;
 }
 
@@ -107,15 +174,16 @@
 }
 
 .row {
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 4px;
+  gap: var(--gap);
   width: 100%;
   height: var(--field-height);
   transition: transform var(--focus-time) var(--focus-ease);
 }
 
-.focused .row {
+.engaged .row {
   transform: translateY(calc(-1 * var(--lift, 0px)));
 }
 
@@ -136,7 +204,7 @@
     box-shadow 120ms ease;
 }
 
-.focused .field {
+.wide .field {
   margin-right: calc(-1 * var(--actions-width, 0px));
 }
 
@@ -146,8 +214,8 @@
 }
 
 .field:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-focus-ring), var(--shadow-field);
+  border-color: var(--focus-edge);
+  box-shadow: 0 0 0 3px var(--focus-glow), var(--shadow-field);
 }
 
 .searchIcon {
@@ -163,7 +231,7 @@
   flex: none;
   min-width: 0;
   height: calc(var(--field-height) - 4px);
-  padding: 0 14px 0 42px;
+  padding: 0 40px 0 42px;
   border: 0;
   outline: none;
   background: transparent;
@@ -181,19 +249,42 @@
   outline: none;
 }
 
-.extra {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows var(--focus-time) var(--focus-ease);
-}
-
-.focused .extra {
-  grid-template-rows: 1fr;
-}
-
-.tags {
-  min-height: 0;
+.tagsBox {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--field-height) + var(--tags-gap));
+  height: calc(var(--tags-height) + 4px);
+  box-sizing: border-box;
   overflow: hidden;
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-field);
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  transition:
+    opacity calc(var(--focus-time) * 0.4) ease-out,
+    transform var(--focus-time) var(--focus-ease),
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.engaged .tagsBox {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  transition:
+    opacity calc(var(--focus-time) * 0.6) ease calc(var(--focus-time) * 0.15),
+    transform var(--focus-time) var(--focus-ease),
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.engaged .tagsBox:hover {
+  border-color: var(--color-text-disabled);
+  box-shadow: var(--shadow-field-hover);
 }
 
 .parsed {
@@ -201,8 +292,7 @@
   grid-template-columns: minmax(0, 2fr) minmax(0, 4fr) minmax(0, 6fr);
   column-gap: 16px;
   margin: 0 12px;
-  padding: 8px 0 10px;
-  border-top: 1px solid var(--color-border);
+  padding: 10px 0 9px;
 }
 
 .parsedLabel {
@@ -274,18 +364,48 @@
   }
 }
 
+.clear {
+  position: absolute;
+  right: 8px;
+  top: calc((var(--field-height) - 4px) / 2);
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-faint);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+  animation: clear-in 160ms ease-out backwards;
+}
+
+.clear:hover {
+  background: var(--color-hover-bg);
+  color: var(--color-text);
+}
+
+@keyframes clear-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .actions {
   flex: none;
   display: flex;
   align-items: stretch;
-  gap: 4px;
+  gap: var(--gap);
   height: var(--field-height);
   transition:
     opacity calc(var(--focus-time) * 0.55) ease calc(var(--focus-time) * 0.35),
     transform calc(var(--focus-time) * 0.7) var(--focus-ease) calc(var(--focus-time) * 0.35);
 }
 
-.focused .actions {
+.wide .actions {
   opacity: 0;
   transform: translateX(12px) scale(0.92);
   pointer-events: none;
@@ -295,13 +415,14 @@
 }
 
 .status {
+  position: relative;
   display: flex;
   justify-content: center;
   width: 100%;
   transition: transform var(--focus-time) var(--focus-ease);
 }
 
-.focused .status {
+.engaged .status {
   transform: translateY(var(--drop, 0px));
 }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
-import { ArrowRight, ArrowUpRight, Database, Image as ImageIcon, Search, Settings } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Database, Image as ImageIcon, Search, Settings, X } from "lucide-react";
 import { api, type ModelStatus, type Overview } from "../api";
 import { describeIndexTotals } from "../format";
 import { Button } from "../components/Button";
@@ -61,102 +61,9 @@ function Token({ icon, ghost, children }: { icon?: ReactNode; ghost?: boolean; c
   );
 }
 
-export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings }: Props) {
-  const blocked = overview?.empty === true;
-  const modelFailed = model?.state === "failed";
-  const input = useRef<HTMLInputElement>(null);
-  const home = useRef<HTMLElement>(null);
-  const search = useRef<HTMLDivElement>(null);
-  const actions = useRef<HTMLDivElement>(null);
-  const row = useRef<HTMLDivElement>(null);
-  const [attention, setAttention] = useState(0);
-  const [focused, setFocused] = useState(false);
-  const [query, setQuery] = useState("");
-  const understood = understand(query);
-  const refuse = useCallback(() => setAttention((count) => count + 1), []);
-  const setFocus = useCallback((next: boolean) => {
-    setFocused(next);
-    onFocusChange(next);
-  }, [onFocusChange]);
-  const away = useRef(false);
-  useImperativeHandle(ref, () => ({
-    restoreFocus() {
-      if (!away.current) return false;
-      away.current = false;
-      if (!input.current || input.current.readOnly) return false;
-      input.current.focus({ preventScroll: true });
-      return true;
-    },
-  }));
-  const openIndexFromProgress = useCallback(() => {
-    away.current = focused;
-    onOpenIndex();
-  }, [focused, onOpenIndex]);
-  useEffect(() => {
-    if (!blocked) return;
-    away.current = false;
-    input.current?.blur();
-    setFocus(false);
-  }, [blocked, setFocus]);
-
-  useLayoutEffect(() => {
-    const root = home.current;
-    if (!root) return;
-    const measure = () => {
-      if (!search.current || !actions.current || !row.current) return;
-      const around = root.getBoundingClientRect();
-      const block = search.current.getBoundingClientRect();
-      const gap = parseFloat(getComputedStyle(row.current).columnGap) || 0;
-      root.style.setProperty("--lift", `${Math.max(0, block.top - around.top - TOP_GAP_PX)}px`);
-      root.style.setProperty("--drop", `${Math.max(0, around.bottom - BOTTOM_GAP_PX - block.bottom)}px`);
-      root.style.setProperty("--actions-width", `${actions.current.offsetWidth + gap}px`);
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(root);
-    observer.observe(actions.current!);
-    return () => observer.disconnect();
-  }, []);
-
+function Understanding({ understood }: { understood: Understood }) {
   return (
-    <main ref={home} className={cx(styles.home, focused && styles.focused)}>
-      <div className={styles.scrim} aria-hidden />
-      <img className={styles.logo} src={logo} alt="Mesa" draggable={false} />
-      <div ref={search} className={styles.search}>
-        <div ref={row} className={styles.row}>
-          <label
-            className={styles.field}
-            onMouseDown={
-              modelFailed
-                ? (e) => { e.preventDefault(); onRetryModel(); }
-                : blocked
-                  ? (e) => { e.preventDefault(); refuse(); }
-                  : (e) => { if (e.target !== input.current) e.preventDefault(); }
-            }
-            onClick={blocked || modelFailed ? (e) => e.preventDefault() : undefined}
-          >
-            <Search className={styles.searchIcon} size={18} aria-hidden />
-            <input
-              ref={input}
-              className={styles.input}
-              type="text"
-              placeholder={placeholder(model)}
-              title={model?.state === "failed" ? model.reason : undefined}
-              aria-label="Search"
-              readOnly={blocked}
-              aria-disabled={blocked || undefined}
-              tabIndex={blocked ? -1 : undefined}
-              onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : () => setFocus(true)}
-              onBlur={() => { if (document.hasFocus() && !away.current) setFocus(false); }}
-              onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              spellCheck={false}
-              autoComplete="off"
-            />
-            <div className={styles.extra} aria-hidden={!focused}>
-              <div className={styles.tags}>
-                <div className={styles.parsed}>
+    <div className={styles.parsed}>
                   <div>
                     <div className={styles.parsedLabel}>File type</div>
                     <div className={styles.parsedValue}>
@@ -188,9 +95,153 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
+  );
+}
+
+export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings }: Props) {
+  const blocked = overview?.empty === true;
+  const modelFailed = model?.state === "failed";
+  const input = useRef<HTMLInputElement>(null);
+  const home = useRef<HTMLElement>(null);
+  const search = useRef<HTMLDivElement>(null);
+  const actions = useRef<HTMLDivElement>(null);
+  const row = useRef<HTMLDivElement>(null);
+  const [attention, setAttention] = useState(0);
+  const [focused, setFocused] = useState(false);
+  const [query, setQuery] = useState("");
+  const understood = understand(query);
+  const results = query.trim() !== "";
+  const dim = focused && !results;
+  const engaged = focused || results;
+  const refuse = useCallback(() => setAttention((count) => count + 1), []);
+  const setFocus = useCallback((next: boolean) => {
+    setFocused(next);
+    onFocusChange(next && query.trim() === "");
+  }, [query, onFocusChange]);
+  const change = (text: string) => {
+    setQuery(text);
+    onFocusChange(focused && text.trim() === "");
+  };
+  const leave = useCallback(() => {
+    away.current = false;
+    setQuery("");
+    onFocusChange(false);
+    setFocused(false);
+    input.current?.blur();
+  }, [onFocusChange]);
+  const away = useRef(false);
+  useImperativeHandle(ref, () => ({
+    restoreFocus() {
+      if (!away.current) return false;
+      away.current = false;
+      if (!input.current || input.current.readOnly) return false;
+      input.current.focus({ preventScroll: true });
+      return true;
+    },
+  }));
+  const openIndexFromProgress = useCallback(() => {
+    away.current = focused;
+    onOpenIndex();
+  }, [focused, onOpenIndex]);
+  useEffect(() => {
+    if (blocked) leave();
+  }, [blocked, leave]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (home.current?.closest("[inert]") || document.querySelector("dialog[open], [role='menu']")) return;
+      if (query !== "") {
+        e.preventDefault();
+        leave();
+      } else if (document.activeElement === input.current) {
+        input.current?.blur();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [query, leave]);
+
+  useLayoutEffect(() => {
+    const root = home.current;
+    if (!root) return;
+    const measure = () => {
+      if (!search.current || !actions.current || !row.current) return;
+      const around = root.getBoundingClientRect();
+      const block = search.current.getBoundingClientRect();
+      const gap = parseFloat(getComputedStyle(row.current).columnGap) || 0;
+      const lift = Math.max(0, block.top - around.top - TOP_GAP_PX);
+      const set = (name: string, px: number) => root.style.setProperty(name, `${px}px`);
+      set("--lift", lift);
+      set("--drop", Math.max(0, around.bottom - BOTTOM_GAP_PX - block.bottom));
+      set("--actions-width", actions.current.offsetWidth + gap);
+      set("--hole-left", block.left - around.left);
+      set("--hole-right", around.right - block.right);
+      set("--hole-top", block.top - around.top - lift);
+      set("--home-height", around.height);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    observer.observe(actions.current!);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <main
+      ref={home}
+      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results)}
+    >
+      <div className={styles.scrim} aria-hidden />
+      <img className={styles.logo} src={logo} alt="Mesa" draggable={false} />
+      <div ref={search} className={styles.search}>
+        <div ref={row} className={styles.row}>
+          <div className={styles.spot} aria-hidden />
+          <label
+            className={styles.field}
+            onMouseDown={
+              modelFailed
+                ? (e) => { e.preventDefault(); onRetryModel(); }
+                : blocked
+                  ? (e) => { e.preventDefault(); refuse(); }
+                  : (e) => { if (e.target !== input.current) e.preventDefault(); }
+            }
+            onClick={blocked || modelFailed ? (e) => e.preventDefault() : undefined}
+          >
+            <Search className={styles.searchIcon} size={18} aria-hidden />
+            <input
+              ref={input}
+              className={styles.input}
+              type="text"
+              placeholder={placeholder(model)}
+              title={model?.state === "failed" ? model.reason : undefined}
+              aria-label="Search"
+              readOnly={blocked}
+              aria-disabled={blocked || undefined}
+              tabIndex={blocked ? -1 : undefined}
+              onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : () => setFocus(true)}
+              onBlur={() => { if (document.hasFocus() && !away.current) setFocus(false); }}
+              value={query}
+              onChange={(e) => change(e.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            {query !== "" && (
+              <button type="button" className={styles.clear} aria-label="Clear search" title="Clear (Esc)" onClick={leave}>
+                <X size={16} aria-hidden />
+              </button>
+            )}
           </label>
+          <div
+            className={styles.tagsBox}
+            aria-hidden={!engaged}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              if (!blocked && !modelFailed) input.current?.focus();
+            }}
+          >
+            <Understanding understood={understood} />
+          </div>
           <div ref={actions} className={styles.actions}>
             <Button variant="primary" className={styles.indexButton} onClick={onOpenIndex}>
               <Database size={16} aria-hidden />
@@ -208,7 +259,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           </div>
         </div>
         <div className={styles.status}>
-          <IndexStatus overview={overview} onOpenIndex={openIndexFromProgress} attention={attention} raised={focused} />
+          <IndexStatus overview={overview} onOpenIndex={openIndexFromProgress} attention={attention} raised={dim} />
         </div>
       </div>
       <footer className={styles.footer}>
