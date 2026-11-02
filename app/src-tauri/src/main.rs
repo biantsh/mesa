@@ -33,7 +33,10 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
+            let dir = match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => app.path().app_data_dir()?,
+            };
             let resources = app.path().resource_dir().ok();
             let settings = settings::SettingsStore::open(&dir);
             let embedder = embed::for_this_platform(&dir, resources.as_deref(), settings.get().device());
@@ -70,6 +73,8 @@ fn main() {
             commands::clear_index,
             commands::get_settings,
             commands::embedding_gpu,
+            commands::model_status,
+            commands::retry_model_setup,
             commands::set_gpu_acceleration,
         ])
         .run(tauri::generate_context!())

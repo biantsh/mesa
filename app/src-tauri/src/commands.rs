@@ -6,6 +6,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::{
     browse::{self, Listing},
+    embed::ModelStatus,
     index::{Index, IndexState, Stats},
     progress::Progress,
     settings::{Settings, SettingsStore},
@@ -153,6 +154,16 @@ pub fn index_everything(index: State<'_, Index>) -> Result<(), String> {
 #[tauri::command]
 pub fn get_settings(settings: State<'_, SettingsStore>) -> Settings {
     settings.get()
+}
+
+#[tauri::command]
+pub fn model_status(index: State<'_, Index>) -> ModelStatus {
+    index.model_status()
+}
+
+#[tauri::command]
+pub fn retry_model_setup(index: State<'_, Index>) {
+    index.retry_model_setup();
 }
 
 #[tauri::command(async)]

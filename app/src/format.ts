@@ -54,3 +54,11 @@ export function describeIndexed(entries: Entry[], selection = false): string | n
   const indexed = possible.filter((entry) => entry.index === "indexed").length;
   return `${indexed} of ${possible.length} ${selection ? "selected " : ""}indexed`;
 }
+
+const downloadedFormat = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const totalFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+
+export function describeDownload(done: number, total: number): string {
+  const percent = total > 0 ? Math.min(100, Math.floor((done / total) * 100)) : 0;
+  return `${downloadedFormat.format(done / 1e6)} of ${totalFormat.format(total / 1e6)} MB (${percent}%)`;
+}

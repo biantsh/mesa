@@ -166,7 +166,7 @@ impl<'a> Clips<'a> {
     }
 }
 
-fn wav(samples: &[i16]) -> Vec<u8> {
+pub(super) fn wav(samples: &[i16]) -> Vec<u8> {
     let data = samples.len() * 2;
     let mut file = Vec::with_capacity(44 + data);
     file.extend_from_slice(b"RIFF");

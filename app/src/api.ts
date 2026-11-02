@@ -66,6 +66,14 @@ export interface Settings {
 
 export const COMPUTER = "";
 
+export type ModelStatus =
+  | { state: "downloading"; done: number; total: number }
+  | { state: "verifying" }
+  | { state: "starting" }
+  | { state: "preparing" }
+  | { state: "ready" }
+  | { state: "failed"; reason: string; setup: boolean };
+
 export const api = {
   homeDir: () => invoke<string>("home_dir"),
   listDir: (path: string) => invoke<Listing>("list_dir", { path }),
@@ -87,6 +95,8 @@ export const api = {
   indexEverything: () => invoke<void>("index_everything"),
   clearIndex: () => invoke<void>("clear_index"),
   getSettings: () => invoke<Settings>("get_settings"),
+  modelStatus: () => invoke<ModelStatus>("model_status"),
+  retryModelSetup: () => invoke<void>("retry_model_setup"),
   embeddingGpu: () => invoke<string | null>("embedding_gpu"),
   setGpuAcceleration: (enabled: boolean) => invoke<void>("set_gpu_acceleration", { enabled }),
 };

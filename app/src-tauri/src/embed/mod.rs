@@ -1,9 +1,11 @@
 mod audio;
 mod documents;
 mod llama;
+mod model;
 mod picture;
 mod pipeline;
 mod prepare;
+mod prime;
 #[cfg(windows)]
 mod process_group;
 mod resample;
@@ -20,6 +22,7 @@ use std::{
 use crate::vectors::Located;
 
 pub use llama::Locations;
+pub use model::ModelStatus;
 pub use pipeline::Pipeline;
 
 pub const MODEL_NAME: &str = "google/embeddinggemma-2, Q8_0, llama.cpp, 140 image tokens, 256 dimensions; pictures, video frames, 30 s of sound, passages of text";
@@ -72,12 +75,21 @@ pub trait Embedder: Send + Sync {
     fn gpu(&self) -> Option<String> {
         None
     }
+
+    fn model_status(&self) -> ModelStatus {
+        ModelStatus::Ready
+    }
+
+    fn retry_model_setup(&self) {}
 }
 
 pub fn for_this_platform(data_dir: &Path, resource_dir: Option<&Path>, device: Device) -> Arc<dyn Embedder> {
     #[cfg(windows)]
     {
-        let server = llama::LlamaServer::new(Locations::new(data_dir, resource_dir));
+        let mut server = llama::LlamaServer::new(Locations::new(data_dir, resource_dir));
+        if std::env::var_os("MESA_MODELS_DIR").is_none_or(|dir| dir.is_empty()) {
+            server = server.download_from(model::SOURCE);
+        }
         server.choose_device(device);
         Arc::new(Pipeline::new(server))
     }

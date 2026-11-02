@@ -13,13 +13,19 @@ use std::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
-use super::{Device, Error, pipeline::Backend, prepare::Prepared};
+use super::{
+    Device, Error,
+    model::{self, ModelState, ModelStatus},
+    pipeline::Backend,
+    prepare::Prepared,
+    prime,
+};
 use crate::index::lock;
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
 use std::sync::{
-    Mutex, OnceLock,
-    atomic::{AtomicU64, Ordering},
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 pub const TEXT_MODEL: &str = "embeddinggemma-2-Q8_0.gguf";
@@ -135,6 +141,11 @@ pub struct LlamaServer {
     running: Mutex<Option<Running>>,
     generation: AtomicU64,
     gpu: OnceLock<Option<String>>,
+    model: Arc<ModelState>,
+    source: Option<String>,
+    files: Vec<model::ModelFile>,
+    files_ok: AtomicBool,
+    setting_up: Mutex<()>,
 }
 
 #[cfg(test)]
@@ -149,6 +160,46 @@ impl LlamaServer {
             running: Mutex::new(None),
             generation: AtomicU64::new(0),
             gpu: OnceLock::new(),
+            model: Arc::new(ModelState::new(ModelStatus::Starting)),
+            source: None,
+            files: model::FILES.to_vec(),
+            files_ok: AtomicBool::new(false),
+            setting_up: Mutex::new(()),
+        }
+    }
+
+    pub fn download_from(mut self, source: &str) -> Self {
+        self.source = Some(source.to_owned());
+        self.model
+            .set(model::initial_status(&self.locations.models, &self.files));
+        self
+    }
+
+    fn ensure_model(&self) -> Result<(), Error> {
+        let Some(source) = &self.source else { return Ok(()) };
+        if self.files_ok.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let _turn = lock(&self.setting_up);
+        if self.files_ok.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if let ModelStatus::Failed { reason, setup: true } = self.model.get() {
+            return Err(Error(reason));
+        }
+        match model::ensure(&self.locations.models, &self.files, source, &self.model) {
+            Ok(()) => {
+                self.files_ok.store(true, Ordering::Release);
+                self.model.set(ModelStatus::Starting);
+                Ok(())
+            }
+            Err(reason) => {
+                self.model.set(ModelStatus::Failed {
+                    reason: reason.clone(),
+                    setup: true,
+                });
+                Err(Error(reason))
+            }
         }
     }
 
@@ -157,6 +208,7 @@ impl LlamaServer {
     }
 
     fn connection(&self) -> Result<Connection, Error> {
+        self.ensure_model()?;
         let mut running = lock(&self.running);
         if let Some(server) = running.as_mut() {
             let alive = server
@@ -168,15 +220,28 @@ impl LlamaServer {
             }
             *running = None;
         }
-        let server = self.launch_new(*lock(&self.device))?;
+        let (server, used) = start_or_fall_back(*lock(&self.device), |device| self.launch_new(device))?;
+        *lock(&self.device) = used;
         let connection = server.connection.clone();
         *running = Some(server);
         Ok(connection)
     }
 
     fn launch_new(&self, device: Device) -> Result<Running, Error> {
-        let mut server = launch(&self.locations, device)?;
+        self.model.set(ModelStatus::Starting);
+        let mut server = launch(&self.locations, device).inspect_err(|e| {
+            self.model.set(ModelStatus::Failed {
+                reason: e.0.clone(),
+                setup: false,
+            });
+        })?;
         server.connection.generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        if device == Device::Auto && self.gpu().is_some() {
+            self.model.set(ModelStatus::Preparing);
+            prime_in_the_background(server.connection.clone(), self.model.clone());
+        } else {
+            self.model.set(ModelStatus::Ready);
+        }
         Ok(server)
     }
 
@@ -208,39 +273,62 @@ impl LlamaServer {
     }
 
     fn post(&self, connection: &Connection, batch: &[&Prepared]) -> Result<Result<Vec<Vec<f32>>, String>, Error> {
-        let inputs: Vec<Value> = batch
-            .iter()
-            .map(|prepared| match prepared {
-                Prepared::Image(bytes) => json!({"content": [{
-                    "type": "image_url",
-                    "image_url": {"url": format!("data:image/bmp;base64,{}", STANDARD.encode(bytes))},
-                }]}),
-                Prepared::Audio(bytes) => json!({"content": [{
-                    "type": "input_audio",
-                    "input_audio": {"data": STANDARD.encode(bytes), "format": "wav"},
-                }]}),
-                Prepared::Text(text) => json!({"content": [{"type": "text", "text": text}]}),
-            })
-            .collect();
-        let body = json!({"input": inputs, "encoding_format": "float"}).to_string();
-
-        let lost = |what: String| {
+        request(connection, batch).map_err(|what| {
             self.lost(connection.generation);
             Error(format!("lost contact with the embedding server: {what}"))
-        };
-        let mut response = connection
-            .agent
-            .post(&format!("{}/v1/embeddings", connection.url))
-            .header("Authorization", &format!("Bearer {}", connection.key))
-            .header("Content-Type", "application/json")
-            .send(body.as_bytes())
-            .map_err(|e| lost(e.to_string()))?;
-        let status = response.status().as_u16();
-        let reply = response.body_mut().read_to_string().map_err(|e| lost(e.to_string()))?;
-        if status != 200 {
-            return Ok(Err(format!("the model turned it down ({status}): {}", brief(&reply))));
+        })
+    }
+}
+
+fn request(connection: &Connection, batch: &[&Prepared]) -> Result<Result<Vec<Vec<f32>>, String>, String> {
+    let inputs: Vec<Value> = batch
+        .iter()
+        .map(|prepared| match prepared {
+            Prepared::Image(bytes) => json!({"content": [{
+                "type": "image_url",
+                "image_url": {"url": format!("data:image/bmp;base64,{}", STANDARD.encode(bytes))},
+            }]}),
+            Prepared::Audio(bytes) => json!({"content": [{
+                "type": "input_audio",
+                "input_audio": {"data": STANDARD.encode(bytes), "format": "wav"},
+            }]}),
+            Prepared::Text(text) => json!({"content": [{"type": "text", "text": text}]}),
+        })
+        .collect();
+    let body = json!({"input": inputs, "encoding_format": "float"}).to_string();
+
+    let mut response = connection
+        .agent
+        .post(&format!("{}/v1/embeddings", connection.url))
+        .header("Authorization", &format!("Bearer {}", connection.key))
+        .header("Content-Type", "application/json")
+        .send(body.as_bytes())
+        .map_err(|e| e.to_string())?;
+    let status = response.status().as_u16();
+    let reply = response.body_mut().read_to_string().map_err(|e| e.to_string())?;
+    if status != 200 {
+        return Ok(Err(format!("the model turned it down ({status}): {}", brief(&reply))));
+    }
+    parse_embeddings(&reply, batch.len()).map(Ok)
+}
+
+fn prime_in_the_background(connection: Connection, model: Arc<ModelState>) {
+    let spawned = thread::Builder::new().name("embedder-prime".into()).spawn({
+        let model = model.clone();
+        move || {
+            let started = Instant::now();
+            for batch in prime::batches() {
+                let batch: Vec<&Prepared> = batch.iter().collect();
+                if request(&connection, &batch).is_err() {
+                    break;
+                }
+            }
+            eprintln!("Mesa: the model is primed ({} ms)", started.elapsed().as_millis());
+            model.finish_preparing();
         }
-        parse_embeddings(&reply, batch.len()).map(Ok).map_err(lost)
+    });
+    if spawned.is_err() {
+        model.finish_preparing();
     }
 }
 
@@ -291,8 +379,40 @@ impl Backend for LlamaServer {
         self.gpu.get_or_init(|| find_gpu(&self.locations)).clone()
     }
 
+    fn model_status(&self) -> ModelStatus {
+        self.model.get()
+    }
+
+    fn retry_setup(&self) -> bool {
+        match self.model.get() {
+            ModelStatus::Failed { setup: true, .. } if self.source.is_some() => {
+                self.model
+                    .set(model::initial_status(&self.locations.models, &self.files));
+            }
+            ModelStatus::Failed { setup: false, .. } => self.model.set(ModelStatus::Starting),
+            _ => return false,
+        }
+        true
+    }
+
     fn max_batch(&self) -> usize {
         SLOTS
+    }
+}
+
+fn start_or_fall_back<T>(
+    device: Device,
+    mut start: impl FnMut(Device) -> Result<T, Error>,
+) -> Result<(T, Device), Error> {
+    match start(device) {
+        Ok(server) => Ok((server, device)),
+        Err(first) if device == Device::Auto => {
+            eprintln!("Mesa: the embedding model couldn't start on the GPU, so the processor is used: {first}");
+            start(Device::Cpu)
+                .map(|server| (server, Device::Cpu))
+                .map_err(|_| first)
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -395,6 +515,8 @@ fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
         .args(["-t", &threads, "-tb", &threads])
         .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key])
         .args(["--no-webui", "-lv", "2"])
+        // Skip the fit check and the warm-up run: together they cost 0.4 s of a 1.6 s start.
+        .args(["--fit", "off", "--no-warmup"])
         .stdin(Stdio::null())
         .stdout(log)
         .stderr(log_for_errors);

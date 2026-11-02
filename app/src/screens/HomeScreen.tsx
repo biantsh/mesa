@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, Database, Search, Settings } from "lucide-react";
-import { api, type Overview } from "../api";
+import { api, type ModelStatus, type Overview } from "../api";
 import { describeIndexTotals } from "../format";
 import { Button } from "../components/Button";
 import { IndexStatus } from "../components/IndexStatus";
@@ -11,12 +11,29 @@ const LICENSE = "MIT License";
 
 interface Props {
   overview: Overview | null;
+  model: ModelStatus | null;
+  onRetryModel: () => void;
   onOpenIndex: () => void;
   onOpenSettings: () => void;
 }
 
-export function HomeScreen({ overview, onOpenIndex, onOpenSettings }: Props) {
+function placeholder(model: ModelStatus | null): string {
+  switch (model?.state) {
+    case "verifying":
+    case "starting":
+      return "Loading model…";
+    case "preparing":
+      return "Preparing model…";
+    case "failed":
+      return "Search isn’t available. Click to try again.";
+    default:
+      return "Describe what you're looking for…";
+  }
+}
+
+export function HomeScreen({ overview, model, onRetryModel, onOpenIndex, onOpenSettings }: Props) {
   const blocked = overview?.empty === true;
+  const modelFailed = model?.state === "failed";
   const input = useRef<HTMLInputElement>(null);
   const [attention, setAttention] = useState(0);
   const refuse = useCallback(() => setAttention((count) => count + 1), []);
@@ -31,15 +48,20 @@ export function HomeScreen({ overview, onOpenIndex, onOpenSettings }: Props) {
         <div className={styles.row}>
           <label
             className={styles.field}
-            onMouseDown={blocked ? (e) => { e.preventDefault(); refuse(); } : undefined}
-            onClick={blocked ? (e) => e.preventDefault() : undefined}
+            onMouseDown={
+              modelFailed
+                ? (e) => { e.preventDefault(); onRetryModel(); }
+                : blocked ? (e) => { e.preventDefault(); refuse(); } : undefined
+            }
+            onClick={blocked || modelFailed ? (e) => e.preventDefault() : undefined}
           >
             <Search className={styles.searchIcon} size={18} aria-hidden />
             <input
               ref={input}
               className={styles.input}
               type="text"
-              placeholder="Describe what you're looking for…"
+              placeholder={placeholder(model)}
+              title={model?.state === "failed" ? model.reason : undefined}
               aria-label="Search"
               readOnly={blocked}
               aria-disabled={blocked || undefined}

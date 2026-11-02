@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::{
     browse,
-    embed::{Device, Embedder},
+    embed::{Device, Embedder, ModelStatus},
     indexer,
     progress::{Progress, ProgressState},
     rules::{self, Rules, effective, gaps_of, inclusions_of},
@@ -439,6 +439,14 @@ impl Index {
 
     pub fn gpu(&self) -> Option<String> {
         self.shared.embedder.gpu()
+    }
+
+    pub fn model_status(&self) -> ModelStatus {
+        self.shared.embedder.model_status()
+    }
+
+    pub fn retry_model_setup(&self) {
+        self.shared.embedder.retry_model_setup();
     }
 
     pub fn set_device(&self, device: Device) -> Result<(), String> {

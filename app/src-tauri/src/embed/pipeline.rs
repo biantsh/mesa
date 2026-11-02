@@ -10,7 +10,7 @@ use std::{
 use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
 
 use super::{
-    Device, Embedder, Error, Item, Outcome,
+    Device, Embedder, Error, Item, ModelStatus, Outcome,
     prepare::{self, Prepared, Unit},
 };
 use crate::{
@@ -31,6 +31,14 @@ pub trait Backend: Send + Sync + 'static {
 
     fn gpu(&self) -> Option<String> {
         None
+    }
+
+    fn model_status(&self) -> ModelStatus {
+        ModelStatus::Ready
+    }
+
+    fn retry_setup(&self) -> bool {
+        false
     }
 
     fn max_batch(&self) -> usize {
@@ -259,6 +267,16 @@ impl<B: Backend> Embedder for Pipeline<B> {
 
     fn gpu(&self) -> Option<String> {
         self.backend.gpu()
+    }
+
+    fn model_status(&self) -> ModelStatus {
+        self.backend.model_status()
+    }
+
+    fn retry_model_setup(&self) {
+        if self.backend.retry_setup() {
+            self.warm_up();
+        }
     }
 }
 
