@@ -25,8 +25,8 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     danger: false,
     stopsIndexing: false,
     message: [
-      "Mesa will index every supported file in your user folder: Documents, Pictures, Music, Videos, Desktop, Downloads and the rest. Other users' files and the rest of your drives are left alone, and you can add any other folder yourself.",
-      "This can take a long time. Indexing goes gently in the background unless Turbo indexing is on.",
+      "Mesa will index every supported file in your user folder, which can take a long time.",
+      "Indexing goes gently in the background unless Turbo indexing is on.",
       ...(exclusions > 0 ? [{ note: "Your excluded items will not be indexed." }] : []),
     ],
     run: api.indexEverything,

@@ -158,7 +158,18 @@ impl Store {
         let conn = open_db(dir)?;
         remove_other_vector_files(dir);
         let mut vectors = VectorFile::open(&vectors_path(dir), CONFIG_ID)?;
-        vectors.truncate_to(extent(&conn)?)?;
+        let expected = extent(&conn)?;
+        if expected > vectors.next_slot() {
+            eprintln!(
+                "Mesa: the vector file has {} vectors and the index refers to {expected}, so the vectors are lost and will be made again",
+                vectors.next_slot()
+            );
+            conn.execute("DELETE FROM embeddings WHERE config_id = ?1", [CONFIG_ID])?;
+            conn.execute("DELETE FROM free_slots WHERE config_id = ?1", [CONFIG_ID])?;
+            vectors.truncate_to(0)?;
+        } else {
+            vectors.truncate_to(expected)?;
+        }
         Ok(Self {
             dir: dir.to_owned(),
             conn,
@@ -347,6 +358,18 @@ impl Store {
         self.vectors.write(&mut writes)?;
         self.vectors.sync()?;
         Ok(tx.commit()?)
+    }
+
+    pub fn recover_lost_vectors(&self) -> Result<bool> {
+        let lost: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM files) AND NOT EXISTS (SELECT 1 FROM embeddings WHERE config_id = ?1)",
+            [CONFIG_ID],
+            |r| r.get(0),
+        )?;
+        if lost {
+            self.conn.execute("UPDATE files SET embedded_with = 0", [])?;
+        }
+        Ok(lost)
     }
 
     pub fn has_stale_files(&self) -> Result<bool> {

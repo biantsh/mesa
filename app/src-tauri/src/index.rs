@@ -275,6 +275,11 @@ impl Index {
         let rules = store.load_rules()?;
         let excluded = store.load_exclusions()?;
         let mut unfinished = store.unfinished_jobs()?;
+        if store.recover_lost_vectors()? {
+            eprintln!(
+                "Mesa: the index has files and no vectors for them (the vectors were lost), so they are indexed again"
+            );
+        }
         if store.has_stale_files()? {
             for (root, _) in rules.iter().filter(|(_, indexed)| **indexed) {
                 if !unfinished.iter().any(|(_, queued)| queued == root) {

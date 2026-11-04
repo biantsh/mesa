@@ -101,6 +101,84 @@
     opacity calc(var(--focus-time) * 0.5) ease-in calc(var(--focus-time) * 0.5);
 }
 
+.asWidget {
+  --widget-inset: -14px;
+  --widget-fill: linear-gradient(var(--color-overlay), var(--color-overlay)),
+    color-mix(in srgb, var(--color-bg) 65%, transparent);
+  --results-delay: calc(var(--focus-time) * 0.7);
+}
+
+.asWidget .logo,
+.asWidget .footer,
+.asWidget .spot::after {
+  display: none;
+}
+
+.asWidget .spot {
+  --inset: var(--widget-inset);
+  background: var(--widget-fill);
+  box-shadow: inset 0 0 0 var(--window-border) var(--color-border-strong);
+  opacity: 1;
+  transition:
+    left var(--focus-time) var(--focus-ease),
+    top var(--focus-time) var(--focus-ease),
+    right var(--focus-time) var(--focus-ease),
+    height var(--focus-time) var(--focus-ease),
+    border-radius var(--focus-time) var(--focus-ease),
+    opacity 0s linear var(--focus-time);
+}
+
+.asWidget.results .spot {
+  left: var(--inset);
+  right: var(--inset);
+  top: var(--inset);
+  height: calc(var(--open-height) - 2 * var(--inset));
+  border-radius: calc(var(--radius-md) - var(--inset));
+  opacity: 0;
+  transition: none;
+}
+
+.backdrop {
+  position: absolute;
+  z-index: 0;
+  left: calc(var(--hole-left, 0px) + var(--widget-inset));
+  right: calc(var(--hole-right, 0px) + var(--widget-inset));
+  top: calc(var(--hole-top, 0px) + var(--widget-inset));
+  height: calc(var(--open-height) - 2 * var(--widget-inset));
+  border-radius: calc(var(--radius-md) - var(--widget-inset));
+  background: var(--widget-fill);
+  box-shadow: inset 0 0 0 var(--window-border) var(--color-border-strong);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    left var(--focus-time) var(--focus-ease),
+    right var(--focus-time) var(--focus-ease),
+    top var(--focus-time) var(--focus-ease),
+    height var(--focus-time) var(--focus-ease),
+    border-radius var(--focus-time) var(--focus-ease),
+    opacity 0s linear var(--focus-time);
+}
+
+.results .backdrop {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 100%;
+  border-radius: var(--window-radius);
+  opacity: 1;
+  transition:
+    left var(--focus-time) var(--focus-ease),
+    right var(--focus-time) var(--focus-ease),
+    top var(--focus-time) var(--focus-ease),
+    height var(--focus-time) var(--focus-ease),
+    border-radius var(--focus-time) var(--focus-ease),
+    opacity 0s;
+}
+
+.asWidget ::-webkit-scrollbar-track {
+  margin-top: var(--bottom-gap, 16px);
+}
+
 .spot::after {
   content: "";
   position: absolute;

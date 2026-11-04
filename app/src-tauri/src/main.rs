@@ -13,10 +13,14 @@ mod rules;
 mod settings;
 mod startup;
 mod store;
+mod surface;
 mod thumbnail;
+#[cfg(windows)]
+mod toast;
 mod unindexable;
 mod vectors;
 mod watch;
+mod widget;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -28,25 +32,37 @@ use tauri::{
 
 pub static KEEP_HIDDEN: AtomicBool = AtomicBool::new(false);
 
+pub fn bring_up(window: &tauri::WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
 fn show_window(app: &tauri::AppHandle) {
     KEEP_HIDDEN.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+        bring_up(&window);
     }
 }
 
-fn add_tray_icon(app: &tauri::App) -> tauri::Result<()> {
+fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Mesa", true, None::<&str>)?;
+    let search = MenuItem::with_id(
+        app,
+        "search",
+        search_key.map_or_else(|| "Search".to_owned(), |key| format!("Search ({key})")),
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Mesa", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &search, &quit])?;
     let mut tray = TrayIconBuilder::new()
         .tooltip("Mesa")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_window(app),
+            "search" => widget::show(app),
             "quit" => {
                 app.state::<index::Index>().shut_down();
                 app.exit(0);
@@ -78,32 +94,49 @@ fn show_window_if_the_page_does_not(app: &tauri::App) {
     std::thread::spawn(move || {
         std::thread::sleep(GIVE_UP);
         if !KEEP_HIDDEN.load(Ordering::SeqCst) {
-            let _ = window.show();
+            bring_up(&window);
         }
     });
 }
 
 fn main() {
-    KEEP_HIDDEN.store(startup::started_in_background(), Ordering::SeqCst);
+    KEEP_HIDDEN.store(startup::starts_without_window(), Ordering::SeqCst);
     let previews = thumbnail::PreviewServer::start();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if !startup::in_background(args.into_iter()) {
+            if startup::wants_search(args.clone().into_iter()) {
+                widget::show(app);
+            } else if !startup::in_background(args.into_iter()) {
                 show_window(app);
             }
         }))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        widget::toggle(app);
+                    }
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![startup::BACKGROUND_ARG]),
         ))
         .plugin(tauri_plugin_opener::init())
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match (window.label(), event) {
+            (widget::LABEL, WindowEvent::CloseRequested { api, .. }) => {
+                api.prevent_close();
+                widget::hide(window.app_handle());
+            }
+            (widget::LABEL, WindowEvent::Focused(false)) => widget::lost_focus(window.app_handle()),
+            (_, WindowEvent::CloseRequested { api, .. }) => {
                 api.prevent_close();
                 KEEP_HIDDEN.store(true, Ordering::SeqCst);
                 let _ = window.hide();
             }
+            _ => {}
         })
         .setup(|app| {
             let dir = match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
@@ -120,11 +153,16 @@ fn main() {
             index.check_for_changes();
             index.start_watching();
             app.manage(index);
+            surface::start(app.handle().clone(), dir.clone());
             if let Err(e) = startup::register(app.handle()) {
                 eprintln!("Mesa: {e}");
             }
             app.manage(settings);
-            add_tray_icon(app)?;
+            let search_key = widget::register_hotkey(app.handle());
+            add_tray_icon(app, search_key)?;
+            if startup::wants_search(std::env::args()) {
+                widget::show_soon(app.handle());
+            }
             show_window_if_the_page_does_not(app);
             Ok(())
         })
@@ -161,6 +199,8 @@ fn main() {
             commands::set_gpu_acceleration,
             commands::set_turbo_indexing,
             commands::page_painted,
+            commands::hide_widget,
+            commands::open_main,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

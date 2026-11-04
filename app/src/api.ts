@@ -128,6 +128,8 @@ export const api = {
   setGpuAcceleration: (enabled: boolean) => invoke<void>("set_gpu_acceleration", { enabled }),
   setTurboIndexing: (enabled: boolean) => invoke<void>("set_turbo_indexing", { enabled }),
   pagePainted: () => invoke<void>("page_painted"),
+  hideWidget: () => invoke<void>("hide_widget"),
+  openMain: (screen: "index" | "settings") => invoke<void>("open_main", { screen }),
 };
 
 export function previewUrl(path: string): string {

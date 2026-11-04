@@ -22,6 +22,20 @@
         "transparent": true,
         "shadow": false,
         "visible": false
+      },
+      {
+        "label": "widget",
+        "title": "Mesa Search",
+        "width": 900,
+        "height": 560,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "focus": false
       }
     ],
     "security": { "csp": null }

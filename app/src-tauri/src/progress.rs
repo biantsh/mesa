@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::browse;
 
-#[derive(Serialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
     pub name: String,

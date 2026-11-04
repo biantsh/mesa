@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
@@ -59,6 +60,17 @@ export default function App() {
     if (!onIndex && homeScreen.current?.restoreFocus()) return;
     (onIndex ? index : home).current?.focus({ preventScroll: true });
   }, [onIndex]);
+
+  useEffect(() => {
+    const listening = listen<string>("navigate", (event) => {
+      if (event.payload === "index") setScreen("index");
+      else if (event.payload === "settings") {
+        setScreen("home");
+        setSettingsOpen(true);
+      }
+    });
+    return () => void listening.then((stop) => stop()).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const block = (e: MouseEvent) => e.preventDefault();

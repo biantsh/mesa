@@ -2,9 +2,14 @@ use tauri::AppHandle;
 use tauri_plugin_autostart::ManagerExt;
 
 pub const BACKGROUND_ARG: &str = "--background";
+pub const SEARCH_ARG: &str = "--search";
 
-pub fn started_in_background() -> bool {
-    in_background(std::env::args())
+pub fn starts_without_window() -> bool {
+    in_background(std::env::args()) || wants_search(std::env::args())
+}
+
+pub fn wants_search(mut args: impl Iterator<Item = String>) -> bool {
+    args.any(|arg| arg == SEARCH_ARG)
 }
 
 pub fn in_background(mut args: impl Iterator<Item = String>) -> bool {

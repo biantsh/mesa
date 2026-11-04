@@ -50,7 +50,7 @@
   visibility: visible;
   pointer-events: auto;
   transition:
-    opacity calc(var(--focus-time) * 0.5) ease calc(var(--focus-time) * 0.2),
+    opacity calc(var(--focus-time) * 0.5) ease var(--results-delay, calc(var(--focus-time) * 0.2)),
     visibility 0s,
     bottom var(--focus-time) var(--focus-ease),
     --fade-top var(--focus-time) var(--focus-ease);

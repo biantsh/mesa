@@ -33,6 +33,7 @@ interface Found {
 
 export interface HomeHandle {
   restoreFocus: () => boolean;
+  focusField: () => void;
 }
 
 interface Props {
@@ -43,7 +44,13 @@ interface Props {
   onFocusChange: (focused: boolean) => void;
   onOpenIndex: () => void;
   onOpenSettings: () => void;
+  onFileOpened?: () => void;
+  asWidget?: boolean;
+  onLeftEmpty?: () => void;
+  keepFocusWhenCleared?: boolean;
 }
+
+const snapToLayout = (px: number) => Math.round(px * 64) / 64;
 
 function placeholder(model: ModelStatus | null): string {
   switch (model?.state) {
@@ -157,7 +164,7 @@ function Understanding({ understood, query, onChooseType, onChooseDate }: { unde
   );
 }
 
-export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings }: Props) {
+export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings, onFileOpened, asWidget, onLeftEmpty, keepFocusWhenCleared }: Props) {
   const blocked = overview?.empty === true;
   const modelFailed = model?.state === "failed";
   const input = useRef<HTMLInputElement>(null);
@@ -236,14 +243,20 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const selectedHits = useMemo(() => hits.filter((hit) => selected.has(hit.path)), [hits, selected]);
   const resultActions = useMemo<ResultActions>(
     () => ({
-      open: (hit) => void api.openFile(hit.path).catch(() => {}),
-      showInFolder: (hit) => void api.showInFolder(hit.path).catch(() => {}),
+      open: (hit) => {
+        void api.openFile(hit.path).catch(() => {});
+        onFileOpened?.();
+      },
+      showInFolder: (hit) => {
+        void api.showInFolder(hit.path).catch(() => {});
+        onFileOpened?.();
+      },
       copyFiles: (files) => api.copyFiles(files.map((file) => file.path)),
       copyPaths: async (files) => {
         await navigator.clipboard.writeText(files.map((file) => file.path).join("\n"));
       },
     }),
-    [],
+    [onFileOpened],
   );
   const [menu, setMenu] = useState<{ hits: SearchHit[]; x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -278,8 +291,11 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const setFocus = useCallback((next: boolean) => {
     setFocused(next);
     onFocusChange(next && query.trim() === "");
-    if (!next && query.trim() === "") setChosen({});
-  }, [query, onFocusChange]);
+    if (!next && query.trim() === "") {
+      setChosen({});
+      onLeftEmpty?.();
+    }
+  }, [query, onFocusChange, onLeftEmpty]);
   const change = (text: string) => {
     setQuery(text);
     setChosen((now) => keepChosen(now, text));
@@ -289,10 +305,16 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     away.current = false;
     setQuery("");
     setChosen({});
+    if (keepFocusWhenCleared) {
+      onFocusChange(true);
+      setFocused(true);
+      input.current?.focus({ preventScroll: true });
+      return;
+    }
     onFocusChange(false);
     setFocused(false);
     input.current?.blur();
-  }, [onFocusChange]);
+  }, [onFocusChange, keepFocusWhenCleared]);
   const away = useRef(false);
   useImperativeHandle(ref, () => ({
     restoreFocus() {
@@ -301,6 +323,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       if (!input.current || input.current.readOnly) return false;
       input.current.focus({ preventScroll: true });
       return true;
+    },
+    focusField() {
+      if (input.current && !input.current.readOnly) input.current.focus({ preventScroll: true });
     },
   }));
   const openIndexFromProgress = useCallback(() => {
@@ -340,7 +365,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       set("--bottom-gap", BOTTOM_GAP_PX);
       set("--lift", lift);
       set("--drop", Math.max(0, around.bottom - BOTTOM_GAP_PX - block.bottom));
-      set("--actions-width", actions.current.offsetWidth + gap);
+      set("--actions-width", snapToLayout(parseFloat(getComputedStyle(actions.current).width)) + gap);
       set("--hole-left", block.left - around.left);
       set("--hole-right", around.right - block.right);
       set("--hole-top", block.top - around.top - lift);
@@ -356,12 +381,13 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   return (
     <main
       ref={home}
-      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed)}
+      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed, asWidget && styles.asWidget)}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         if (!target.closest(`button, input, label, [role='menu'], [data-selection-bar], .${styles.tagsBox}`)) clearSelection();
       }}
     >
+      {asWidget && <div className={styles.backdrop} aria-hidden />}
       <div className={styles.scrim} aria-hidden />
       <ResultGrid
         paneRef={resultsPane}

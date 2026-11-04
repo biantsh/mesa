@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
@@ -306,7 +306,19 @@ pub fn set_turbo_indexing(
 
 #[tauri::command]
 pub fn page_painted(window: tauri::WebviewWindow) {
-    if !crate::KEEP_HIDDEN.load(std::sync::atomic::Ordering::SeqCst) {
-        let _ = window.show();
+    if window.label() == "main" && !crate::KEEP_HIDDEN.load(std::sync::atomic::Ordering::SeqCst) {
+        crate::bring_up(&window);
     }
+}
+
+#[tauri::command]
+pub fn hide_widget(app: AppHandle) {
+    crate::widget::hide(&app);
+}
+
+#[tauri::command]
+pub fn open_main(app: AppHandle, screen: String) {
+    crate::widget::hide(&app);
+    crate::show_window(&app);
+    let _ = app.emit_to("main", "navigate", screen);
 }

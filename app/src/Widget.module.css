@@ -1,0 +1,11 @@
+.shell {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-radius: var(--window-radius);
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+}

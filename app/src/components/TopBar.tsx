@@ -64,7 +64,7 @@ export function TopBar({
         variant="primary"
         selecting={selecting}
         icon={<DatabaseZap size={16} />}
-        label="Index my files"
+        label="Index all"
         selectingLabel="Index selected"
         onClick={selecting ? selection.onAdd : onIndexAll}
         disabled={selecting && selection.add === 0}
