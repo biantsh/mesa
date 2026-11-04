@@ -51,6 +51,7 @@ export interface Progress {
   done: number;
   total: number;
   paused: boolean;
+  updating: boolean;
 }
 
 export interface Overview {
@@ -62,6 +63,7 @@ export interface Overview {
 
 export interface Settings {
   gpuAcceleration: boolean;
+  turboIndexing: boolean;
 }
 
 export interface SearchHit {
@@ -124,6 +126,8 @@ export const api = {
   retryModelSetup: () => invoke<void>("retry_model_setup"),
   embeddingGpu: () => invoke<string | null>("embedding_gpu"),
   setGpuAcceleration: (enabled: boolean) => invoke<void>("set_gpu_acceleration", { enabled }),
+  setTurboIndexing: (enabled: boolean) => invoke<void>("set_turbo_indexing", { enabled }),
+  pagePainted: () => invoke<void>("page_painted"),
 };
 
 export function previewUrl(path: string): string {

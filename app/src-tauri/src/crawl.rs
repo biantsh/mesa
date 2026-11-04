@@ -4,13 +4,20 @@ use std::{
     thread,
 };
 
-use crate::index::lock;
+use crate::{index::lock, power};
 
 pub fn threads() -> usize {
     thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8)
 }
 
+pub const GENTLE_THREADS: usize = 2;
+
+#[cfg(test)]
 pub fn crawl(root: PathBuf, threads: usize, list: impl Fn(PathBuf) -> Vec<PathBuf> + Sync) {
+    crawl_gently(root, threads, false, list)
+}
+
+pub fn crawl_gently(root: PathBuf, threads: usize, gentle: bool, list: impl Fn(PathBuf) -> Vec<PathBuf> + Sync) {
     let crawl = Crawl {
         queue: Mutex::new(Queue {
             folders: vec![root],
@@ -22,6 +29,9 @@ pub fn crawl(root: PathBuf, threads: usize, list: impl Fn(PathBuf) -> Vec<PathBu
     thread::scope(|scope| {
         for _ in 0..threads.max(1) {
             scope.spawn(|| {
+                if gentle {
+                    power::give_way();
+                }
                 while let Some(folder) = crawl.next() {
                     let busy = Busy(&crawl);
                     let subfolders = list(folder);

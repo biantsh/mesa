@@ -238,8 +238,12 @@ pub fn clear_index(index: State<'_, Index>) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-pub fn index_everything(index: State<'_, Index>) -> Result<(), String> {
-    index.set_everything(&browse::roots())
+pub fn index_everything(app: AppHandle, index: State<'_, Index>) -> Result<(), String> {
+    let roots = browse::user_roots(app.path().home_dir().ok());
+    if roots.is_empty() {
+        return Err("Couldn't find your folders.".into());
+    }
+    index.set_everything(&roots)
 }
 
 #[tauri::command]
@@ -279,4 +283,30 @@ pub fn set_gpu_acceleration(
         return Err(format!("Couldn't save the setting. {e}"));
     }
     Ok(())
+}
+
+#[tauri::command(async)]
+pub fn set_turbo_indexing(
+    enabled: bool,
+    settings: State<'_, SettingsStore>,
+    index: State<'_, Index>,
+) -> Result<(), String> {
+    let before = settings.get();
+    let after = Settings {
+        turbo_indexing: enabled,
+        ..before
+    };
+    index.set_tuning(after.tuning())?;
+    if let Err(e) = settings.set(after) {
+        let _ = index.set_tuning(before.tuning());
+        return Err(format!("Couldn't save the setting. {e}"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn page_painted(window: tauri::WebviewWindow) {
+    if !crate::KEEP_HIDDEN.load(std::sync::atomic::Ordering::SeqCst) {
+        let _ = window.show();
+    }
 }

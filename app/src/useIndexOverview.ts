@@ -11,7 +11,8 @@ function sameProgress(a: Progress | null, b: Progress | null): boolean {
     a.found === b.found &&
     a.done === b.done &&
     a.total === b.total &&
-    a.paused === b.paused
+    a.paused === b.paused &&
+    a.updating === b.updating
   );
 }
 

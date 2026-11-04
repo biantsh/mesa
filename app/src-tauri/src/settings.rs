@@ -8,21 +8,34 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{embed::Device, index::lock};
+use crate::{
+    embed::Device,
+    index::{Tuning, lock},
+};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub gpu_acceleration: bool,
+    pub turbo_indexing: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { gpu_acceleration: true }
+        Self {
+            gpu_acceleration: true,
+            turbo_indexing: false,
+        }
     }
 }
 
 impl Settings {
+    pub fn tuning(&self) -> Tuning {
+        Tuning {
+            turbo: self.turbo_indexing,
+        }
+    }
+
     pub fn device(&self) -> Device {
         if self.gpu_acceleration {
             Device::Auto
@@ -89,6 +102,7 @@ mod tests {
         store
             .set(Settings {
                 gpu_acceleration: false,
+                ..Settings::default()
             })
             .unwrap();
         assert!(!SettingsStore::open(&dir).get().gpu_acceleration);
@@ -101,7 +115,8 @@ mod tests {
         assert_eq!(
             SettingsStore::open(&dir).get(),
             Settings {
-                gpu_acceleration: false
+                gpu_acceleration: false,
+                ..Settings::default()
             }
         );
         fs::write(dir.join(FILE), r#"{"fromTheFuture": 7}"#).unwrap();

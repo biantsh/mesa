@@ -136,6 +136,56 @@ pub fn roots() -> Vec<PathBuf> {
     vec![PathBuf::from("/")]
 }
 
+pub fn user_roots(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut candidates: Vec<PathBuf> = home.into_iter().collect();
+    candidates.extend(known_folders());
+    outermost(candidates.into_iter().filter(|folder| folder.is_dir()).collect())
+}
+
+fn outermost(mut folders: Vec<PathBuf>) -> Vec<PathBuf> {
+    folders.sort();
+    folders.dedup();
+    let mut kept: Vec<PathBuf> = Vec::new();
+    for folder in folders {
+        if !kept.iter().any(|above| folder.starts_with(above)) {
+            kept.push(folder);
+        }
+    }
+    kept
+}
+
+#[cfg(windows)]
+fn known_folders() -> Vec<PathBuf> {
+    use windows::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{
+            FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_Music, FOLDERID_Pictures,
+            FOLDERID_Videos, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+        },
+    };
+    [
+        FOLDERID_Desktop,
+        FOLDERID_Documents,
+        FOLDERID_Downloads,
+        FOLDERID_Music,
+        FOLDERID_Pictures,
+        FOLDERID_Videos,
+    ]
+    .iter()
+    .filter_map(|id| unsafe {
+        let path = SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None).ok()?;
+        let folder = path.to_string().ok().map(PathBuf::from);
+        CoTaskMemFree(Some(path.0 as *const _));
+        folder
+    })
+    .collect()
+}
+
+#[cfg(not(windows))]
+fn known_folders() -> Vec<PathBuf> {
+    Vec::new()
+}
+
 fn root_entries() -> Vec<Entry> {
     roots().iter().map(|root| Entry::drive(root)).collect()
 }
@@ -217,6 +267,25 @@ fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
         const HIDDEN: u32 = 0x2;
         const SYSTEM: u32 = 0x4;
         if let Ok(metadata) = item.metadata() {
+            return metadata.file_attributes() & (HIDDEN | SYSTEM) != 0;
+        }
+    }
+    false
+}
+
+pub fn is_hidden_path(path: &Path) -> bool {
+    if path
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+    {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const HIDDEN: u32 = 0x2;
+        const SYSTEM: u32 = 0x4;
+        if let Ok(metadata) = fs::symlink_metadata(path) {
             return metadata.file_attributes() & (HIDDEN | SYSTEM) != 0;
         }
     }

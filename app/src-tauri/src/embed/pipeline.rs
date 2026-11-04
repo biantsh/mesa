@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
@@ -41,6 +41,10 @@ pub trait Backend: Send + Sync + 'static {
         false
     }
 
+    fn set_eco(&self, _eco: bool) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn max_batch(&self) -> usize {
         8
     }
@@ -50,9 +54,12 @@ pub trait Backend: Send + Sync + 'static {
     }
 }
 
+const REST_AFTER_A_BATCH: f64 = 1.0;
+
 pub struct Pipeline<B: Backend> {
     backend: Arc<B>,
     preparers: usize,
+    eco: AtomicBool,
 }
 
 impl<B: Backend> Pipeline<B> {
@@ -61,6 +68,32 @@ impl<B: Backend> Pipeline<B> {
         Self {
             backend: Arc::new(backend),
             preparers: (cores / 2).clamp(2, 8),
+            eco: AtomicBool::new(false),
+        }
+    }
+
+    fn preparers(&self) -> usize {
+        if self.eco.load(Ordering::Relaxed) {
+            1
+        } else {
+            self.preparers
+        }
+    }
+
+    fn in_flight(&self) -> usize {
+        if self.eco.load(Ordering::Relaxed) {
+            1
+        } else {
+            self.backend.in_flight()
+        }
+    }
+
+    fn rest(&self, took: Duration, cancel: &AtomicBool) {
+        let mut left = took.mul_f64(REST_AFTER_A_BATCH);
+        while !left.is_zero() && self.eco.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+            let slice = left.min(Duration::from_millis(50));
+            thread::sleep(slice);
+            left -= slice;
         }
     }
 }
@@ -146,12 +179,13 @@ impl<B: Backend> Embedder for Pipeline<B> {
         let next = AtomicUsize::new(0);
         let cancel = AtomicBool::new(false);
         let failure: Mutex<Option<Error>> = Mutex::new(None);
-        let queue = backend.max_batch() * backend.in_flight() * 2;
+        let in_flight = self.in_flight();
+        let queue = backend.max_batch() * in_flight * 2;
         let (ready_in, ready_out) = bounded::<(usize, Unit)>(queue);
         let (event_in, event_out) = unbounded::<Event>();
 
         thread::scope(|scope| {
-            for _ in 0..self.preparers {
+            for _ in 0..self.preparers() {
                 let (ready_in, event_in) = (ready_in.clone(), event_in.clone());
                 let (next, cancel) = (&next, &cancel);
                 scope.spawn(move || {
@@ -182,7 +216,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
                     }
                 });
             }
-            for _ in 0..backend.in_flight() {
+            for _ in 0..in_flight {
                 let (ready_out, event_in) = (ready_out.clone(), event_in.clone());
                 let (cancel, failure) = (&cancel, &failure);
                 scope.spawn(move || {
@@ -196,6 +230,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
                             }
                         }
                         let inputs: Vec<&Prepared> = batch.iter().map(|(_, unit)| &unit.input).collect();
+                        let started = Instant::now();
                         match backend.embed_batch(&inputs) {
                             Ok(outputs) => {
                                 for ((item, unit), output) in batch.iter().zip(outputs) {
@@ -208,6 +243,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
                                         return;
                                     }
                                 }
+                                self.rest(started.elapsed(), cancel);
                             }
                             Err(error) => {
                                 lock(failure).get_or_insert(error);
@@ -274,6 +310,12 @@ impl<B: Backend> Embedder for Pipeline<B> {
 
     fn set_device(&self, device: Device) -> Result<(), Error> {
         self.backend.set_device(device)
+    }
+
+    fn set_eco(&self, eco: bool) -> Result<(), Error> {
+        self.backend.set_eco(eco)?;
+        self.eco.store(eco, Ordering::Relaxed);
+        Ok(())
     }
 
     fn gpu(&self) -> Option<String> {

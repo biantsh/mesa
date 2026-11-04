@@ -1,4 +1,5 @@
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
+import { api } from "./api";
 
 export function currentWindow(): Window | null {
   try {
@@ -17,7 +18,7 @@ export const windowControls = {
 export function showWhenPainted() {
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
-      void currentWindow()?.show().catch(() => {});
+      if (currentWindow()) void api.pagePainted().catch(() => {});
     }),
   );
 }

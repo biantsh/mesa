@@ -42,7 +42,7 @@ export function IndexProgress({ progress: current, onRefresh, onCancel, onError,
   const progress =
     current ??
     (leaving?.completed
-      ? { ...leaving.progress, counting: false, paused: false, done: leaving.progress.total }
+      ? { ...leaving.progress, counting: false, paused: false, updating: false, done: leaving.progress.total }
       : (leaving?.progress ?? null));
   if (!progress) return null;
 
@@ -51,6 +51,15 @@ export function IndexProgress({ progress: current, onRefresh, onCancel, onError,
       await api.setIndexingPaused(!progress.paused);
     } catch (e) {
       onError(`Couldn't ${progress.paused ? "resume" : "pause"} indexing. ${errorText(e)}`);
+    }
+    onRefresh();
+  };
+
+  const stopUpdating = async () => {
+    try {
+      await api.cancelIndexing();
+    } catch (e) {
+      onError(`Couldn't stop updating. ${errorText(e)}`);
     }
     onRefresh();
   };
@@ -69,9 +78,9 @@ export function IndexProgress({ progress: current, onRefresh, onCancel, onError,
             {progress.paused ? <Play size={18} aria-hidden /> : <Pause size={18} aria-hidden />}
           </IconButton>
           <IconButton
-            label="Cancel indexing"
-            tone="danger"
-            onClick={() => onCancel(cancelSubject(progress))}
+            label={progress.updating ? "Stop updating" : "Cancel indexing"}
+            tone={progress.updating ? undefined : "danger"}
+            onClick={progress.updating ? stopUpdating : () => onCancel(cancelSubject(progress))}
           >
             <X size={18} aria-hidden />
           </IconButton>
@@ -87,11 +96,11 @@ function cancelSubject({ name, queued }: Progress): string {
   return queued > 0 ? `${quoted(name)} and ${queued} more` : quoted(name);
 }
 
-export function Label({ progress: { name, queued } }: { progress: Progress }) {
+export function Label({ progress: { name, queued, updating } }: { progress: Progress }) {
   return (
     <span
       className={styles.label}
-      title={`Indexing ${quoted(name)}${queued > 0 ? ` + ${queued}` : ""}`}
+      title={`${updating ? "Updating" : "Indexing"} ${quoted(name)}${queued > 0 ? ` + ${queued}` : ""}`}
     >
       <span className={styles.name}>{name}</span>
       {queued > 0 && <span className={styles.fixed}>{`\u00a0+\u00a0${queued}`}</span>}

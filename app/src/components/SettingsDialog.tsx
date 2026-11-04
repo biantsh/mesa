@@ -2,6 +2,7 @@ import { useId, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useTheme } from "../theme";
+import { useTurboIndexing } from "../useTurboIndexing";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
 import { Switch } from "./Switch";
@@ -15,6 +16,7 @@ interface Props {
 export function SettingsDialog({ open, onClose }: Props) {
   const titleId = useId();
   const gpu = useGpuAcceleration();
+  const turbo = useTurboIndexing();
   return (
     <Modal open={open} onClose={onClose} className={styles.dialog} labelledBy={titleId}>
       {open && (
@@ -33,6 +35,7 @@ export function SettingsDialog({ open, onClose }: Props) {
             </Group>
             <Group title="Indexing">
               <GpuRow {...gpu} />
+              <TurboRow {...turbo} />
             </Group>
           </div>
         </div>
@@ -87,11 +90,35 @@ function ThemeRow() {
   );
 }
 
+function TurboRow({ enabled, pending, error, change }: ReturnType<typeof useTurboIndexing>) {
+  return (
+    <>
+      <Row
+        title="Turbo indexing"
+        description="Index at full speed. Faster, but uses more resources."
+        control={(ids) =>
+          enabled !== null ? (
+            <Switch checked={pending ?? enabled} disabled={pending !== null} onChange={change} {...ids} />
+          ) : (
+            <span className={styles.switchSpace} aria-hidden />
+          )
+        }
+      />
+      {error && (
+        <div className={styles.error} role="alert">
+          {error}
+        </div>
+      )}
+    </>
+  );
+}
+
 function GpuRow({ enabled, gpu, pending, error, change }: ReturnType<typeof useGpuAcceleration>) {
   const on = pending ?? (enabled === true && gpu != null);
   const known = enabled !== null && gpu !== undefined;
   const disabled = !known || gpu === null || pending !== null;
-  const note = !known ? "\u00a0" : (gpu ?? "No usable GPU found");
+
+  const note = !known ? "\u00a0" : (gpu ? `Use your ${gpu}` : "No usable GPU found");
 
   return (
     <>

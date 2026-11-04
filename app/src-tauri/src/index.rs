@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
     fs,
     ops::Bound,
     path::{Path, PathBuf},
@@ -15,7 +15,7 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    browse,
+    browse, crawl,
     embed::{Device, Embedder, ModelStatus},
     indexer,
     progress::{Progress, ProgressState},
@@ -64,6 +64,36 @@ pub struct Job {
     pub root: PathBuf,
     pub ticket: u64,
     pub waiting: bool,
+    pub quiet: bool,
+}
+
+#[derive(Default)]
+pub struct Quiet {
+    order: VecDeque<PathBuf>,
+    queued: HashSet<PathBuf>,
+}
+
+impl Quiet {
+    pub fn add(&mut self, path: PathBuf) -> bool {
+        if path.ancestors().any(|above| self.queued.contains(above)) {
+            return false;
+        }
+        self.queued.insert(path.clone());
+        self.order.push_back(path);
+        true
+    }
+
+    pub fn again(&mut self, path: PathBuf) {
+        if self.queued.insert(path.clone()) {
+            self.order.push_front(path);
+        }
+    }
+
+    pub fn next(&mut self) -> Option<PathBuf> {
+        let path = self.order.pop_front()?;
+        self.queued.remove(&path);
+        Some(path)
+    }
 }
 
 pub struct Shared {
@@ -75,9 +105,22 @@ pub struct Shared {
     pub pending: Mutex<Pending>,
     pub progress: Mutex<ProgressState>,
     pub control: Control,
+    pub quiet: Mutex<Quiet>,
+    pub urgent: std::sync::atomic::AtomicUsize,
     pub embedder: Arc<dyn Embedder>,
     pub finished_new: AtomicU64,
     pub landed_new: AtomicU64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tuning {
+    pub turbo: bool,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self { turbo: true }
+    }
 }
 
 pub struct Control {
@@ -88,12 +131,22 @@ pub struct Control {
 struct ControlState {
     paused: bool,
     epoch: u64,
+    tuning: Tuning,
 }
 
 impl Control {
+    #[cfg(test)]
     pub fn new(paused: bool) -> Self {
+        Self::with_tuning(paused, Tuning::default())
+    }
+
+    pub fn with_tuning(paused: bool, tuning: Tuning) -> Self {
         Self {
-            state: Mutex::new(ControlState { paused, epoch: 0 }),
+            state: Mutex::new(ControlState {
+                paused,
+                epoch: 0,
+                tuning,
+            }),
             changed: Condvar::new(),
         }
     }
@@ -105,6 +158,17 @@ impl Control {
     pub fn set_paused(&self, paused: bool) {
         let mut state = lock(&self.state);
         state.paused = paused;
+        state.epoch += 1;
+        self.changed.notify_all();
+    }
+
+    pub fn tuning(&self) -> Tuning {
+        lock(&self.state).tuning
+    }
+
+    pub fn set_tuning(&self, tuning: Tuning) {
+        let mut state = lock(&self.state);
+        state.tuning = tuning;
         state.epoch += 1;
         self.changed.notify_all();
     }
@@ -132,6 +196,18 @@ impl Control {
 }
 
 impl Shared {
+    pub fn is_gentle(&self) -> bool {
+        !self.control.tuning().turbo
+    }
+
+    pub fn crawl_threads(&self) -> usize {
+        if self.is_gentle() {
+            crawl::GENTLE_THREADS
+        } else {
+            crawl::threads()
+        }
+    }
+
     pub fn is_indexed(&self, path: &Path) -> bool {
         !unindexable::is_unindexable(path) && !self.is_excluded(path) && effective(&lock(&self.rules), path)
     }
@@ -170,6 +246,7 @@ pub struct Index {
     counted: Mutex<Option<Counted>>,
     latest_search: Mutex<Option<Arc<Ranking>>>,
     search_ids: AtomicU64,
+    watching: Mutex<Option<crate::watch::Watching>>,
 }
 
 #[derive(Clone, Copy)]
@@ -188,7 +265,12 @@ pub struct Stats {
 const COUNT_MAX_AGE: Duration = Duration::from_millis(750);
 
 impl Index {
+    #[cfg(test)]
     pub fn open(dir: &Path, embedder: Arc<dyn Embedder>) -> store::Result<Self> {
+        Self::open_with(dir, embedder, Tuning::default())
+    }
+
+    pub fn open_with(dir: &Path, embedder: Arc<dyn Embedder>, tuning: Tuning) -> store::Result<Self> {
         let store = Store::open(dir)?;
         let rules = store.load_rules()?;
         let excluded = store.load_exclusions()?;
@@ -212,7 +294,9 @@ impl Index {
             excluded: Mutex::new(excluded),
             pending: Mutex::new(Pending::default()),
             progress: Mutex::new(ProgressState::default()),
-            control: Control::new(paused && !unfinished.is_empty()),
+            control: Control::with_tuning(paused && !unfinished.is_empty(), tuning),
+            quiet: Mutex::default(),
+            urgent: Default::default(),
             embedder,
             finished_new: AtomicU64::new(0),
             landed_new: AtomicU64::new(0),
@@ -232,11 +316,16 @@ impl Index {
             counted: Mutex::new(None),
             latest_search: Mutex::new(None),
             search_ids: AtomicU64::new(0),
+            watching: Mutex::new(None),
         };
         for (id, root) in unfinished {
             index.queue_job(id, root);
         }
         Ok(index)
+    }
+
+    pub fn shut_down(&self) {
+        self.shared.embedder.release();
     }
 
     pub fn status(&self, path: &Path) -> IndexStatus {
@@ -585,6 +674,36 @@ impl Index {
         lock(&self.shared.progress).snapshot(paused)
     }
 
+    pub fn set_tuning(&self, tuning: Tuning) -> Result<(), String> {
+        let before = self.shared.control.tuning();
+        if before.turbo != tuning.turbo {
+            self.shared.embedder.set_eco(!tuning.turbo).map_err(|e| e.to_string())?;
+        }
+        self.shared.control.set_tuning(tuning);
+        Ok(())
+    }
+
+    pub fn check_for_changes(&self) {
+        let roots: Vec<PathBuf> = lock(&self.shared.rules)
+            .iter()
+            .filter(|(_, indexed)| **indexed)
+            .map(|(root, _)| root.clone())
+            .collect();
+        self.check_later(roots);
+    }
+
+    pub fn check_later(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        self.chores().check_later(paths);
+    }
+
+    pub fn start_watching(&self) {
+        self.start_watching_with(crate::watch::SETTLE);
+    }
+
+    pub fn start_watching_with(&self, settle: Duration) {
+        *lock(&self.watching) = Some(crate::watch::start(self.chores(), settle));
+    }
+
     pub fn set_paused(&self, paused: bool) -> Result<(), String> {
         let store = lock(&self.shared.store);
         if paused && !lock(&self.shared.progress).is_active() {
@@ -594,6 +713,10 @@ impl Index {
     }
 
     pub fn cancel(&self) -> Result<(), String> {
+        if lock(&self.shared.progress).cancel_check() {
+            self.shared.control.poke();
+            return Ok(());
+        }
         let cancelled = lock(&self.shared.progress).cancel_all();
         let ids: Vec<i64> = cancelled.iter().map(|(id, _)| *id).collect();
         let roots: Vec<PathBuf> = cancelled.into_iter().map(|(_, root)| root).collect();
@@ -643,8 +766,84 @@ impl Index {
             root,
             ticket,
             waiting: !first,
+            quiet: false,
         };
+        self.shared.urgent.fetch_add(1, Ordering::SeqCst);
         let _ = lock(&self.queue).send(job);
+    }
+
+    fn chores(&self) -> Chores {
+        Chores {
+            shared: self.shared.clone(),
+            queue: lock(&self.queue).clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Chores {
+    shared: Arc<Shared>,
+    queue: Sender<Job>,
+}
+
+impl Chores {
+    pub fn check_later(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        let added = {
+            let mut quiet = lock(&self.shared.quiet);
+            paths.into_iter().fold(false, |added, path| quiet.add(path) | added)
+        };
+        if added {
+            let _ = self.queue.send(Job {
+                id: 0,
+                root: PathBuf::new(),
+                ticket: 0,
+                waiting: false,
+                quiet: true,
+            });
+        }
+    }
+
+    pub fn forget(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        let gone: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| self.shared.is_indexed(path) && indexer::is_gone(path))
+            .collect();
+        if gone.is_empty() {
+            return;
+        }
+        if let Err(e) = lock(&self.shared.store).remove_paths(&gone) {
+            eprintln!("Mesa: couldn't forget what has been deleted: {e}");
+        }
+    }
+
+    pub fn moved(&self, from: &Path, to: &Path) {
+        let wanted = self.shared.is_indexed(to);
+        let followed = wanted
+            && match lock(&self.shared.store).rename_path(from, to) {
+                Ok(followed) => followed,
+                Err(e) => {
+                    eprintln!("Mesa: couldn't follow {} to {}: {e}", from.display(), to.display());
+                    false
+                }
+            };
+        if !followed && let Err(e) = lock(&self.shared.store).remove_paths(&[from.to_owned()]) {
+            eprintln!("Mesa: couldn't forget {}, which has been moved: {e}", from.display());
+        }
+        if wanted {
+            self.check_later([to.to_owned()]);
+        }
+    }
+
+    pub fn roots(&self) -> BTreeSet<PathBuf> {
+        lock(&self.shared.rules)
+            .iter()
+            .filter(|(_, indexed)| **indexed)
+            .map(|(root, _)| root.clone())
+            .collect()
+    }
+
+    pub fn is_indexed(&self, path: &Path) -> bool {
+        self.shared.is_indexed(path)
     }
 }
 
@@ -819,6 +1018,7 @@ mod tests {
             path: photos.clone(),
             files: vec![a],
             complete: false,
+            subfolders: None,
         };
         store.write_scans(&[scan], &|_| true).unwrap();
         store.set_paused(paused).unwrap();
@@ -903,5 +1103,43 @@ mod tests {
         };
         f.settle();
         assert_eq!(f.count("files"), 4);
+    }
+
+    fn wait_until(what: &str, condition: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !condition() {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "{what}: it didn't come about"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn forgets_deleted_root_on_start() {
+        let f = Fixture::new("check-root-gone");
+        f.index.set(&f.photos, true).unwrap();
+        f.settle();
+        let Fixture {
+            data,
+            photos,
+            index,
+            _root,
+        } = f;
+        drop(index);
+        fs::remove_dir_all(&photos).unwrap();
+
+        let index = Index::open(&data, embedder()).unwrap();
+        index.check_for_changes();
+        let f = Fixture {
+            data,
+            photos,
+            index,
+            _root,
+        };
+        wait_until("the check", || f.count("files") == 0);
+        assert_eq!(f.count("embeddings"), 0);
+        assert_eq!(f.count("free_slots"), 4);
     }
 }

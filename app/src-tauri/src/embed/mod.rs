@@ -76,6 +76,10 @@ pub trait Embedder: Send + Sync {
         Ok(())
     }
 
+    fn set_eco(&self, _eco: bool) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn gpu(&self) -> Option<String> {
         None
     }

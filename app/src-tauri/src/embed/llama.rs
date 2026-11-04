@@ -138,6 +138,7 @@ impl Drop for Running {
 pub struct LlamaServer {
     locations: Locations,
     device: Mutex<Device>,
+    eco: Mutex<bool>,
     running: Mutex<Option<Running>>,
     generation: AtomicU64,
     gpu: OnceLock<Option<String>>,
@@ -157,6 +158,7 @@ impl LlamaServer {
         Self {
             locations,
             device: Mutex::new(Device::Auto),
+            eco: Mutex::new(false),
             running: Mutex::new(None),
             generation: AtomicU64::new(0),
             gpu: OnceLock::new(),
@@ -229,7 +231,8 @@ impl LlamaServer {
 
     fn launch_new(&self, device: Device) -> Result<Running, Error> {
         self.model.set(ModelStatus::Starting);
-        let mut server = launch(&self.locations, device).inspect_err(|e| {
+        let eco = *lock(&self.eco);
+        let mut server = launch(&self.locations, device, eco).inspect_err(|e| {
             self.model.set(ModelStatus::Failed {
                 reason: e.0.clone(),
                 setup: false,
@@ -375,6 +378,24 @@ impl Backend for LlamaServer {
         Ok(())
     }
 
+    fn set_eco(&self, eco: bool) -> Result<(), Error> {
+        let mut running = lock(&self.running);
+        let mut current = lock(&self.eco);
+        if *current == eco {
+            return Ok(());
+        }
+        *current = eco;
+        if running.is_none() {
+            return Ok(());
+        }
+        let device = *lock(&self.device);
+        drop(current);
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        *running = None;
+        *running = Some(self.launch_new(device)?);
+        Ok(())
+    }
+
     fn gpu(&self) -> Option<String> {
         self.gpu.get_or_init(|| find_gpu(&self.locations)).clone()
     }
@@ -479,7 +500,15 @@ fn brief(text: &str) -> String {
     }
 }
 
-fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
+fn server_threads(eco: bool) -> usize {
+    if eco {
+        2
+    } else {
+        thread::available_parallelism().map_or(4, |n| n.get()).min(8)
+    }
+}
+
+fn launch(locations: &Locations, device: Device, eco: bool) -> Result<Running, Error> {
     if let Some(problem) = locations.problem() {
         return Err(Error(problem));
     }
@@ -496,10 +525,7 @@ fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
         File::create(&locations.log).map_err(|e| Error(format!("can't write {}: {e}", locations.log.display())))?;
     let log_for_errors = log.try_clone().map_err(|e| Error(e.to_string()))?;
 
-    let threads = thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .min(8)
-        .to_string();
+    let threads = server_threads(eco).to_string();
     let mut command = Command::new(locations.server());
     command
         .current_dir(&locations.runtime)
@@ -524,7 +550,12 @@ fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        command.creation_flags(if eco {
+            CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        } else {
+            CREATE_NO_WINDOW
+        });
     }
     let child = command
         .spawn()

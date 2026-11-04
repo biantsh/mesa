@@ -143,6 +143,7 @@ pub struct ScannedDir {
     pub path: PathBuf,
     pub files: Vec<ScannedFile>,
     pub complete: bool,
+    pub subfolders: Option<Vec<String>>,
 }
 
 pub struct Store {
@@ -337,6 +338,9 @@ impl Store {
                             .execute([old.id])?;
                     }
                 }
+                if let (Some(dir), Some(present)) = (dir_id, &scan.subfolders) {
+                    forget_missing_folders(&tx, dir, present)?;
+                }
             }
         }
 
@@ -377,6 +381,62 @@ impl Store {
     #[cfg(test)]
     pub fn remove_path(&mut self, path: &Path) -> Result<()> {
         self.remove_paths(std::slice::from_ref(&path.to_path_buf()))
+    }
+
+    pub fn rename_path(&mut self, from: &Path, to: &Path) -> Result<bool> {
+        let (Some(to_parent), Some(to_name)) = (to.parent(), to.file_name()) else {
+            return Ok(false);
+        };
+        let to_name = to_name.to_string_lossy().into_owned();
+        let tx = self.conn.transaction()?;
+
+        if let Some(id) = find_dir(&tx, from)? {
+            let parent = ensure_dir(&tx, to_parent)?;
+            if let Some(stale) = child_dir(&tx, parent, &to_name)?
+                && stale != id
+            {
+                tx.execute("DELETE FROM dirs WHERE id = ?1", [stale])?;
+            }
+            tx.execute(
+                "UPDATE dirs SET parent_id = ?1, name = ?2 WHERE id = ?3",
+                params![parent, to_name, id],
+            )?;
+            tx.commit()?;
+            return Ok(true);
+        }
+
+        let (Some(from_parent), Some(from_name)) = (from.parent(), from.file_name()) else {
+            return Ok(false);
+        };
+        let Some(from_dir) = find_dir(&tx, from_parent)? else {
+            return Ok(false);
+        };
+        let file: Option<i64> = tx
+            .query_row(
+                "SELECT id FROM files WHERE dir_id = ?1 AND name = ?2",
+                params![from_dir, from_name.to_string_lossy()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let Some(file) = file else { return Ok(false) };
+        match crate::browse::category_of(&to_name) {
+            Some(category) => {
+                let dir = ensure_dir(&tx, to_parent)?;
+                tx.execute(
+                    "DELETE FROM files WHERE dir_id = ?1 AND name = ?2 AND id != ?3",
+                    params![dir, to_name, file],
+                )?;
+                tx.execute(
+                    "UPDATE files SET dir_id = ?1, name = ?2, category = ?3 WHERE id = ?4",
+                    params![dir, to_name, category_code(category), file],
+                )?;
+            }
+            None => {
+                tx.execute("DELETE FROM files WHERE id = ?1", [file])?;
+            }
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     pub fn remove_paths(&mut self, paths: &[PathBuf]) -> Result<()> {
@@ -657,6 +717,20 @@ fn ensure_dir(conn: &Connection, path: &Path) -> Result<i64> {
     Ok(id)
 }
 
+fn forget_missing_folders(tx: &Transaction, parent: i64, present: &[String]) -> Result<()> {
+    let present: HashSet<String> = present.iter().map(|name| name.to_lowercase()).collect();
+    let stored: Vec<(i64, String)> = tx
+        .prepare_cached("SELECT id, name FROM dirs WHERE parent_id = ?1 AND id != ?1")?
+        .query_map([parent], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, name) in stored {
+        if !present.contains(&name.to_lowercase()) {
+            tx.prepare_cached("DELETE FROM dirs WHERE id = ?1")?.execute([id])?;
+        }
+    }
+    Ok(())
+}
+
 struct StoredFile {
     id: i64,
     modified_ms: i64,
@@ -778,6 +852,7 @@ mod tests {
             path: folder(name),
             files,
             complete: true,
+            subfolders: None,
         }
     }
 
@@ -824,6 +899,36 @@ mod tests {
         let vector = store.vectors.read(slot_of(&store, "a", "a.jpg")).unwrap();
         assert_eq!(vector.len(), DIMS);
         assert!(vector.iter().any(|v| v.to_f32() != 0.0));
+    }
+
+    #[test]
+    fn rename_folder_keeps_vectors() {
+        let mut store = Store::open(&temp_dir("rename-folder")).unwrap();
+        write(
+            &mut store,
+            &[
+                scan("p/old", vec![file("a.jpg", 1)]),
+                scan("p/old/deep", vec![file("b.jpg", 1)]),
+            ],
+        );
+        let (slot_a, slot_b) = (
+            slot_of(&store, "p/old", "a.jpg"),
+            slot_of(&store, "p/old/deep", "b.jpg"),
+        );
+
+        assert!(store.rename_path(&folder("p/old"), &folder("p/new")).unwrap());
+
+        assert_eq!(slot_of(&store, "p/new", "a.jpg"), slot_a);
+        assert_eq!(slot_of(&store, "p/new/deep", "b.jpg"), slot_b);
+        assert!(find_dir(&store.conn, &folder("p/old")).unwrap().is_none());
+        assert_eq!(
+            (
+                count(&store, "files"),
+                count(&store, "embeddings"),
+                count(&store, "free_slots")
+            ),
+            (2, 2, 0)
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub struct Progress {
     pub done: u64,
     pub total: u64,
     pub paused: bool,
+    pub updating: bool,
 }
 
 struct ActiveJob {
@@ -21,6 +22,7 @@ struct ActiveJob {
     id: i64,
     root: PathBuf,
     started: bool,
+    quiet: bool,
 }
 
 #[derive(Default)]
@@ -42,12 +44,38 @@ impl ProgressState {
             id,
             root,
             started: false,
+            quiet: false,
         });
         (self.next_ticket, first)
     }
 
+    pub fn add_quiet(&mut self, root: PathBuf) -> u64 {
+        if self.jobs.is_empty() {
+            self.reset_numbers();
+        }
+        self.next_ticket += 1;
+        self.jobs.push(ActiveJob {
+            ticket: self.next_ticket,
+            id: 0,
+            root,
+            started: true,
+            quiet: true,
+        });
+        self.next_ticket
+    }
+
+    pub fn add_total(&mut self, ticket: u64, files: u64) {
+        if self.is_current(ticket) {
+            self.total += files;
+        }
+    }
+
+    pub fn has(&self, ticket: u64) -> bool {
+        self.jobs.iter().any(|job| job.ticket == ticket)
+    }
+
     pub fn drop_job(&mut self, root: &Path) -> Option<i64> {
-        let position = self.jobs.iter().position(|job| job.root == root)?;
+        let position = self.jobs.iter().position(|job| !job.quiet && job.root == root)?;
         if position == 0 {
             self.reset_numbers();
         }
@@ -57,13 +85,13 @@ impl ProgressState {
     pub fn roots_under(&self, path: &Path) -> Vec<PathBuf> {
         self.jobs
             .iter()
-            .filter(|job| job.root.starts_with(path))
+            .filter(|job| !job.quiet && job.root.starts_with(path))
             .map(|job| job.root.clone())
             .collect()
     }
 
     pub fn is_job_root(&self, root: &Path) -> bool {
-        self.jobs.iter().any(|job| job.root == root)
+        self.jobs.iter().any(|job| !job.quiet && job.root == root)
     }
 
     pub fn is_waiting(&self, path: &Path) -> bool {
@@ -78,7 +106,20 @@ impl ProgressState {
 
     pub fn cancel_all(&mut self) -> Vec<(i64, PathBuf)> {
         self.reset_numbers();
-        self.jobs.drain(..).map(|job| (job.id, job.root)).collect()
+        self.jobs
+            .drain(..)
+            .filter(|job| !job.quiet)
+            .map(|job| (job.id, job.root))
+            .collect()
+    }
+
+    pub fn cancel_check(&mut self) -> bool {
+        if !self.jobs.first().is_some_and(|job| job.quiet) {
+            return false;
+        }
+        self.reset_numbers();
+        self.jobs.remove(0);
+        true
     }
 
     fn is_current(&self, ticket: u64) -> bool {
@@ -140,6 +181,7 @@ impl ProgressState {
             done: self.done.min(self.total),
             total: self.total,
             paused,
+            updating: current.quiet,
         })
     }
 }

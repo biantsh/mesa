@@ -1,8 +1,11 @@
 use std::{
     collections::HashSet,
-    fs, mem,
+    fs, io, mem,
     path::{Path, PathBuf},
-    sync::{atomic::Ordering, mpsc::Receiver},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, TryRecvError},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -11,9 +14,10 @@ use crossbeam_channel::bounded;
 
 use crate::{
     browse::{self, Shown},
-    crawl::{self, crawl},
+    crawl::crawl_gently,
     embed::{Item, Outcome},
     index::{Job, Shared, lock},
+    power,
     store::{ScannedDir, ScannedFile},
     unindexable,
 };
@@ -24,7 +28,38 @@ const CHUNK_FILES: usize = 512;
 const LISTED_AHEAD: usize = 1024;
 
 pub fn work(shared: &Shared, jobs: Receiver<Job>) {
-    for job in jobs {
+    let mut gentle = false;
+    loop {
+        let wanted = !shared.control.tuning().turbo;
+        if wanted != gentle {
+            if wanted {
+                power::give_way()
+            } else {
+                power::stop_giving_way()
+            }
+            gentle = wanted;
+        }
+        let job = match jobs.try_recv() {
+            Ok(job) => job,
+            Err(TryRecvError::Disconnected) => break,
+            Err(TryRecvError::Empty) => {
+                let next = lock(&shared.quiet).next();
+                if let Some(path) = next {
+                    check(shared, &path);
+                    continue;
+                }
+                match jobs.recv() {
+                    Ok(job) => job,
+                    Err(_) => break,
+                }
+            }
+        };
+        if job.quiet {
+            continue;
+        }
+        let _ = shared
+            .urgent
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)));
         if job.waiting {
             lock(&shared.pending).add(job.root.clone());
         }
@@ -53,9 +88,39 @@ pub fn work(shared: &Shared, jobs: Receiver<Job>) {
     }
 }
 
+fn check(shared: &Shared, path: &Path) {
+    if is_gone(path) {
+        if let Err(e) = lock(&shared.store).remove_paths(&[path.to_owned()]) {
+            eprintln!("Mesa: couldn't forget {}, which has gone: {e}", path.display());
+        }
+        return;
+    }
+    shared.control.wait_while_paused();
+    if !shared.is_indexed(path) {
+        return;
+    }
+    walk_tree(shared, 0, path, true);
+    if shared.urgent.load(Ordering::SeqCst) > 0 {
+        lock(&shared.quiet).again(path.to_owned());
+    }
+    if shared.control.is_paused() && !lock(&shared.progress).is_active() {
+        let store = lock(&shared.store);
+        let _ = shared.set_paused(&store, false);
+    }
+}
+
+pub fn is_gone(path: &Path) -> bool {
+    let missing = matches!(fs::symlink_metadata(path), Err(e) if e.kind() == io::ErrorKind::NotFound);
+    missing
+        && path
+            .ancestors()
+            .skip(1)
+            .any(|above| fs::symlink_metadata(above).is_ok())
+}
+
 fn count_files(shared: &Shared, ticket: u64, root: &Path) {
     if root.is_dir() {
-        crawl(root.to_owned(), crawl::threads(), |dir| {
+        crawl_gently(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
             shared.control.wait_while_paused();
             if !shared.is_indexed(&dir) {
                 return Vec::new();
@@ -83,18 +148,31 @@ fn count_files(shared: &Shared, ticket: u64, root: &Path) {
 }
 
 fn walk(shared: &Shared, ticket: u64, root: &Path) -> bool {
-    let mut walker = Walker::new(shared, ticket);
+    walk_tree(shared, ticket, root, false)
+}
+
+fn walk_tree(shared: &Shared, ticket: u64, root: &Path, quiet: bool) -> bool {
+    let mut walker = Walker::new(shared, ticket, quiet, root);
+    let abandoned = AtomicBool::new(false);
 
     if root.is_dir() {
         let (listed, found) = bounded::<ScannedDir>(LISTED_AHEAD);
+        let abandoned = &abandoned;
         thread::scope(|scope| {
             scope.spawn(move || {
-                crawl(root.to_owned(), crawl::threads(), |dir| {
+                crawl_gently(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
                     shared.control.wait_while_paused();
 
-                    let found = if shared.is_indexed(&dir) { scan_dir(&dir) } else { None };
-
+                    let found = if shared.is_indexed(&dir)
+                        && !abandoned.load(Ordering::Relaxed)
+                        && !(quiet && shared.urgent.load(Ordering::SeqCst) > 0)
                     {
+                        scan_dir(&dir)
+                    } else {
+                        None
+                    };
+
+                    if !quiet {
                         let mut pending = lock(&shared.pending);
                         if let Some(found) = &found {
                             found.subdirs.iter().for_each(|sub| pending.add(sub.clone()));
@@ -117,6 +195,10 @@ fn walk(shared: &Shared, ticket: u64, root: &Path) -> bool {
 
             for scan in found {
                 walker.stored &= walker.batch.pause_point(shared);
+                if walker.dropped() {
+                    abandoned.store(true, Ordering::Relaxed);
+                    break;
+                }
                 walker.add(scan);
                 if walker.waiting() >= CHUNK_FILES {
                     walker.embed_waiting();
@@ -129,11 +211,15 @@ fn walk(shared: &Shared, ticket: u64, root: &Path) -> bool {
     } else {
         match scan_file(root).filter(|_| shared.is_indexed(root)) {
             Some(scan) => walker.add(scan),
-            None => lock(&shared.pending).release(root),
+            None => walker.release(root),
         }
     }
     walker.embed_waiting();
-    walker.stored & walker.batch.store(shared)
+    let stored = walker.stored & walker.batch.store(shared);
+    if quiet && walker.batch.ticket != 0 {
+        lock(&shared.progress).finish_job(walker.batch.ticket);
+    }
+    stored
 }
 
 struct Walker<'a> {
@@ -145,13 +231,17 @@ struct Walker<'a> {
     stored: bool,
     warmed_up: bool,
     new_files: HashSet<PathBuf>,
+    quiet: bool,
+    root: PathBuf,
 }
 
 impl<'a> Walker<'a> {
-    fn new(shared: &'a Shared, ticket: u64) -> Self {
+    fn new(shared: &'a Shared, ticket: u64, quiet: bool, root: &Path) -> Self {
         Self {
             shared,
-            batch: Batch::new(ticket),
+            quiet,
+            root: root.to_owned(),
+            batch: Batch::new(ticket, quiet),
             folders: Vec::new(),
             waiting: Vec::new(),
             failed: false,
@@ -163,6 +253,24 @@ impl<'a> Walker<'a> {
 
     fn waiting(&self) -> usize {
         self.waiting.len()
+    }
+
+    fn dropped(&self) -> bool {
+        self.quiet && self.batch.ticket != 0 && !lock(&self.shared.progress).has(self.batch.ticket)
+    }
+
+    fn show(&mut self, files: usize) {
+        let mut progress = lock(&self.shared.progress);
+        if self.batch.ticket == 0 {
+            self.batch.ticket = progress.add_quiet(self.root.clone());
+        }
+        progress.add_total(self.batch.ticket, files as u64);
+    }
+
+    fn release(&self, path: &Path) {
+        if !self.quiet {
+            lock(&self.shared.pending).release(path);
+        }
     }
 
     fn fail(&mut self) {
@@ -179,6 +287,7 @@ impl<'a> Walker<'a> {
         }
         let changes = lock(&self.shared.store).changes(&scan).ok();
         let index = self.folders.len();
+        let waiting_before = self.waiting.len();
         let mut up_to_date = 0;
         for (n, file) in scan.files.iter().enumerate() {
             if changes
@@ -196,7 +305,12 @@ impl<'a> Walker<'a> {
         }
         if up_to_date > 0 {
             self.batch.files += up_to_date;
-            lock(&self.shared.progress).processed(self.batch.ticket, up_to_date as u64);
+            if !self.quiet {
+                lock(&self.shared.progress).processed(self.batch.ticket, up_to_date as u64);
+            }
+        }
+        if self.quiet && self.waiting.len() > waiting_before {
+            self.show(self.waiting.len() - waiting_before);
         }
         if !self.warmed_up && !self.waiting.is_empty() {
             self.warmed_up = true;
@@ -211,6 +325,7 @@ impl<'a> Walker<'a> {
 
     fn embed_waiting(&mut self) {
         let shared = self.shared;
+        let quiet = self.quiet;
         let mut folders = mem::take(&mut self.folders);
         let places = mem::take(&mut self.waiting);
         let mut left: Vec<usize> = (0..places.len()).collect();
@@ -221,11 +336,12 @@ impl<'a> Walker<'a> {
         };
 
         while !left.is_empty() {
+            let dropped = self.dropped();
             left.retain(|&n| {
                 let path = path_of(&folders, places[n]);
-                let wanted = shared.is_indexed(&path);
+                let wanted = !dropped && shared.is_indexed(&path);
                 if !wanted {
-                    lock(&shared.pending).release(&path);
+                    quiet_aware_release(shared, quiet, &path);
                 }
                 wanted
             });
@@ -234,7 +350,7 @@ impl<'a> Walker<'a> {
             }
             if self.failed {
                 for &n in &left {
-                    lock(&shared.pending).release(&path_of(&folders, places[n]));
+                    quiet_aware_release(shared, quiet, &path_of(&folders, places[n]));
                 }
                 lock(&shared.progress).processed(self.batch.ticket, left.len() as u64);
                 break;
@@ -271,6 +387,7 @@ impl<'a> Walker<'a> {
                         path: folders[folder].path.clone(),
                         files: vec![file],
                         complete: false,
+                        subfolders: None,
                     });
                     batch.files += 1;
                     lock(&shared.progress).processed(batch.ticket, 1);
@@ -302,12 +419,18 @@ impl<'a> Walker<'a> {
 
         self.new_files.clear();
 
-        if !self.failed {
+        if !self.failed && !self.dropped() {
             for folder in folders.drain(..).filter(|folder| folder.complete) {
                 self.batch.files += folder.files.len();
                 self.batch.scans.push(folder);
             }
         }
+    }
+}
+
+fn quiet_aware_release(shared: &Shared, quiet: bool, path: &Path) {
+    if !quiet {
+        lock(&shared.pending).release(path);
     }
 }
 
@@ -318,10 +441,11 @@ struct Batch {
     new: u64,
     started: Instant,
     ticket: u64,
+    quiet: bool,
 }
 
 impl Batch {
-    fn new(ticket: u64) -> Self {
+    fn new(ticket: u64, quiet: bool) -> Self {
         Self {
             scans: Vec::new(),
             finished: Vec::new(),
@@ -329,6 +453,7 @@ impl Batch {
             new: 0,
             started: Instant::now(),
             ticket,
+            quiet,
         }
     }
 
@@ -358,9 +483,12 @@ impl Batch {
             shared.landed_new.fetch_add(mem::take(&mut self.new), Ordering::SeqCst);
             drop(store);
         }
-        let mut pending = lock(&shared.pending);
-        self.finished.drain(..).for_each(|path| pending.release(&path));
-        drop(pending);
+        if self.quiet {
+            self.finished.clear();
+        } else {
+            let mut pending = lock(&shared.pending);
+            self.finished.drain(..).for_each(|path| pending.release(&path));
+        }
         self.scans.clear();
         self.files = 0;
         self.started = Instant::now();
@@ -420,11 +548,19 @@ fn scan_dir(dir: &Path) -> Option<Found> {
         },
     })?;
     let complete = all_listed && !unreadable_file;
+    let subfolders = complete.then(|| {
+        subdirs
+            .iter()
+            .filter_map(|sub| sub.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .collect()
+    });
     Some(Found {
         scan: ScannedDir {
             path: dir.to_owned(),
             files,
             complete,
+            subfolders,
         },
         subdirs,
     })
@@ -444,6 +580,7 @@ fn scan_file(path: &Path) -> Option<ScannedDir> {
             vectors: Vec::new(),
         }],
         complete: false,
+        subfolders: None,
     })
 }
 
@@ -582,6 +719,8 @@ mod tests {
             finished_new: std::sync::atomic::AtomicU64::new(0),
             landed_new: std::sync::atomic::AtomicU64::new(0),
             control: Control::new(false),
+            quiet: Default::default(),
+            urgent: Default::default(),
             embedder: embedder.clone(),
         });
         let ticket = {
