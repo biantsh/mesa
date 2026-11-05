@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import { THEME_EVENT, chosenTheme, followTheme, type Theme } from "./theme";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { useIndexOverview } from "./useIndexOverview";
 import { useModelStatus } from "./useModelStatus";
+import { useTauriEvent } from "./useTauriEvent";
+import { useBlockContextMenu } from "./window";
 import styles from "./Widget.module.css";
-
-const OPEN_ON_TOP = "dialog[open], [role='menu']";
 
 export default function Widget() {
   const [shown, setShown] = useState(0);
   const [there, setThere] = useState(false);
   const home = useRef<HomeHandle>(null);
+  const frame = useRef(0);
   const overview = useIndexOverview(true);
   const model = useModelStatus();
   const retryModel = useCallback(() => void api.retryModelSetup().catch(() => {}), []);
@@ -20,27 +20,22 @@ export default function Widget() {
   const openSettings = useCallback(() => void api.openMain("settings").catch(() => {}), []);
   const hide = useCallback(() => void api.hideWidget().catch(() => {}), []);
 
-  useEffect(() => {
-    let frame = 0;
-    const hidden = listen("widget-hidden", () => {
-      cancelAnimationFrame(frame);
-      setThere(false);
+  useTauriEvent("widget-hidden", () => {
+    cancelAnimationFrame(frame.current);
+    setThere(false);
+  });
+  useTauriEvent("widget-shown", () => {
+    const theme = chosenTheme();
+    if (theme) followTheme(theme);
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      setShown((now) => now + 1);
+      setThere(true);
     });
-    const shownNow = listen("widget-shown", () => {
-      const theme = chosenTheme();
-      if (theme) followTheme(theme);
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        setShown((now) => now + 1);
-        setThere(true);
-      });
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      void hidden.then((stop) => stop()).catch(() => {});
-      void shownNow.then((stop) => stop()).catch(() => {});
-    };
-  }, []);
+  });
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  useTauriEvent<Theme>(THEME_EVENT, followTheme);
+
   useEffect(() => {
     if (!there) return;
     let second = 0;
@@ -53,27 +48,7 @@ export default function Widget() {
     };
   }, [there, shown]);
 
-  useEffect(() => {
-    const listening = listen<Theme>(THEME_EVENT, (event) => followTheme(event.payload));
-    return () => void listening.then((stop) => stop()).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || document.querySelector(OPEN_ON_TOP)) return;
-      setTimeout(() => {
-        if (!e.defaultPrevented) hide();
-      }, 0);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [hide]);
-
-  useEffect(() => {
-    const block = (e: MouseEvent) => e.preventDefault();
-    window.addEventListener("contextmenu", block);
-    return () => window.removeEventListener("contextmenu", block);
-  }, []);
+  useBlockContextMenu();
 
   return (
     <div
@@ -90,18 +65,13 @@ export default function Widget() {
             overview={overview}
             model={model}
             onRetryModel={retryModel}
-            onFocusChange={noop}
             onOpenIndex={openIndex}
             onOpenSettings={openSettings}
-            onFileOpened={hide}
             asWidget
-            onLeftEmpty={hide}
-            keepFocusWhenCleared
+            onDismiss={hide}
           />
         )}
       </div>
     </div>
   );
 }
-
-function noop() {}

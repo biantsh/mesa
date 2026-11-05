@@ -6,6 +6,8 @@ use std::{
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
+use crate::index::lock;
+
 pub const LABEL: &str = "widget";
 const SHOWN_EVENT: &str = "widget-shown";
 const HIDDEN_EVENT: &str = "widget-hidden";
@@ -26,10 +28,6 @@ const BLUR_GRACE: Duration = Duration::from_millis(400);
 const TOP_AT: f64 = 0.14;
 static SHOWN_AT: Mutex<Option<Instant>> = Mutex::new(None);
 
-fn shown_at() -> std::sync::MutexGuard<'static, Option<Instant>> {
-    SHOWN_AT.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 pub fn register_hotkey(app: &AppHandle) -> Option<&'static str> {
     let keys = app.global_shortcut();
     for (modifiers, code, name) in CANDIDATES {
@@ -42,7 +40,7 @@ pub fn register_hotkey(app: &AppHandle) -> Option<&'static str> {
 }
 
 pub fn toggle(app: &AppHandle) {
-    if shown_at().is_some() {
+    if lock(&SHOWN_AT).is_some() {
         hide(app);
     } else {
         show(app);
@@ -54,14 +52,14 @@ pub fn show(app: &AppHandle) {
         return;
     };
     place(app, &window);
-    *shown_at() = Some(Instant::now());
+    *lock(&SHOWN_AT) = Some(Instant::now());
     let _ = window.show();
     let _ = window.set_focus();
     let _ = app.emit_to(LABEL, SHOWN_EVENT, ());
 }
 
 pub fn hide(app: &AppHandle) {
-    *shown_at() = None;
+    *lock(&SHOWN_AT) = None;
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.hide();
     }
@@ -69,7 +67,7 @@ pub fn hide(app: &AppHandle) {
 }
 
 pub fn lost_focus(app: &AppHandle) {
-    let settled = shown_at().is_some_and(|at| at.elapsed() >= BLUR_GRACE);
+    let settled = lock(&SHOWN_AT).is_some_and(|at| at.elapsed() >= BLUR_GRACE);
     if settled {
         hide(app);
     }

@@ -1,6 +1,6 @@
 use std::{
     fs, io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
@@ -39,7 +39,8 @@ pub struct Toast {
     notifier: ToastNotifier,
     app_id: HSTRING,
     current: Option<ToastNotification>,
-    logo: Option<String>,
+    data_dir: PathBuf,
+    logo: Option<Option<String>>,
     sequence: u32,
     gone: Arc<AtomicU8>,
     act: Arc<dyn Fn(Action) + Send + Sync>,
@@ -56,22 +57,29 @@ impl Toast {
         }
         let app_id = HSTRING::from(if cfg!(debug_assertions) { POWERSHELL } else { identifier });
         let notifier = ToastNotificationManager::CreateToastNotifierWithId(&app_id)?;
-        let logo = match save_logo(&data_dir.join(LOGO_FILE)) {
-            Ok(path) => Some(file_address(&path)),
-            Err(e) => {
-                eprintln!("Mesa: can't make the logo for the indexing notification, which has none: {e}");
-                None
-            }
-        };
         Ok(Self {
             notifier,
             app_id,
             current: None,
-            logo,
+            data_dir: data_dir.to_owned(),
+            logo: None,
             sequence: 0,
             gone: Arc::new(AtomicU8::new(0)),
             act,
         })
+    }
+
+    fn logo(&mut self) -> Option<String> {
+        let data_dir = &self.data_dir;
+        self.logo
+            .get_or_insert_with(|| match save_logo(&data_dir.join(LOGO_FILE)) {
+                Ok(path) => Some(file_address(path)),
+                Err(e) => {
+                    eprintln!("Mesa: can't make the logo for the indexing notification, which has none: {e}");
+                    None
+                }
+            })
+            .clone()
     }
 
     fn data(&mut self, progress: &Progress) -> windows::core::Result<NotificationData> {
@@ -92,7 +100,7 @@ impl Toast {
 
     fn post(&mut self, progress: &Progress) -> windows::core::Result<()> {
         let xml = XmlDocument::new()?;
-        xml.LoadXml(&HSTRING::from(toast_xml(progress.paused, self.logo.as_deref())))?;
+        xml.LoadXml(&HSTRING::from(toast_xml(progress.paused, self.logo().as_deref())))?;
         let toast = ToastNotification::CreateToastNotification(&xml)?;
         toast.SetTag(&HSTRING::from(TAG))?;
         toast.SetGroup(&HSTRING::from(GROUP))?;

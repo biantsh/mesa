@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { api } from "./api";
 
@@ -21,4 +22,12 @@ export function showWhenPainted() {
       if (currentWindow()) void api.pagePainted().catch(() => {});
     }),
   );
+}
+
+export function useBlockContextMenu() {
+  useEffect(() => {
+    const block = (e: MouseEvent) => e.preventDefault();
+    window.addEventListener("contextmenu", block);
+    return () => window.removeEventListener("contextmenu", block);
+  }, []);
 }

@@ -272,14 +272,22 @@ pub fn set_gpu_acceleration(
     settings: State<'_, SettingsStore>,
     index: State<'_, Index>,
 ) -> Result<(), String> {
-    let before = settings.get();
     let after = Settings {
         gpu_acceleration: enabled,
-        ..before
+        ..settings.get()
     };
-    index.set_device(after.device())?;
+    apply_setting(&settings, after, |s| index.set_device(s.device()))
+}
+
+fn apply_setting(
+    settings: &SettingsStore,
+    after: Settings,
+    apply: impl Fn(Settings) -> Result<(), String>,
+) -> Result<(), String> {
+    let before = settings.get();
+    apply(after)?;
     if let Err(e) = settings.set(after) {
-        let _ = index.set_device(before.device());
+        let _ = apply(before);
         return Err(format!("Couldn't save the setting. {e}"));
     }
     Ok(())
@@ -291,17 +299,11 @@ pub fn set_turbo_indexing(
     settings: State<'_, SettingsStore>,
     index: State<'_, Index>,
 ) -> Result<(), String> {
-    let before = settings.get();
     let after = Settings {
         turbo_indexing: enabled,
-        ..before
+        ..settings.get()
     };
-    index.set_tuning(after.tuning())?;
-    if let Err(e) = settings.set(after) {
-        let _ = index.set_tuning(before.tuning());
-        return Err(format!("Couldn't save the setting. {e}"));
-    }
-    Ok(())
+    apply_setting(&settings, after, |s| index.set_turbo(s.turbo_indexing))
 }
 
 #[tauri::command]

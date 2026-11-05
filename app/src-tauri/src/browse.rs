@@ -145,13 +145,7 @@ pub fn user_roots(home: Option<PathBuf>) -> Vec<PathBuf> {
 fn outermost(mut folders: Vec<PathBuf>) -> Vec<PathBuf> {
     folders.sort();
     folders.dedup();
-    let mut kept: Vec<PathBuf> = Vec::new();
-    for folder in folders {
-        if !kept.iter().any(|above| folder.starts_with(above)) {
-            kept.push(folder);
-        }
-    }
-    kept
+    crate::rules::outermost(&folders).into_iter().cloned().collect()
 }
 
 #[cfg(windows)]
@@ -257,7 +251,7 @@ fn is_dir(item: &fs::DirEntry) -> Option<bool> {
 }
 
 #[cfg_attr(not(windows), allow(unused_variables))]
-fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
+fn is_hidden_entry(name: &str, metadata: impl FnOnce() -> Option<fs::Metadata>) -> bool {
     if name.starts_with('.') {
         return true;
     }
@@ -266,30 +260,20 @@ fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
         use std::os::windows::fs::MetadataExt;
         const HIDDEN: u32 = 0x2;
         const SYSTEM: u32 = 0x4;
-        if let Ok(metadata) = item.metadata() {
+        if let Some(metadata) = metadata() {
             return metadata.file_attributes() & (HIDDEN | SYSTEM) != 0;
         }
     }
     false
 }
 
+fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
+    is_hidden_entry(name, || item.metadata().ok())
+}
+
 pub fn is_hidden_path(path: &Path) -> bool {
-    if path
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
-    {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const HIDDEN: u32 = 0x2;
-        const SYSTEM: u32 = 0x4;
-        if let Ok(metadata) = fs::symlink_metadata(path) {
-            return metadata.file_attributes() & (HIDDEN | SYSTEM) != 0;
-        }
-    }
-    false
+    path.file_name()
+        .is_some_and(|name| is_hidden_entry(&name.to_string_lossy(), || fs::symlink_metadata(path).ok()))
 }
 
 pub fn is_listed_file(path: &Path) -> bool {

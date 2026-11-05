@@ -28,8 +28,25 @@ export function usePoll(
         running = false;
       }
     };
-    if (immediately) run();
-    const timer = setInterval(run, ms);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const start = () => {
+      timer = setInterval(run, ms);
+    };
+    const onVisibility = () => {
+      clearInterval(timer);
+      if (!document.hidden) {
+        void run();
+        start();
+      }
+    };
+    if (!document.hidden) {
+      if (immediately) void run();
+      start();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [active, ms, immediately]);
 }

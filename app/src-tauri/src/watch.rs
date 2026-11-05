@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
     sync::{
@@ -61,7 +61,12 @@ fn run(chores: Chores, settle: Duration, stop: &AtomicBool) {
     let mut state = State::new(chores, settle);
     let mut last_sync: Option<Instant> = None;
     while !stop.load(Ordering::SeqCst) {
-        match news.recv_timeout(TICK) {
+        let wait = if state.is_idle() {
+            last_sync.map_or(Duration::ZERO, |at| SYNC_EVERY.saturating_sub(at.elapsed()))
+        } else {
+            TICK
+        };
+        match news.recv_timeout(wait) {
             Ok(event) => {
                 state.hear(event);
                 while let Ok(event) = news.try_recv() {
@@ -74,7 +79,7 @@ fn run(chores: Chores, settle: Duration, stop: &AtomicBool) {
         state.settled();
         if state.lost_watches {
             state.lost_watches = false;
-            for path in state.watching.drain().map(|(path, _)| path) {
+            for path in state.watching.drain() {
                 let _ = watcher.unwatch(&path);
             }
             last_sync = None;
@@ -86,12 +91,22 @@ fn run(chores: Chores, settle: Duration, stop: &AtomicBool) {
     }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 struct Heard {
     arrived: bool,
     changed: bool,
-    gone: bool,
     last: Option<Instant>,
+}
+
+impl Heard {
+    fn hear(&mut self, what: What) {
+        match what {
+            What::Arrived => self.arrived = true,
+            What::Changed => self.changed = true,
+            What::Gone => {}
+        }
+        self.last = Some(Instant::now());
+    }
 }
 
 struct Move {
@@ -106,7 +121,7 @@ struct State {
     heard: HashMap<PathBuf, Heard>,
     moves: Vec<Move>,
     moved_from: Option<(PathBuf, Instant)>,
-    watching: HashMap<PathBuf, RecursiveMode>,
+    watching: HashSet<PathBuf>,
     failed: HashMap<PathBuf, Instant>,
     last_rescan: Option<Instant>,
     lost_watches: bool,
@@ -120,7 +135,7 @@ impl State {
             heard: HashMap::new(),
             moves: Vec::new(),
             moved_from: None,
-            watching: HashMap::new(),
+            watching: HashSet::new(),
             failed: HashMap::new(),
             last_rescan: None,
             lost_watches: false,
@@ -174,6 +189,10 @@ impl State {
     }
 
     fn note(&mut self, path: PathBuf, what: What) {
+        if let Some(heard) = self.heard.get_mut(&path) {
+            heard.hear(what);
+            return;
+        }
         if !self.chores.is_indexed(&path) || !worth_a_look(&path, what) {
             return;
         }
@@ -182,25 +201,21 @@ impl State {
             self.rescan();
             return;
         }
-        let heard = self.heard.entry(path).or_default();
-        match what {
-            What::Arrived => heard.arrived = true,
-            What::Changed => heard.changed = true,
-            What::Gone => heard.gone = true,
-        }
-        heard.last = Some(Instant::now());
+        self.heard.entry(path).or_default().hear(what);
     }
 
     fn moved(&mut self, from: PathBuf, to: PathBuf) {
-        if hidden_below_a_root(&to, &self.chores.roots()) {
-            self.note(from, What::Gone);
-        } else if self.chores.is_indexed(&from) || self.chores.is_indexed(&to) {
+        if self.chores.is_indexed(&from) || self.chores.is_indexed(&to) {
             self.moves.push(Move {
                 from,
                 to,
                 at: Instant::now(),
             });
         }
+    }
+
+    fn is_idle(&self) -> bool {
+        self.heard.is_empty() && self.moves.is_empty() && self.moved_from.is_none()
     }
 
     fn rescan(&mut self) {
@@ -212,35 +227,38 @@ impl State {
     }
 
     fn settled(&mut self) {
-        let settle = self.settle;
+        let (settle, now) = (self.settle, Instant::now());
         if let Some((from, at)) = self.moved_from.take() {
-            if at.elapsed() >= settle {
+            if now.duration_since(at) >= settle {
                 self.note(from, What::Gone);
             } else {
                 self.moved_from = Some((from, at));
             }
         }
-
-        let (due, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.moves)
+        let (due_moves, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.moves)
             .into_iter()
-            .partition(|m| m.at.elapsed() >= settle);
+            .partition(|m| now.duration_since(m.at) >= settle);
         self.moves = waiting;
-        for Move { from, to, .. } in due {
-            self.chores.moved(&from, &to);
-        }
-
         let due: Vec<PathBuf> = self
             .heard
             .iter()
-            .filter(|(_, heard)| heard.last.is_some_and(|at| at.elapsed() >= settle))
+            .filter(|(_, heard)| heard.last.is_some_and(|at| now.duration_since(at) >= settle))
             .map(|(path, _)| path.clone())
             .collect();
-        if due.is_empty() {
+        if due_moves.is_empty() && due.is_empty() {
             return;
         }
+
+        let roots = self.chores.roots();
         let mut gone = Vec::new();
         let mut look = Vec::new();
-        let roots = self.chores.roots();
+        for Move { from, to, .. } in due_moves {
+            if hidden_below_a_root(&to, &roots) {
+                gone.push(from);
+            } else {
+                self.chores.moved(&from, &to);
+            }
+        }
         for path in due {
             let Some(heard) = self.heard.remove(&path) else {
                 continue;
@@ -269,19 +287,20 @@ impl State {
     }
 
     fn sync(&mut self, watcher: &mut impl Watcher) {
+        let roots = self.chores.roots();
         let mut wanted: HashMap<PathBuf, RecursiveMode> = HashMap::new();
-        for root in self.chores.roots() {
+        for root in &roots {
             if root.is_dir() {
-                wanted.insert(root, RecursiveMode::Recursive);
+                wanted.insert(root.clone(), RecursiveMode::Recursive);
             } else if let Some(parent) = root.parent().filter(|_| root.exists()) {
                 wanted.entry(parent.to_owned()).or_insert(RecursiveMode::NonRecursive);
             } else {
-                self.failed.entry(root).or_insert_with(Instant::now);
+                self.failed.entry(root.clone()).or_insert_with(Instant::now);
             }
         }
         let unwanted: Vec<PathBuf> = self
             .watching
-            .keys()
+            .iter()
             .filter(|path| !wanted.contains_key(*path))
             .cloned()
             .collect();
@@ -290,10 +309,10 @@ impl State {
             self.watching.remove(&path);
         }
         self.failed
-            .retain(|path, _| wanted.contains_key(path) || self.chores.roots().contains(path));
+            .retain(|path, _| wanted.contains_key(path) || roots.contains(path));
 
         for (path, mode) in wanted {
-            if self.watching.contains_key(&path) {
+            if self.watching.contains(&path) {
                 continue;
             }
             if self.failed.get(&path).is_some_and(|at| at.elapsed() < TRY_AGAIN_AFTER) {
@@ -301,7 +320,7 @@ impl State {
             }
             match watcher.watch(&path, mode) {
                 Ok(()) => {
-                    self.watching.insert(path.clone(), mode);
+                    self.watching.insert(path.clone());
                     if self.failed.remove(&path).is_some() {
                         self.chores.check_later([path]);
                     }

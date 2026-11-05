@@ -8,10 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    embed::Device,
-    index::{Tuning, lock},
-};
+use crate::{embed::Device, index::lock};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
@@ -30,12 +27,6 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn tuning(&self) -> Tuning {
-        Tuning {
-            turbo: self.turbo_indexing,
-        }
-    }
-
     pub fn device(&self) -> Device {
         if self.gpu_acceleration {
             Device::Auto

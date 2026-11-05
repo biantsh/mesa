@@ -54,6 +54,20 @@ export interface Progress {
   updating: boolean;
 }
 
+export function sameProgress(a: Progress | null, b: Progress | null): boolean {
+  if (a === null || b === null) return a === b;
+  return (
+    a.name === b.name &&
+    a.queued === b.queued &&
+    a.counting === b.counting &&
+    a.found === b.found &&
+    a.done === b.done &&
+    a.total === b.total &&
+    a.paused === b.paused &&
+    a.updating === b.updating
+  );
+}
+
 export interface Overview {
   empty: boolean;
   progress: Progress | null;

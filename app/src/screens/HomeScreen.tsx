@@ -41,13 +41,11 @@ interface Props {
   overview: Overview | null;
   model: ModelStatus | null;
   onRetryModel: () => void;
-  onFocusChange: (focused: boolean) => void;
+  onFocusChange?: (focused: boolean) => void;
   onOpenIndex: () => void;
   onOpenSettings: () => void;
-  onFileOpened?: () => void;
   asWidget?: boolean;
-  onLeftEmpty?: () => void;
-  keepFocusWhenCleared?: boolean;
+  onDismiss?: () => void;
 }
 
 const snapToLayout = (px: number) => Math.round(px * 64) / 64;
@@ -164,7 +162,7 @@ function Understanding({ understood, query, onChooseType, onChooseDate }: { unde
   );
 }
 
-export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings, onFileOpened, asWidget, onLeftEmpty, keepFocusWhenCleared }: Props) {
+export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings, asWidget, onDismiss }: Props) {
   const blocked = overview?.empty === true;
   const modelFailed = model?.state === "failed";
   const input = useRef<HTMLInputElement>(null);
@@ -245,18 +243,18 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     () => ({
       open: (hit) => {
         void api.openFile(hit.path).catch(() => {});
-        onFileOpened?.();
+        onDismiss?.();
       },
       showInFolder: (hit) => {
         void api.showInFolder(hit.path).catch(() => {});
-        onFileOpened?.();
+        onDismiss?.();
       },
       copyFiles: (files) => api.copyFiles(files.map((file) => file.path)),
       copyPaths: async (files) => {
         await navigator.clipboard.writeText(files.map((file) => file.path).join("\n"));
       },
     }),
-    [onFileOpened],
+    [onDismiss],
   );
   const [menu, setMenu] = useState<{ hits: SearchHit[]; x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -290,31 +288,31 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   else if (found && !searching && hits.length === 0) message = "Nothing found.";
   const setFocus = useCallback((next: boolean) => {
     setFocused(next);
-    onFocusChange(next && query.trim() === "");
+    onFocusChange?.(next && query.trim() === "");
     if (!next && query.trim() === "") {
       setChosen({});
-      onLeftEmpty?.();
+      onDismiss?.();
     }
-  }, [query, onFocusChange, onLeftEmpty]);
+  }, [query, onFocusChange, onDismiss]);
   const change = (text: string) => {
     setQuery(text);
     setChosen((now) => keepChosen(now, text));
-    onFocusChange(focused && text.trim() === "");
+    onFocusChange?.(focused && text.trim() === "");
   };
   const leave = useCallback(() => {
     away.current = false;
     setQuery("");
     setChosen({});
-    if (keepFocusWhenCleared) {
-      onFocusChange(true);
+    if (asWidget) {
+      onFocusChange?.(true);
       setFocused(true);
       input.current?.focus({ preventScroll: true });
       return;
     }
-    onFocusChange(false);
+    onFocusChange?.(false);
     setFocused(false);
     input.current?.blur();
-  }, [onFocusChange, keepFocusWhenCleared]);
+  }, [onFocusChange, asWidget]);
   const away = useRef(false);
   useImperativeHandle(ref, () => ({
     restoreFocus() {
@@ -345,11 +343,13 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         leave();
       } else if (document.activeElement === input.current) {
         input.current?.blur();
+      } else if (asWidget) {
+        onDismiss?.();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [query, leave]);
+  }, [query, leave, asWidget, onDismiss]);
 
   useLayoutEffect(() => {
     const root = home.current;
@@ -359,13 +359,14 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       const around = root.getBoundingClientRect();
       const block = search.current.getBoundingClientRect();
       const gap = parseFloat(getComputedStyle(row.current).columnGap) || 0;
+      const actionsWidth = parseFloat(getComputedStyle(actions.current).width);
       const lift = Math.max(0, block.top - around.top - TOP_GAP_PX);
       const set = (name: string, px: number) => root.style.setProperty(name, `${px}px`);
       set("--top-gap", TOP_GAP_PX);
       set("--bottom-gap", BOTTOM_GAP_PX);
       set("--lift", lift);
       set("--drop", Math.max(0, around.bottom - BOTTOM_GAP_PX - block.bottom));
-      set("--actions-width", snapToLayout(parseFloat(getComputedStyle(actions.current).width)) + gap);
+      set("--actions-width", snapToLayout(actionsWidth) + gap);
       set("--hole-left", block.left - around.left);
       set("--hole-right", around.right - block.right);
       set("--hole-top", block.top - around.top - lift);

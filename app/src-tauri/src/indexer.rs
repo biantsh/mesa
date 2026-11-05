@@ -14,9 +14,9 @@ use crossbeam_channel::bounded;
 
 use crate::{
     browse::{self, Shown},
-    crawl::crawl_gently,
+    crawl::crawl,
     embed::{Item, Outcome},
-    index::{Job, Shared, lock},
+    index::{Message, Shared, lock},
     power,
     store::{ScannedDir, ScannedFile},
     unindexable,
@@ -27,10 +27,10 @@ const BATCH_AGE: Duration = Duration::from_millis(250);
 const CHUNK_FILES: usize = 512;
 const LISTED_AHEAD: usize = 1024;
 
-pub fn work(shared: &Shared, jobs: Receiver<Job>) {
+pub fn work(shared: &Shared, jobs: Receiver<Message>) {
     let mut gentle = false;
     loop {
-        let wanted = !shared.control.tuning().turbo;
+        let wanted = shared.is_gentle();
         if wanted != gentle {
             if wanted {
                 power::give_way()
@@ -39,8 +39,8 @@ pub fn work(shared: &Shared, jobs: Receiver<Job>) {
             }
             gentle = wanted;
         }
-        let job = match jobs.try_recv() {
-            Ok(job) => job,
+        let message = match jobs.try_recv() {
+            Ok(message) => message,
             Err(TryRecvError::Disconnected) => break,
             Err(TryRecvError::Empty) => {
                 let next = lock(&shared.quiet).next();
@@ -49,14 +49,12 @@ pub fn work(shared: &Shared, jobs: Receiver<Job>) {
                     continue;
                 }
                 match jobs.recv() {
-                    Ok(job) => job,
+                    Ok(message) => message,
                     Err(_) => break,
                 }
             }
         };
-        if job.quiet {
-            continue;
-        }
+        let Message::Job(job) = message else { continue };
         let _ = shared
             .urgent
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)));
@@ -120,7 +118,7 @@ pub fn is_gone(path: &Path) -> bool {
 
 fn count_files(shared: &Shared, ticket: u64, root: &Path) {
     if root.is_dir() {
-        crawl_gently(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
+        crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
             shared.control.wait_while_paused();
             if !shared.is_indexed(&dir) {
                 return Vec::new();
@@ -160,7 +158,7 @@ fn walk_tree(shared: &Shared, ticket: u64, root: &Path, quiet: bool) -> bool {
         let abandoned = &abandoned;
         thread::scope(|scope| {
             scope.spawn(move || {
-                crawl_gently(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
+                crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
                     shared.control.wait_while_paused();
 
                     let found = if shared.is_indexed(&dir)
@@ -231,7 +229,6 @@ struct Walker<'a> {
     stored: bool,
     warmed_up: bool,
     new_files: HashSet<PathBuf>,
-    quiet: bool,
     root: PathBuf,
 }
 
@@ -239,7 +236,6 @@ impl<'a> Walker<'a> {
     fn new(shared: &'a Shared, ticket: u64, quiet: bool, root: &Path) -> Self {
         Self {
             shared,
-            quiet,
             root: root.to_owned(),
             batch: Batch::new(ticket, quiet),
             folders: Vec::new(),
@@ -256,7 +252,7 @@ impl<'a> Walker<'a> {
     }
 
     fn dropped(&self) -> bool {
-        self.quiet && self.batch.ticket != 0 && !lock(&self.shared.progress).has(self.batch.ticket)
+        self.batch.quiet && self.batch.ticket != 0 && !lock(&self.shared.progress).has(self.batch.ticket)
     }
 
     fn show(&mut self, files: usize) {
@@ -268,7 +264,7 @@ impl<'a> Walker<'a> {
     }
 
     fn release(&self, path: &Path) {
-        if !self.quiet {
+        if !self.batch.quiet {
             lock(&self.shared.pending).release(path);
         }
     }
@@ -305,11 +301,11 @@ impl<'a> Walker<'a> {
         }
         if up_to_date > 0 {
             self.batch.files += up_to_date;
-            if !self.quiet {
+            if !self.batch.quiet {
                 lock(&self.shared.progress).processed(self.batch.ticket, up_to_date as u64);
             }
         }
-        if self.quiet && self.waiting.len() > waiting_before {
+        if self.batch.quiet && self.waiting.len() > waiting_before {
             self.show(self.waiting.len() - waiting_before);
         }
         if !self.warmed_up && !self.waiting.is_empty() {
@@ -325,7 +321,6 @@ impl<'a> Walker<'a> {
 
     fn embed_waiting(&mut self) {
         let shared = self.shared;
-        let quiet = self.quiet;
         let mut folders = mem::take(&mut self.folders);
         let places = mem::take(&mut self.waiting);
         let mut left: Vec<usize> = (0..places.len()).collect();
@@ -341,7 +336,7 @@ impl<'a> Walker<'a> {
                 let path = path_of(&folders, places[n]);
                 let wanted = !dropped && shared.is_indexed(&path);
                 if !wanted {
-                    quiet_aware_release(shared, quiet, &path);
+                    self.release(&path);
                 }
                 wanted
             });
@@ -350,7 +345,7 @@ impl<'a> Walker<'a> {
             }
             if self.failed {
                 for &n in &left {
-                    quiet_aware_release(shared, quiet, &path_of(&folders, places[n]));
+                    self.release(&path_of(&folders, places[n]));
                 }
                 lock(&shared.progress).processed(self.batch.ticket, left.len() as u64);
                 break;
@@ -425,12 +420,6 @@ impl<'a> Walker<'a> {
                 self.batch.scans.push(folder);
             }
         }
-    }
-}
-
-fn quiet_aware_release(shared: &Shared, quiet: bool, path: &Path) {
-    if !quiet {
-        lock(&shared.pending).release(path);
     }
 }
 

@@ -104,11 +104,7 @@ function TurboRow({ enabled, pending, error, change }: ReturnType<typeof useTurb
           )
         }
       />
-      {error && (
-        <div className={styles.error} role="alert">
-          {error}
-        </div>
-      )}
+      <SettingError error={error} />
     </>
   );
 }
@@ -133,11 +129,17 @@ function GpuRow({ enabled, gpu, pending, error, change }: ReturnType<typeof useG
           )
         }
       />
-      {error && (
-        <div className={styles.error} role="alert">
-          {error}
-        </div>
-      )}
+      <SettingError error={error} />
     </>
+  );
+}
+
+function SettingError({ error }: { error: string | null }) {
+  return (
+    error && (
+      <div className={styles.error} role="alert">
+        {error}
+      </div>
+    )
   );
 }

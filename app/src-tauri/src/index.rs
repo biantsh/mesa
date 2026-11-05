@@ -64,7 +64,11 @@ pub struct Job {
     pub root: PathBuf,
     pub ticket: u64,
     pub waiting: bool,
-    pub quiet: bool,
+}
+
+pub enum Message {
+    Job(Job),
+    Nudge,
 }
 
 #[derive(Default)]
@@ -112,17 +116,6 @@ pub struct Shared {
     pub landed_new: AtomicU64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Tuning {
-    pub turbo: bool,
-}
-
-impl Default for Tuning {
-    fn default() -> Self {
-        Self { turbo: true }
-    }
-}
-
 pub struct Control {
     state: Mutex<ControlState>,
     changed: Condvar,
@@ -131,21 +124,21 @@ pub struct Control {
 struct ControlState {
     paused: bool,
     epoch: u64,
-    tuning: Tuning,
+    turbo: bool,
 }
 
 impl Control {
     #[cfg(test)]
     pub fn new(paused: bool) -> Self {
-        Self::with_tuning(paused, Tuning::default())
+        Self::with_turbo(paused, true)
     }
 
-    pub fn with_tuning(paused: bool, tuning: Tuning) -> Self {
+    pub fn with_turbo(paused: bool, turbo: bool) -> Self {
         Self {
             state: Mutex::new(ControlState {
                 paused,
                 epoch: 0,
-                tuning,
+                turbo,
             }),
             changed: Condvar::new(),
         }
@@ -162,13 +155,13 @@ impl Control {
         self.changed.notify_all();
     }
 
-    pub fn tuning(&self) -> Tuning {
-        lock(&self.state).tuning
+    pub fn is_turbo(&self) -> bool {
+        lock(&self.state).turbo
     }
 
-    pub fn set_tuning(&self, tuning: Tuning) {
+    pub fn set_turbo(&self, turbo: bool) {
         let mut state = lock(&self.state);
-        state.tuning = tuning;
+        state.turbo = turbo;
         state.epoch += 1;
         self.changed.notify_all();
     }
@@ -197,7 +190,7 @@ impl Control {
 
 impl Shared {
     pub fn is_gentle(&self) -> bool {
-        !self.control.tuning().turbo
+        !self.control.is_turbo()
     }
 
     pub fn crawl_threads(&self) -> usize {
@@ -241,7 +234,7 @@ impl Shared {
 
 pub struct Index {
     shared: Arc<Shared>,
-    queue: Mutex<Sender<Job>>,
+    queue: Mutex<Sender<Message>>,
     dir: PathBuf,
     counted: Mutex<Option<Counted>>,
     latest_search: Mutex<Option<Arc<Ranking>>>,
@@ -267,10 +260,10 @@ const COUNT_MAX_AGE: Duration = Duration::from_millis(750);
 impl Index {
     #[cfg(test)]
     pub fn open(dir: &Path, embedder: Arc<dyn Embedder>) -> store::Result<Self> {
-        Self::open_with(dir, embedder, Tuning::default())
+        Self::open_with(dir, embedder, true)
     }
 
-    pub fn open_with(dir: &Path, embedder: Arc<dyn Embedder>, tuning: Tuning) -> store::Result<Self> {
+    pub fn open_with(dir: &Path, embedder: Arc<dyn Embedder>, turbo: bool) -> store::Result<Self> {
         let store = Store::open(dir)?;
         let rules = store.load_rules()?;
         let excluded = store.load_exclusions()?;
@@ -299,7 +292,7 @@ impl Index {
             excluded: Mutex::new(excluded),
             pending: Mutex::new(Pending::default()),
             progress: Mutex::new(ProgressState::default()),
-            control: Control::with_tuning(paused && !unfinished.is_empty(), tuning),
+            control: Control::with_turbo(paused && !unfinished.is_empty(), turbo),
             quiet: Mutex::default(),
             urgent: Default::default(),
             embedder,
@@ -679,26 +672,17 @@ impl Index {
         lock(&self.shared.progress).snapshot(paused)
     }
 
-    pub fn set_tuning(&self, tuning: Tuning) -> Result<(), String> {
-        let before = self.shared.control.tuning();
-        if before.turbo != tuning.turbo {
-            self.shared.embedder.set_eco(!tuning.turbo).map_err(|e| e.to_string())?;
+    pub fn set_turbo(&self, turbo: bool) -> Result<(), String> {
+        if self.shared.control.is_turbo() != turbo {
+            self.shared.embedder.set_eco(!turbo).map_err(|e| e.to_string())?;
         }
-        self.shared.control.set_tuning(tuning);
+        self.shared.control.set_turbo(turbo);
         Ok(())
     }
 
     pub fn check_for_changes(&self) {
-        let roots: Vec<PathBuf> = lock(&self.shared.rules)
-            .iter()
-            .filter(|(_, indexed)| **indexed)
-            .map(|(root, _)| root.clone())
-            .collect();
-        self.check_later(roots);
-    }
-
-    pub fn check_later(&self, paths: impl IntoIterator<Item = PathBuf>) {
-        self.chores().check_later(paths);
+        let chores = self.chores();
+        chores.check_later(chores.roots());
     }
 
     pub fn start_watching(&self) {
@@ -771,10 +755,9 @@ impl Index {
             root,
             ticket,
             waiting: !first,
-            quiet: false,
         };
         self.shared.urgent.fetch_add(1, Ordering::SeqCst);
-        let _ = lock(&self.queue).send(job);
+        let _ = lock(&self.queue).send(Message::Job(job));
     }
 
     fn chores(&self) -> Chores {
@@ -788,7 +771,7 @@ impl Index {
 #[derive(Clone)]
 pub struct Chores {
     shared: Arc<Shared>,
-    queue: Sender<Job>,
+    queue: Sender<Message>,
 }
 
 impl Chores {
@@ -798,13 +781,7 @@ impl Chores {
             paths.into_iter().fold(false, |added, path| quiet.add(path) | added)
         };
         if added {
-            let _ = self.queue.send(Job {
-                id: 0,
-                root: PathBuf::new(),
-                ticket: 0,
-                waiting: false,
-                quiet: true,
-            });
+            let _ = self.queue.send(Message::Nudge);
         }
     }
 
@@ -840,11 +817,7 @@ impl Chores {
     }
 
     pub fn roots(&self) -> BTreeSet<PathBuf> {
-        lock(&self.shared.rules)
-            .iter()
-            .filter(|(_, indexed)| **indexed)
-            .map(|(root, _)| root.clone())
-            .collect()
+        inclusions_of(&lock(&self.shared.rules))
     }
 
     pub fn is_indexed(&self, path: &Path) -> bool {

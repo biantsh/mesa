@@ -166,6 +166,7 @@ impl Store {
             );
             conn.execute("DELETE FROM embeddings WHERE config_id = ?1", [CONFIG_ID])?;
             conn.execute("DELETE FROM free_slots WHERE config_id = ?1", [CONFIG_ID])?;
+            conn.execute("UPDATE files SET embedded_with = 0", [])?;
             vectors.truncate_to(0)?;
         } else {
             vectors.truncate_to(expected)?;
@@ -355,8 +356,10 @@ impl Store {
             }
         }
 
-        self.vectors.write(&mut writes)?;
-        self.vectors.sync()?;
+        if !writes.is_empty() {
+            self.vectors.write(&mut writes)?;
+            self.vectors.sync()?;
+        }
         Ok(tx.commit()?)
     }
 
@@ -741,11 +744,14 @@ fn ensure_dir(conn: &Connection, path: &Path) -> Result<i64> {
 }
 
 fn forget_missing_folders(tx: &Transaction, parent: i64, present: &[String]) -> Result<()> {
-    let present: HashSet<String> = present.iter().map(|name| name.to_lowercase()).collect();
     let stored: Vec<(i64, String)> = tx
         .prepare_cached("SELECT id, name FROM dirs WHERE parent_id = ?1 AND id != ?1")?
         .query_map([parent], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
+    if stored.is_empty() {
+        return Ok(());
+    }
+    let present: HashSet<String> = present.iter().map(|name| name.to_lowercase()).collect();
     for (id, name) in stored {
         if !present.contains(&name.to_lowercase()) {
             tx.prepare_cached("DELETE FROM dirs WHERE id = ?1")?.execute([id])?;

@@ -105,9 +105,9 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if startup::wants_search(args.clone().into_iter()) {
+            if startup::wants_search(&args) {
                 widget::show(app);
-            } else if !startup::in_background(args.into_iter()) {
+            } else if !startup::in_background(&args) {
                 show_window(app);
             }
         }))
@@ -148,7 +148,7 @@ fn main() {
             let embedder = embed::for_this_platform(&dir, resources.as_deref(), settings.get().device());
             let _ = embedder.set_eco(!settings.get().turbo_indexing);
             embedder.warm_up();
-            let index = index::Index::open_with(&dir, embedder, settings.get().tuning())
+            let index = index::Index::open_with(&dir, embedder, settings.get().turbo_indexing)
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             index.check_for_changes();
             index.start_watching();
@@ -160,7 +160,7 @@ fn main() {
             app.manage(settings);
             let search_key = widget::register_hotkey(app.handle());
             add_tray_icon(app, search_key)?;
-            if startup::wants_search(std::env::args()) {
+            if startup::wants_search(&startup::arguments()) {
                 widget::show_soon(app.handle());
             }
             show_window_if_the_page_does_not(app);

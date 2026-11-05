@@ -12,12 +12,7 @@ pub fn threads() -> usize {
 
 pub const GENTLE_THREADS: usize = 2;
 
-#[cfg(test)]
-pub fn crawl(root: PathBuf, threads: usize, list: impl Fn(PathBuf) -> Vec<PathBuf> + Sync) {
-    crawl_gently(root, threads, false, list)
-}
-
-pub fn crawl_gently(root: PathBuf, threads: usize, gentle: bool, list: impl Fn(PathBuf) -> Vec<PathBuf> + Sync) {
+pub fn crawl(root: PathBuf, threads: usize, gentle: bool, list: impl Fn(PathBuf) -> Vec<PathBuf> + Sync) {
     let crawl = Crawl {
         queue: Mutex::new(Queue {
             folders: vec![root],
@@ -133,7 +128,7 @@ mod tests {
         let root = tree("all", 4, 4);
         for threads in [1, 2, 8, 32] {
             let seen = Mutex::new(Vec::new());
-            crawl(root.clone(), threads, |dir| {
+            crawl(root.clone(), threads, false, |dir| {
                 let below = subfolders(&dir);
                 lock(&seen).push(dir);
                 below
@@ -152,7 +147,7 @@ mod tests {
     fn panic_does_not_hang_walk() {
         let root = tree("panic", 3, 3);
         let result = catch_unwind(AssertUnwindSafe(|| {
-            crawl(root.clone(), 4, |dir| {
+            crawl(root.clone(), 4, false, |dir| {
                 if dir.ends_with("d1") {
                     panic!("one folder goes wrong");
                 }
