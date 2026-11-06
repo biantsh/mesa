@@ -6,7 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+#[cfg(not(target_os = "macos"))]
+use tauri::PhysicalPosition;
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 use crate::index::lock;
@@ -182,6 +184,47 @@ pub fn show_soon(app: &AppHandle) {
     });
 }
 
+#[cfg(target_os = "macos")]
+fn place(_app: &AppHandle, window: &WebviewWindow) {
+    let on_window = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSEvent, NSScreen, NSWindow};
+        use objc2_foundation::NSPoint;
+
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let Ok(pointer) = on_window.ns_window() else { return };
+        let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+        let mouse = NSEvent::mouseLocation();
+        let screens = NSScreen::screens(mtm);
+        let Some(screen) = screens
+            .iter()
+            .find(|screen| {
+                let f = screen.frame();
+                mouse.x >= f.origin.x
+                    && mouse.x < f.origin.x + f.size.width
+                    && mouse.y >= f.origin.y
+                    && mouse.y < f.origin.y + f.size.height
+            })
+            .or_else(|| screens.firstObject())
+        else {
+            return;
+        };
+        let frame = screen.frame();
+        let size = ns_window.frame().size;
+        let (across, down) = position(
+            (0, 0),
+            (frame.size.width as u32, frame.size.height as u32),
+            (size.width as u32, size.height as u32),
+        );
+        ns_window.setFrameTopLeftPoint(NSPoint::new(
+            frame.origin.x + f64::from(across),
+            frame.origin.y + frame.size.height - f64::from(down),
+        ));
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
 fn place(app: &AppHandle, window: &WebviewWindow) {
     let monitor = app
         .cursor_position()

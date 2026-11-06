@@ -1,4 +1,5 @@
 import type { Category } from "./api";
+import { cleanQuery } from "./cleanQuery";
 
 export interface Period {
   label: string;
@@ -914,7 +915,7 @@ function leftOver(query: string, tokens: Token[], taken: boolean[]): string {
 export function understand(query: string, now: Date, ignored: readonly string[] = []): Understood {
   if (query.trim() === "") return NOTHING;
   const tokens = tokenize(query);
-  if (tokens.length === 0) return { ...NOTHING, text: query.trim() };
+  if (tokens.length === 0) return { ...NOTHING, text: cleanQuery(query) };
   const taken = tokens.map(() => false);
   const ignoredSet = new Set(ignored);
   const wordsOf = (span: Span) => query.slice(tokens[span.start].start, tokens[span.end - 1].end).toLowerCase();
@@ -969,14 +970,14 @@ export function understand(query: string, now: Date, ignored: readonly string[] 
   const removed = taken.some(Boolean);
   trimEnds(tokens, taken, removed);
   let text = leftOver(query, tokens, taken);
-  if (text === "" && !type && range.from === null && range.to === null) text = query.trim();
-  if (!taken.some(Boolean)) text = query.trim();
+  if (text === "" && !type && range.from === null && range.to === null) text = query;
+  if (!taken.some(Boolean)) text = query;
 
   return {
     fileType: type ? type.fileType : null,
     from: range.from !== null ? period(range.from) : null,
     to: range.to !== null ? period(range.to) : null,
-    text,
+    text: cleanQuery(text),
     fileTypeWords: type ? [wordsOf(type)] : [],
     dateWords: dateSpans.map(wordsOf),
   };

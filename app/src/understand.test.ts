@@ -260,7 +260,7 @@ describe("types", () => {
 describe("remaining text", () => {
   check([
     ["a dog on a beach", null, null, null, "a dog on a beach"],
-    ["  a dog  on a beach ", null, null, null, "a dog  on a beach"],
+    ["  a dog  on a beach ", null, null, null, "a dog on a beach"],
     ["The Beach", null, null, null, "The Beach"],
     ["with a sandcastle", null, null, null, "with a sandcastle"],
     ["what's in the box?", null, null, null, "what's in the box?"],

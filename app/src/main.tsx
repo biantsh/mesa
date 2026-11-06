@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { markPlatform } from "./platform";
 import { ready } from "./ready";
+import { smoothMouseWheel } from "./smoothWheel";
 import { guardAgainstStaleHover } from "./staleHover";
 import Widget from "./Widget";
 import { currentWindow, showWhenPainted } from "./window";
@@ -15,6 +16,7 @@ const isWidget = currentWindow()?.label === "widget";
 const Screen = isWidget ? Widget : App;
 if (!isWidget) markPlatform();
 guardAgainstStaleHover();
+smoothMouseWheel();
 
 ready().then(() => {
   flushSync(() =>
