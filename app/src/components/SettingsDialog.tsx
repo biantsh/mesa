@@ -1,12 +1,17 @@
 import { useId, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { Info, X } from "lucide-react";
+import { modifierLabels, keyLabel } from "../hotkey";
 import { isMac } from "../platform";
 import { useGpuAcceleration } from "../useGpuAcceleration";
+import { useSearchHotkey } from "../useSearchHotkey";
 import { useTheme } from "../theme";
 import { useTurboIndexing } from "../useTurboIndexing";
 import { IconButton } from "./IconButton";
+import { Keycaps } from "./Keycaps";
 import { Modal } from "./Modal";
+import { ShortcutField } from "./ShortcutField";
 import { Switch } from "./Switch";
+import { cx } from "../cx";
 import styles from "./SettingsDialog.module.css";
 
 interface Props {
@@ -18,8 +23,12 @@ export function SettingsDialog({ open, onClose }: Props) {
   const titleId = useId();
   const gpu = useGpuAcceleration();
   const turbo = useTurboIndexing();
+  const hotkey = useSearchHotkey(open);
+  const close = () => {
+    if (!hotkey.isRecording()) onClose();
+  };
   return (
-    <Modal open={open} onClose={onClose} className={styles.dialog} labelledBy={titleId} focusCard={isMac}>
+    <Modal open={open} onClose={close} className={styles.dialog} labelledBy={titleId} focusCard={isMac}>
       {open && (
         <div className={styles.content}>
           <header className={styles.header}>
@@ -33,6 +42,9 @@ export function SettingsDialog({ open, onClose }: Props) {
           <div className={styles.body}>
             <Group title="Appearance">
               <ThemeRow />
+            </Group>
+            <Group title="Shortcuts">
+              <HotkeyRow {...hotkey} />
             </Group>
             <Group title="Indexing">
               <GpuRow {...gpu} />
@@ -65,7 +77,7 @@ function Row({ title, description, note, control }: RowProps) {
   const titleId = useId();
   const textId = useId();
   return (
-    <div className={styles.row}>
+    <div className={styles.row} data-setting-row>
       <div className={styles.text}>
         <div id={titleId} className={styles.rowTitle}>
           {title}
@@ -88,6 +100,61 @@ function ThemeRow() {
       description="Light text on a dark background."
       control={(ids) => <Switch checked={theme === "dark"} onChange={(dark) => setTheme(dark ? "dark" : "light")} {...ids} />}
     />
+  );
+}
+
+function HotkeyRow({ status, recording, held, refused, hint, error, saving, field, start, cancel, reset }: ReturnType<typeof useSearchHotkey>) {
+  const chosen = status?.chosen ?? null;
+  const active = status?.active ?? null;
+  const displaced = chosen !== null && chosen.name !== active?.name;
+
+  let notice: ReactNode = null;
+  if (!recording && status) {
+    if (displaced && active) {
+      notice = (
+        <>
+          <b>{chosen.name}</b> is used by another program, so <b>{active.name}</b> is used instead.
+        </>
+      );
+    } else if (displaced) {
+      notice = (
+        <>
+          <b>{chosen.name}</b> is used by another program, and so is the default. Search opens from the tray menu.
+        </>
+      );
+    } else if (!active) {
+      notice = "The default shortcut is used by another program. Choose one here. Search opens from the tray menu.";
+    }
+  }
+
+  const live = [...modifierLabels(held, isMac), ...(refused ? [keyLabel(refused)] : [])];
+
+  return (
+    <>
+      <Row
+        title="Open search"
+        description="Open the search widget from anywhere."
+        control={(ids) => (
+          <div className={styles.control}>
+            <ShortcutField
+              ref={field}
+              listening={recording}
+              live={live}
+              refusedLast={refused !== null}
+              prompt="Type shortcut"
+              disabled={!status || saving}
+              label={recording ? "Recording the new shortcut. Type it, or press Escape to cancel." : `Search shortcut: ${active?.name ?? "none"}. Press to change.`}
+              describedBy={ids.describedBy}
+              title={recording ? "Press Escape to cancel" : "Click to change"}
+              onClick={(e) => (recording ? cancel() : start(e.detail === 0))}
+            >
+              {status ? active ? <Keycaps keys={active.keys} /> : <span className={styles.none}>None</span> : null}
+            </ShortcutField>
+          </div>
+        )}
+      />
+      <SettingError error={error} />
+    </>
   );
 }
 
@@ -115,7 +182,7 @@ function GpuRow({ enabled, gpu, pending, error, change }: ReturnType<typeof useG
   const known = enabled !== null && gpu !== undefined;
   const disabled = !known || gpu === null || pending !== null;
 
-  const note = !known ? "\u00a0" : (gpu ? `Use your “${gpu}” GPU` : "No usable GPU found");
+  const note = !known ? "\u00a0" : (gpu ? `Use your “${gpu}” GPU.` : "No usable GPU found.");
 
   return (
     <>

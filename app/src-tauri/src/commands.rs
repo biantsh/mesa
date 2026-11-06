@@ -11,6 +11,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::{
     browse::{self, Category, Listing},
     embed::ModelStatus,
+    hotkey::{self, Hotkey},
     index::{Index, IndexState, Page, Stats},
     progress::Progress,
     settings::{Settings, SettingsStore},
@@ -353,12 +354,50 @@ fn apply_setting(
     apply: impl Fn(Settings) -> Result<(), String>,
 ) -> Result<(), String> {
     let before = settings.get();
-    apply(after)?;
+    apply(after.clone())?;
     if let Err(e) = settings.set(after) {
         let _ = apply(before);
         return Err(format!("Couldn't save the setting. {e}"));
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_search_hotkey(settings: State<'_, SettingsStore>, hotkey: State<'_, Hotkey>) -> hotkey::Status {
+    hotkey.status(settings.get().search_hotkey.as_deref())
+}
+
+#[tauri::command(async)]
+pub fn set_search_hotkey(
+    app: AppHandle,
+    shortcut: Option<String>,
+    settings: State<'_, SettingsStore>,
+    hotkey: State<'_, Hotkey>,
+) -> Result<hotkey::Status, hotkey::Error> {
+    let old = hotkey.change(&app, shortcut.as_deref())?;
+    let chosen = shortcut
+        .as_deref()
+        .and_then(|text| hotkey::parse(text).ok())
+        .map(|key| hotkey::canonical(&key));
+    let after = Settings {
+        search_hotkey: chosen,
+        ..settings.get()
+    };
+    if let Err(e) = settings.set(after) {
+        hotkey.restore(&app, old);
+        return Err(hotkey::Error::Failed(format!("Couldn't save the setting. {e}")));
+    }
+    Ok(hotkey.status(settings.get().search_hotkey.as_deref()))
+}
+
+#[tauri::command(async)]
+pub fn begin_hotkey_recording(app: AppHandle, hotkey: State<'_, Hotkey>) {
+    hotkey.pause(&app);
+}
+
+#[tauri::command(async)]
+pub fn end_hotkey_recording(app: AppHandle, hotkey: State<'_, Hotkey>) {
+    hotkey.resume(&app);
 }
 
 #[tauri::command(async)]

@@ -10,11 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{embed::Device, index::lock};
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub gpu_acceleration: bool,
     pub turbo_indexing: bool,
+    pub search_hotkey: Option<String>,
 }
 
 impl Default for Settings {
@@ -22,6 +23,7 @@ impl Default for Settings {
         Self {
             gpu_acceleration: true,
             turbo_indexing: false,
+            search_hotkey: None,
         }
     }
 }
@@ -56,7 +58,7 @@ impl SettingsStore {
     }
 
     pub fn get(&self) -> Settings {
-        *lock(&self.current)
+        lock(&self.current).clone()
     }
 
     pub fn set(&self, settings: Settings) -> io::Result<()> {

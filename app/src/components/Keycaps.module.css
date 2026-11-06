@@ -1,0 +1,37 @@
+.keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+}
+
+.symbol {
+  padding: 0 6px;
+  font-size: 14px;
+}
+
+.refused {
+  border-style: dashed;
+  border-bottom-width: 1px;
+  background: transparent;
+  color: var(--color-text-faint);
+  box-shadow: none;
+}

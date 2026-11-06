@@ -86,6 +86,21 @@ export interface Settings {
   turboIndexing: boolean;
 }
 
+export interface HotkeyParts {
+  keys: string[];
+  name: string;
+}
+
+export interface HotkeyStatus {
+  chosen: HotkeyParts | null;
+  active: HotkeyParts | null;
+}
+
+export interface HotkeyFailure {
+  kind: "invalid" | "failed";
+  message: string;
+}
+
 export interface SearchHit {
   path: string;
   name: string;
@@ -142,6 +157,10 @@ export const api = {
   excludedItems: () => invoke<Listed[]>("excluded_items"),
   indexEverything: () => invoke<void>("index_everything"),
   getSettings: () => invoke<Settings>("get_settings"),
+  getSearchHotkey: () => invoke<HotkeyStatus>("get_search_hotkey"),
+  setSearchHotkey: (shortcut: string | null) => invoke<HotkeyStatus>("set_search_hotkey", { shortcut }),
+  beginHotkeyRecording: () => invoke<void>("begin_hotkey_recording"),
+  endHotkeyRecording: () => invoke<void>("end_hotkey_recording"),
   modelStatus: () => invoke<ModelStatus>("model_status"),
   retryModelSetup: () => invoke<void>("retry_model_setup"),
   embeddingGpu: () => invoke<string | null>("embedding_gpu"),
@@ -157,6 +176,14 @@ export const api = {
 
 export function previewUrl(path: string): string {
   return convertFileSrc(path, "thumb");
+}
+
+export function hotkeyFailure(error: unknown): HotkeyFailure {
+  if (typeof error === "object" && error !== null && "kind" in error && "message" in error) {
+    const { kind, message } = error as HotkeyFailure;
+    if ((kind === "invalid" || kind === "failed") && typeof message === "string") return { kind, message };
+  }
+  return { kind: "failed", message: errorText(error) };
 }
 
 export function errorText(error: unknown): string {

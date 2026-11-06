@@ -7,6 +7,7 @@ mod clipboard;
 mod commands;
 mod crawl;
 mod embed;
+mod hotkey;
 mod index;
 mod indexer;
 mod main_window;
@@ -33,13 +34,8 @@ use tauri::{
 
 fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Mesa", true, None::<&str>)?;
-    let search = MenuItem::with_id(
-        app,
-        "search",
-        search_key.map_or_else(|| "Search".to_owned(), |key| format!("Search ({key})")),
-        true,
-        None::<&str>,
-    )?;
+    let search = MenuItem::with_id(app, "search", hotkey::tray_text(search_key), true, None::<&str>)?;
+    app.manage(hotkey::TrayItem(search.clone()));
     let quit = MenuItem::with_id(app, "quit", "Quit Mesa", true, None::<&str>)?;
     #[cfg(not(target_os = "macos"))]
     let menu = Menu::with_items(app, &[&open, &search, &quit])?;
@@ -152,9 +148,10 @@ fn main() {
             if let Err(e) = startup::register(app.handle()) {
                 eprintln!("Mesa: {e}");
             }
+            let search_key = hotkey::Hotkey::new(app.handle(), settings.get().search_hotkey.as_deref());
             app.manage(settings);
-            let search_key = widget::register_hotkey(app.handle());
-            add_tray_icon(app, search_key)?;
+            add_tray_icon(app, search_key.name().as_deref())?;
+            app.manage(search_key);
             if startup::wants_search(&startup::arguments()) {
                 widget::show_soon(app.handle());
             }
@@ -190,6 +187,10 @@ fn main() {
             commands::show_in_folder,
             commands::index_everything,
             commands::get_settings,
+            commands::get_search_hotkey,
+            commands::set_search_hotkey,
+            commands::begin_hotkey_recording,
+            commands::end_hotkey_recording,
             commands::embedding_gpu,
             commands::model_status,
             commands::retry_model_setup,

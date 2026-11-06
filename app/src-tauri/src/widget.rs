@@ -9,7 +9,6 @@ use std::{
 #[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 use crate::index::lock;
 
@@ -17,41 +16,6 @@ pub const LABEL: &str = "widget";
 const SHOWN_EVENT: &str = "widget-shown";
 const HIDDEN_EVENT: &str = "widget-hidden";
 const FOCUS_SEARCH_EVENT: &str = "focus-search";
-
-#[cfg(not(target_os = "macos"))]
-const CANDIDATES: &[(Modifiers, Code, &str)] = &[
-    (Modifiers::ALT, Code::Space, "Alt+Space"),
-    (Modifiers::CONTROL.union(Modifiers::ALT), Code::Space, "Ctrl+Alt+Space"),
-    (
-        Modifiers::CONTROL.union(Modifiers::SHIFT),
-        Code::Space,
-        "Ctrl+Shift+Space",
-    ),
-    (Modifiers::ALT.union(Modifiers::SHIFT), Code::Space, "Alt+Shift+Space"),
-    (Modifiers::CONTROL.union(Modifiers::ALT), Code::KeyM, "Ctrl+Alt+M"),
-];
-
-#[cfg(target_os = "macos")]
-const CANDIDATES: &[(Modifiers, Code, &str)] = &[
-    (
-        Modifiers::CONTROL.union(Modifiers::ALT),
-        Code::Space,
-        "Ctrl+Option+Space",
-    ),
-    (Modifiers::SUPER.union(Modifiers::SHIFT), Code::Space, "Cmd+Shift+Space"),
-    (
-        Modifiers::CONTROL.union(Modifiers::SHIFT),
-        Code::Space,
-        "Ctrl+Shift+Space",
-    ),
-    (
-        Modifiers::ALT.union(Modifiers::SHIFT),
-        Code::Space,
-        "Option+Shift+Space",
-    ),
-    (Modifiers::CONTROL.union(Modifiers::ALT), Code::KeyM, "Ctrl+Option+M"),
-];
-
 const BLUR_GRACE: Duration = Duration::from_millis(400);
 const TOP_AT: f64 = 0.14;
 static SHOWN_AT: Mutex<Option<Instant>> = Mutex::new(None);
@@ -112,17 +76,6 @@ pub fn float_over_everything(app: &AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = app;
-}
-
-pub fn register_hotkey(app: &AppHandle) -> Option<&'static str> {
-    let keys = app.global_shortcut();
-    for (modifiers, code, name) in CANDIDATES {
-        match keys.register(Shortcut::new(Some(*modifiers), *code)) {
-            Ok(()) => return Some(name),
-            Err(e) => eprintln!("Mesa: {name} is taken, so it can't be the search shortcut: {e}"),
-        }
-    }
-    None
 }
 
 pub fn toggle(app: &AppHandle) {
