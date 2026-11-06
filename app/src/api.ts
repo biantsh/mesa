@@ -135,6 +135,7 @@ export type ModelStatus =
 export const api = {
   homeDir: () => invoke<string>("home_dir"),
   listDir: (path: string) => invoke<Listing>("list_dir", { path }),
+  watchShownFolder: (path: string | null) => invoke<void>("watch_shown_folder", { path }),
   indexStatuses: (paths: string[]) => invoke<IndexState[]>("index_statuses", { paths }),
   indexProgress: () => invoke<Progress | null>("index_progress"),
   indexOverview: () => invoke<Overview>("index_overview"),

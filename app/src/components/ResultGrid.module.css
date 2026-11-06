@@ -20,9 +20,9 @@
   right: 0;
   top: 0;
   bottom: calc(var(--bottom-gap) + var(--for-progress) + var(--for-count));
-  overflow-y: auto;
+  overflow-y: scroll;
+  padding-left: var(--scrollbar-size);
   scroll-padding-top: var(--bar-room);
-  scrollbar-gutter: stable both-edges;
   mask-image:
     linear-gradient(
       to bottom,
@@ -32,7 +32,7 @@
       transparent
     ),
     linear-gradient(#000, #000);
-  mask-size: calc(100% - 12px) 100%, 12px 100%;
+  mask-size: calc(100% - var(--scrollbar-size)) 100%, var(--scrollbar-size) 100%;
   mask-position: left top, right top;
   mask-repeat: no-repeat;
   opacity: 0;

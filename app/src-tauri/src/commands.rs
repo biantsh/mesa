@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
@@ -13,8 +13,10 @@ use crate::{
     embed::ModelStatus,
     hotkey::{self, Hotkey},
     index::{Index, IndexState, Page, Stats},
+    main_window,
     progress::Progress,
     settings::{Settings, SettingsStore},
+    shown_folder::{self, ShownFolder},
     store::{Filter, Hit},
 };
 
@@ -39,6 +41,17 @@ pub async fn list_dir(path: String, index: State<'_, Index>) -> Result<Listing, 
         entry.excluded_here = state.excluded_here;
     }
     Ok(listing)
+}
+
+#[tauri::command]
+pub fn watch_shown_folder(path: Option<String>, app: AppHandle, shown: State<'_, ShownFolder>) -> Result<(), String> {
+    shown.set(path.filter(|path| !path.is_empty()).map(PathBuf::from), move |folder| {
+        let _ = app.emit_to(
+            main_window::LABEL,
+            shown_folder::CHANGED_EVENT,
+            folder.to_string_lossy(),
+        );
+    })
 }
 
 #[tauri::command(async)]

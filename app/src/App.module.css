@@ -43,20 +43,26 @@
 .pane {
   position: absolute;
   inset: 0;
-  outline: none;
   background: var(--color-bg);
   will-change: transform;
   transform: translateX(0);
   transition:
     transform var(--slide-time) var(--slide-curve),
+    opacity 0s,
     visibility 0s linear 0s;
+}
+
+.pane:focus-visible {
+  outline: none;
 }
 
 .before,
 .after {
   visibility: hidden;
+  opacity: 0;
   transition:
     transform var(--slide-time) var(--slide-curve),
+    opacity calc(var(--slide-time) * 0.7) cubic-bezier(0.4, 0, 1, 1),
     visibility 0s linear var(--slide-time);
 }
 

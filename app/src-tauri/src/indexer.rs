@@ -246,6 +246,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
     }
     walker.embed_waiting();
     let stored = walker.stored & walker.batch.store(shared);
+    walker.batch.release_marked(shared);
     if let Tracking::Seen(ticket) = walker.batch.tracking {
         lock(&shared.progress).finish_job(ticket);
     }
@@ -318,10 +319,8 @@ impl<'a> Walker<'a> {
         progress.add_total(ticket, files as u64);
     }
 
-    fn release(&self, path: &Path) {
-        if self.batch.tracking.is_in_progress() {
-            lock(&self.shared.pending).release(path);
-        }
+    fn release(&mut self, path: &Path) {
+        self.batch.release(self.shared, path);
     }
 
     fn fail(&mut self) {
@@ -362,6 +361,12 @@ impl<'a> Walker<'a> {
         }
         if !self.batch.tracking.is_in_progress() && self.waiting.len() > waiting_before {
             self.show(self.waiting.len() - waiting_before);
+            let mut pending = lock(&self.shared.pending);
+            for &(_, n) in &self.waiting[waiting_before..] {
+                let path = scan.path.join(&scan.files[n].name);
+                pending.add(path.clone());
+                self.batch.marked.insert(path);
+            }
         }
         if !self.warmed_up && !self.waiting.is_empty() {
             self.warmed_up = true;
@@ -485,6 +490,7 @@ struct Batch {
     new: u64,
     started: Instant,
     tracking: Tracking,
+    marked: HashSet<PathBuf>,
 }
 
 impl Batch {
@@ -496,7 +502,19 @@ impl Batch {
             new: 0,
             started: Instant::now(),
             tracking,
+            marked: HashSet::new(),
         }
+    }
+
+    fn release(&mut self, shared: &Shared, path: &Path) {
+        if self.tracking.is_in_progress() || self.marked.remove(path) {
+            lock(&shared.pending).release(path);
+        }
+    }
+
+    fn release_marked(&mut self, shared: &Shared) {
+        let mut pending = lock(&shared.pending);
+        self.marked.drain().for_each(|path| pending.release(&path));
     }
 
     fn processed(&self, shared: &Shared, files: u64) {
@@ -531,12 +549,13 @@ impl Batch {
             shared.landed_new.fetch_add(mem::take(&mut self.new), Ordering::SeqCst);
             drop(store);
         }
-        if self.tracking.is_in_progress() {
-            let mut pending = lock(&shared.pending);
-            self.finished.drain(..).for_each(|path| pending.release(&path));
-        } else {
-            self.finished.clear();
+        let mut pending = lock(&shared.pending);
+        for path in self.finished.drain(..) {
+            if self.tracking.is_in_progress() || self.marked.remove(&path) {
+                pending.release(&path);
+            }
         }
+        drop(pending);
         self.scans.clear();
         self.files = 0;
         self.started = Instant::now();

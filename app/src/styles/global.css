@@ -39,8 +39,8 @@ button {
 }
 
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 
 ::-webkit-scrollbar-track,
@@ -63,6 +63,15 @@ button {
 ::-webkit-scrollbar-thumb:active {
   background-color: var(--color-scrollbar-active);
   border-width: 2px;
+}
+
+[data-region="files"]::-webkit-scrollbar-thumb:vertical {
+  border-width: 3px 2px 3px 4px;
+}
+
+[data-region="files"]::-webkit-scrollbar-thumb:vertical:hover,
+[data-region="files"]::-webkit-scrollbar-thumb:vertical:active {
+  border-width: 2px 1px 2px 3px;
 }
 
 :focus-visible {

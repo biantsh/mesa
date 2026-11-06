@@ -26,6 +26,7 @@ import { useIndexProgress } from "../useIndexProgress";
 import { useLatest } from "../useLatest";
 import { useListMenu } from "../useListMenu";
 import { useLiveIndexStatus } from "../useLiveIndexStatus";
+import { mergeListing, useFolderChanges } from "../useFolderChanges";
 import { usePageSelection } from "../usePageSelection";
 import { usePanelLayout } from "../usePanelLayout";
 import { useSortedEntries } from "../useSortedEntries";
@@ -113,7 +114,7 @@ export function IndexScreen({ onBack, active }: Props) {
   const explorer = useRef<HTMLElement>(null);
   useDefaultScroll(active, () => explorer.current?.querySelector<HTMLElement>("[data-scroller]") ?? null);
 
-  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress);
+  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress, progress !== null);
   const refreshAll = async () => {
     await refreshStatuses();
     await refreshProgress();
@@ -136,9 +137,11 @@ export function IndexScreen({ onBack, active }: Props) {
     if (listSelection.list !== null && open !== listSelection.list) clearListSelection();
   }, [open, listSelection.list, clearListSelection]);
 
+  const loadsUnderway = useRef(0);
   const load = useCallback(async (path: string) => {
     const request = ++latestRequest.current;
     setLoading(true);
+    loadsUnderway.current++;
     try {
       const next = await api.listDir(path);
       if (request !== latestRequest.current) return;
@@ -149,9 +152,35 @@ export function IndexScreen({ onBack, active }: Props) {
       if (request !== latestRequest.current) return;
       setError(`Couldn't open this folder. ${errorText(e)}`);
     } finally {
+      loadsUnderway.current--;
       if (request === latestRequest.current) setLoading(false);
     }
   }, []);
+
+  const shownListing = useLatest(listing);
+  const refreshFolder = useCallback(async () => {
+    const shown = shownListing.current;
+    if (!shown || loadsUnderway.current > 0) return;
+    const request = ++latestRequest.current;
+    try {
+      const next = await api.listDir(shown.path);
+      if (request !== latestRequest.current) return;
+      setListing((current) => (current && current.path === next.path ? mergeListing(current, next) : next));
+    } catch {
+      if (request !== latestRequest.current) return;
+      const above = shown.breadcrumbs.map((crumb) => crumb.path).filter((path) => path !== shown.path).reverse();
+      for (const path of above) {
+        const next = await api.listDir(path).catch(() => null);
+        if (request !== latestRequest.current) return;
+        if (next) {
+          setListing(next);
+          shownFolder.current = next.path;
+          return;
+        }
+      }
+    }
+  }, [shownListing]);
+  useFolderChanges(listing?.path ?? null, active, refreshFolder);
 
   useEffect(() => {
     let cancelled = false;

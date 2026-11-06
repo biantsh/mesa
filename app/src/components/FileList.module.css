@@ -2,9 +2,8 @@
   flex: 1;
   min-height: 0;
   container-type: inline-size;
-  overflow-y: auto;
-  scrollbar-gutter: stable both-edges;
-  padding: 0 12px 12px;
+  overflow-y: scroll;
+  padding: 0 0 12px 12px;
   transition: opacity 120ms ease;
 }
 

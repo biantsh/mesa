@@ -5,7 +5,7 @@ use std::{
 
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow, Window};
 
-const LABEL: &str = "main";
+pub const LABEL: &str = "main";
 const HIDDEN_EVENT: &str = "main-hidden";
 const NAVIGATE_EVENT: &str = "navigate";
 

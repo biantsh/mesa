@@ -15,6 +15,7 @@ mod power;
 mod progress;
 mod rules;
 mod settings;
+mod shown_folder;
 mod startup;
 mod store;
 mod surface;
@@ -167,6 +168,7 @@ fn main() {
             index.check_for_changes();
             index.start_watching();
             app.manage(index);
+            app.manage(shown_folder::ShownFolder::default());
             surface::start(app.handle().clone(), dir.clone());
             if let Err(e) = startup::register(app.handle()) {
                 eprintln!("Mesa: {e}");
@@ -190,6 +192,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::home_dir,
             commands::list_dir,
+            commands::watch_shown_folder,
             commands::index_statuses,
             commands::index_progress,
             commands::index_overview,
