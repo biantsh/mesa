@@ -7,6 +7,7 @@ mod clipboard;
 mod commands;
 mod crawl;
 mod embed;
+mod glass;
 mod hotkey;
 mod index;
 mod indexer;
@@ -157,6 +158,7 @@ fn main() {
             }
             main_window::set_up_dock(app);
             widget::float_over_everything(app.handle());
+            glass::install(app.handle());
             main_window::show_if_the_page_does_not(app);
             Ok(())
         })
@@ -202,6 +204,8 @@ fn main() {
             commands::open_main,
             commands::show_main,
             commands::set_widget_box,
+            commands::widget_glass,
+            commands::set_widget_dark,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

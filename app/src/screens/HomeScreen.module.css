@@ -106,8 +106,9 @@
 
 .asWidget {
   --widget-inset: -14px;
-  --widget-fill: linear-gradient(var(--color-overlay), var(--color-overlay)),
-    color-mix(in srgb, var(--color-bg) 65%, transparent);
+  --widget-glass-color: var(--color-bg);
+  --widget-glass-tint: 76%;
+  --widget-fill: color-mix(in srgb, var(--widget-glass-color) var(--widget-glass-tint), transparent);
   --widget-box-moves:
     left var(--focus-time) var(--focus-ease),
     top var(--focus-time) var(--focus-ease),
@@ -115,6 +116,16 @@
     height var(--focus-time) var(--focus-ease),
     border-radius var(--focus-time) var(--focus-ease);
   --results-delay: calc(var(--focus-time) * 0.7);
+}
+
+:global(:root[data-theme="light"]) .asWidget {
+  --widget-glass-color: var(--color-bg);
+  --widget-glass-tint: 86%;
+}
+
+:global(:root[data-theme="dark"]) .asWidget {
+  --widget-glass-color: color-mix(in srgb, var(--color-bg) 30%, black);
+  --widget-glass-tint: 86%;
 }
 
 .asWidget .logo,

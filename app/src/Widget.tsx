@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { WIDGET_HIDDEN, WIDGET_SHOWN } from "./events";
-import { THEME_EVENT, chosenTheme, followTheme, type Theme } from "./theme";
+import { THEME_EVENT, chosenTheme, currentTheme, followTheme, type Theme } from "./theme";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { useIndexOverview } from "./useIndexOverview";
 import { useModelStatus } from "./useModelStatus";
@@ -9,9 +9,7 @@ import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
 import styles from "./Widget.module.css";
 
-const BOX_MARGIN_PX = 2;
-
-type Box = [number, number, number, number];
+type Box = [number, number, number, number, number];
 
 function visibleBox(): Box | null {
   const backdrop = document.querySelector<HTMLElement>("[data-widget-backdrop]");
@@ -19,7 +17,8 @@ function visibleBox(): Box | null {
   const seen = backdrop && Number(getComputedStyle(backdrop).opacity) > 0.01 ? backdrop : spot;
   if (!seen) return null;
   const r = seen.getBoundingClientRect();
-  return [r.left - BOX_MARGIN_PX, r.top - BOX_MARGIN_PX, r.right + BOX_MARGIN_PX, r.bottom + BOX_MARGIN_PX].map(Math.round) as Box;
+  const radius = parseFloat(getComputedStyle(seen).borderTopLeftRadius) || 0;
+  return [r.left, r.top, r.right, r.bottom, radius];
 }
 
 export default function Widget() {
@@ -78,6 +77,26 @@ export default function Widget() {
     frame = requestAnimationFrame(look);
     return () => cancelAnimationFrame(frame);
   }, [there]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.widget = "";
+    let cancelled = false;
+    api
+      .widgetGlass()
+      .then((glass) => {
+        if (!cancelled && glass) root.dataset.glass = "";
+      })
+      .catch(() => {});
+    const sync = () => void api.setWidgetDark(currentTheme() === "dark").catch(() => {});
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, []);
 
   useBlockContextMenu();
 
