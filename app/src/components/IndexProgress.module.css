@@ -10,6 +10,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
+  font-size: 13px;
 }
 
 .label {
@@ -36,6 +37,7 @@
   flex: 0 10 auto;
   min-width: 32px;
   height: 8px;
+  position: relative;
   overflow: hidden;
   border-radius: 999px;
   background: var(--color-border);
@@ -52,14 +54,28 @@
   background: var(--color-paused);
 }
 
-.indeterminate .fill {
+.searching {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
   width: 35%;
+  border-radius: inherit;
+  background: var(--color-primary);
   animation: sweep 1400ms ease-in-out infinite;
+  transition: opacity 300ms ease;
+}
+
+.searchingGone {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 300ms ease, visibility 0s linear 300ms;
 }
 
 .count {
   flex: none;
-  display: grid;
+  display: flex;
+  align-items: center;
   color: var(--color-text-muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -70,8 +86,24 @@
   margin-right: 6px;
 }
 
+.smooth {
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+  transition: width 260ms ease;
+}
+
+.smoothInner {
+  flex: none;
+  display: inline-block;
+}
+
+.figures {
+  display: grid;
+}
+
 .sizer,
-.shown {
+.text {
   grid-area: 1 / 1;
 }
 
@@ -79,10 +111,15 @@
   visibility: hidden;
 }
 
-.shown {
+.text {
   justify-self: end;
-  display: flex;
-  align-items: center;
+  animation: textIn 220ms ease-out backwards;
+}
+
+@keyframes textIn {
+  from {
+    opacity: 0;
+  }
 }
 
 @container (max-width: 440px) {
@@ -106,10 +143,40 @@
   }
 }
 
+@keyframes flow {
+  to {
+    background-position-x: 240px;
+  }
+}
+
+.track {
+  --flow-dark: color-mix(in srgb, var(--color-primary), black 22%);
+  --flow-light: color-mix(in srgb, var(--color-primary), white 38%);
+  --flow: linear-gradient(
+    90deg,
+    var(--flow-dark) 0%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 8%) 8%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 30%) 17%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 62%) 28%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 90%) 40%,
+    var(--flow-light) 50%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 90%) 60%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 62%) 72%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 30%) 83%,
+    color-mix(in srgb, var(--flow-dark), var(--flow-light) 8%) 92%,
+    var(--flow-dark) 100%
+  );
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .indeterminate .fill {
-    animation: none;
+  .searching {
+    width: 100%;
     transform: none;
-    width: 35%;
+    background-image: var(--flow);
+    background-size: 240px 100%;
+    background-repeat: repeat-x;
+    animation: flow 1000ms linear infinite;
+    animation-duration: 1000ms !important;
+    animation-iteration-count: infinite !important;
   }
 }

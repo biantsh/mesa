@@ -1,7 +1,7 @@
 .switch {
-  --width: 44px;
-  --height: 28px;
-  --thumb: 20px;
+  --width: 40px;
+  --height: 24px;
+  --thumb: 16px;
   --inset: 4px;
   flex: none;
   position: relative;

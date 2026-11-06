@@ -25,6 +25,11 @@ export interface Entry {
   modified: number | null;
 }
 
+export interface Listed extends Entry {
+  missing: boolean;
+  leftOut: number;
+}
+
 export interface IndexState {
   status: IndexStatus;
   droppable: boolean;
@@ -71,6 +76,7 @@ export function sameProgress(a: Progress | null, b: Progress | null): boolean {
 export interface Overview {
   empty: boolean;
   progress: Progress | null;
+  everythingIndexed: boolean;
   files: number;
   bytes: number;
 }
@@ -121,7 +127,6 @@ export const api = {
   search: (query: string, filter: SearchFilter) => invoke<SearchPage>("search", { query, ...filter }),
   searchMore: (id: number) => invoke<SearchPage>("search_more", { id }),
   setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),
-  cancelIndexing: () => invoke<void>("cancel_indexing"),
   dropFromQueue: (paths: string[]) => invoke<void>("drop_from_queue", { paths }),
   addToIndex: (paths: string[], completing?: string) => invoke<void>("add_to_index", { paths, completing }),
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
@@ -133,8 +138,9 @@ export const api = {
   stopExcluding: (paths: string[]) => invoke<void>("stop_excluding", { paths }),
   countWithData: (paths: string[]) => invoke<number>("count_with_data", { paths }),
   exclusionCount: () => invoke<number>("exclusion_count"),
+  indexedItems: () => invoke<Listed[]>("indexed_items"),
+  excludedItems: () => invoke<Listed[]>("excluded_items"),
   indexEverything: () => invoke<void>("index_everything"),
-  clearIndex: () => invoke<void>("clear_index"),
   getSettings: () => invoke<Settings>("get_settings"),
   modelStatus: () => invoke<ModelStatus>("model_status"),
   retryModelSetup: () => invoke<void>("retry_model_setup"),

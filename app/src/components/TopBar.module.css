@@ -1,9 +1,15 @@
 .bar {
   --gap: 16px;
+  container-type: inline-size;
   display: flex;
   align-items: center;
   gap: var(--gap);
-  padding: 14px 16px var(--gap);
+  padding: 8px var(--gap);
+}
+
+.bar .indexButton {
+  padding-block: 5px;
+  font-size: 13px;
 }
 
 .heading {
@@ -11,6 +17,21 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.titleGroup {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-faint);
+  font-size: 13px;
 }
 
 .title {
@@ -23,6 +44,18 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  min-height: 36px;
+  min-height: 34px;
   align-items: center;
+}
+
+@container (max-width: 980px) {
+  .bar[data-busy] .summary {
+    display: none;
+  }
+}
+
+@container (max-width: 560px) {
+  .summary {
+    display: none;
+  }
 }

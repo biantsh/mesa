@@ -4,6 +4,7 @@ import type { ViewMode } from "../useViewMode";
 import styles from "./ViewToggle.module.css";
 
 const ROWS = [6, 12, 18];
+const STROKE = 2.25;
 
 function ListRows({ size }: { size: number }) {
   return (
@@ -13,7 +14,7 @@ function ListRows({ size }: { size: number }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={2}
+      strokeWidth={STROKE}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -44,7 +45,7 @@ export function ViewToggle({ view, onChange }: Props) {
         title="Grid view"
         onClick={() => onChange("grid")}
       >
-        <LayoutGrid size={18} aria-hidden />
+        <LayoutGrid size={16} strokeWidth={STROKE} aria-hidden />
       </button>
       <button
         type="button"
@@ -54,7 +55,7 @@ export function ViewToggle({ view, onChange }: Props) {
         title="List view"
         onClick={() => onChange("list")}
       >
-        <ListRows size={18} />
+        <ListRows size={16} />
       </button>
     </div>
   );

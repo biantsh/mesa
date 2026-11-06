@@ -2,7 +2,7 @@ import { useMemo, type Dispatch, type SetStateAction } from "react";
 import { api, type Entry, type IndexState, type Listing } from "./api";
 import { usePoll } from "./usePoll";
 
-const isUnfinished = (entry: Entry) => entry.index === "indexing" || entry.index === "paused";
+const isUnfinished = (entry: Entry) => entry.index === "indexing" || entry.index === "paused" || entry.droppable;
 
 const sameState = (entry: Entry, state: IndexState) =>
   entry.index === state.status && entry.droppable === state.droppable && entry.excludedHere === state.excludedHere;
@@ -14,24 +14,24 @@ export function useLiveIndexStatus(
 ) {
   const watched = useMemo(() => listing?.entries.filter(isUnfinished) ?? [], [listing]);
 
-  usePoll(
-    async () => {
-      if (!listing) return;
-      const states = await api.indexStatuses(watched.map((entry) => entry.path));
-      await refreshProgress();
-      const stateOf = new Map(watched.map((entry, i) => [entry.path, states[i]]));
-      setListing((current) => {
-        if (current !== listing) return current;
-        let changed = false;
-        const entries = current.entries.map((entry) => {
-          const state = stateOf.get(entry.path);
-          if (!state || sameState(entry, state)) return entry;
-          changed = true;
-          return { ...entry, index: state.status, droppable: state.droppable, excludedHere: state.excludedHere };
-        });
-        return changed ? { ...current, entries } : current;
+  const update = async () => {
+    if (!listing) return;
+    const states = await api.indexStatuses(watched.map((entry) => entry.path));
+    await refreshProgress();
+    const stateOf = new Map(watched.map((entry, i) => [entry.path, states[i]]));
+    setListing((current) => {
+      if (current !== listing) return current;
+      let changed = false;
+      const entries = current.entries.map((entry) => {
+        const state = stateOf.get(entry.path);
+        if (!state || sameState(entry, state)) return entry;
+        changed = true;
+        return { ...entry, index: state.status, droppable: state.droppable, excludedHere: state.excludedHere };
       });
-    },
-    { active: watched.length > 0 },
-  );
+      return changed ? { ...current, entries } : current;
+    });
+  };
+
+  usePoll(update, { active: watched.length > 0 });
+  return update;
 }

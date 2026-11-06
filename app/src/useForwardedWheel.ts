@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type RefObject, type WheelEvent } from "react";
+import { prefersReducedMotion } from "./motion";
 
 const DURATION_MS = 170;
 const LINE_PX = 40;
@@ -33,7 +34,7 @@ export function useForwardedWheel(scroller: RefObject<HTMLElement | null>) {
       const from = element.scrollTop;
       stop();
       if (to === from) return;
-      if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      if (prefersReducedMotion()) {
         element.scrollTop = to;
         return;
       }

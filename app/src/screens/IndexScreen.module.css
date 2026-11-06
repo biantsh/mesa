@@ -1,15 +1,55 @@
 .app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
-.explorer {
+.app[data-marquee="on"] :is(button, [role="button"], a, input, select, textarea, [data-path], [data-row]) {
+  pointer-events: none;
+}
+
+.marquee {
+  position: absolute;
+  z-index: 5;
+  display: none;
+  pointer-events: none;
+  border: 1px solid var(--color-selected-border);
+  border-radius: 3px;
+  background: var(--color-selected-bg);
+}
+
+.body {
   flex: 1;
   min-height: 0;
   display: flex;
-  flex-direction: column;
+  gap: var(--gap);
   margin: 0 16px;
+  --gap: 8px;
+}
+
+.side {
+  flex: none;
+  width: clamp(260px, 18vw, 340px);
+  width: round(clamp(260px, 18vw, 340px), 4px);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+@media (max-width: 800px) {
+  .side {
+    width: 220px;
+  }
+}
+
+.explorer {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);

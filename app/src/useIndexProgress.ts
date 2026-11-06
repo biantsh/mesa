@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { api, sameProgress, type Progress } from "./api";
 import { usePoll } from "./usePoll";
 
-export function useIndexProgress() {
+export function useIndexProgress(active = true) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const asked = useRef(0);
   const applied = useRef(0);
@@ -18,7 +18,7 @@ export function useIndexProgress() {
     }
   }, []);
 
-  usePoll(refresh, { immediately: true });
+  usePoll(refresh, { active, immediately: true });
 
   return { progress, refresh };
 }

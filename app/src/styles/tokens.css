@@ -130,6 +130,12 @@
   initial-value: rgba(226, 105, 49, 0.15);
 }
 
+@property --color-leader-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(226, 105, 49, 0.26);
+}
+
 @property --color-selected-border {
   syntax: "<color>";
   inherits: true;
@@ -179,6 +185,7 @@
     --color-preview-bg 300ms ease,
     --color-hover-bg 300ms ease,
     --color-selected-bg 300ms ease,
+    --color-leader-bg 300ms ease,
     --color-selected-border 300ms ease,
     --color-overlay 300ms ease,
     --color-focus-ring 300ms ease,
@@ -222,6 +229,7 @@
 
   --color-hover-bg: rgba(226, 105, 49, 0.08);
   --color-selected-bg: rgba(226, 105, 49, 0.15);
+  --color-leader-bg: rgba(226, 105, 49, 0.26);
   --color-selected-border: rgba(226, 105, 49, 0.5);
   --color-overlay: rgba(42, 26, 20, 0.42);
   --color-border-strong-dimmed: color-mix(in srgb, var(--color-border-strong), rgb(42, 26, 20) 42%);
@@ -279,6 +287,7 @@
 
   --color-hover-bg: rgba(226, 105, 49, 0.14);
   --color-selected-bg: rgba(226, 105, 49, 0.24);
+  --color-leader-bg: rgba(226, 105, 49, 0.38);
   --color-selected-border: rgba(226, 105, 49, 0.6);
   --color-overlay: rgba(0, 0, 0, 0.6);
   --color-border-strong-dimmed: color-mix(in srgb, var(--color-border-strong), black 60%);

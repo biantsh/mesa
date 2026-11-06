@@ -3,20 +3,30 @@ import { statusText } from "./StatusBadge";
 
 interface Handlers<T> {
   selected: boolean;
-  onSelect: (path: string, toggle: boolean) => void;
+  onSelect: (path: string, toggle: boolean, range?: boolean) => void;
   onOpen: (item: T) => void;
   onContextMenu: (item: T, x: number, y: number) => void;
 }
 
+function isCut(el: HTMLElement): boolean {
+  return el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+}
+
 export function pressProps<T extends { path: string }>(item: T, usable: boolean, title: string, { selected, onSelect, onOpen, onContextMenu }: Handlers<T>) {
   return {
-    title,
+    "data-path": item.path,
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+      const clips = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("[data-clip]"));
+      if (clips.length === 0 || clips.some(isCut)) e.currentTarget.setAttribute("title", title);
+      else e.currentTarget.removeAttribute("title");
+    },
+    onMouseLeave: (e: React.MouseEvent<HTMLElement>) => e.currentTarget.removeAttribute("title"),
     "aria-pressed": usable ? selected : undefined,
     "aria-disabled": usable ? undefined : true,
-    onClick: (e: React.MouseEvent) => usable && onSelect(item.path, e.ctrlKey || e.metaKey),
+    onClick: (e: React.MouseEvent) => usable && onSelect(item.path, e.ctrlKey || e.metaKey, e.shiftKey),
     onDoubleClick: () => usable && onOpen(item),
     onKeyDown: (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && usable) onOpen(item);
+      if (e.key === "Enter" && !(e.ctrlKey || e.metaKey) && usable) onOpen(item);
     },
     onContextMenu: (e: React.MouseEvent<HTMLElement>) => {
       e.preventDefault();

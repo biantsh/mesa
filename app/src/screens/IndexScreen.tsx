@@ -1,23 +1,47 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { api, COMPUTER, errorText, type Entry, type Listing } from "../api";
+import { api, COMPUTER, errorText, type Entry, type Listed, type Listing } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ContextMenu } from "../components/ContextMenu";
 import { FileGrid } from "../components/FileGrid";
 import { FileList } from "../components/FileList";
+import { ItemsPanel } from "../components/ItemsPanel";
 import { NavBar } from "../components/NavBar";
 import { StatusBar } from "../components/StatusBar";
 import { TopBar } from "../components/TopBar";
+import { describeIndexTotals } from "../format";
 import { menuGroups } from "../menuGroups";
+import { parentOf } from "../paths";
 import { DEFAULT_SORT, nextSort, type Sort, type SortColumn } from "../sort";
+import { useDefaultScroll } from "../useDefaultScroll";
+import { useMarquee } from "../useMarquee";
 import { useIndexActions } from "../useIndexActions";
+import { useIndexKeys } from "../useIndexKeys";
+import { useIndexLists } from "../useIndexLists";
+import { useIndexOverview } from "../useIndexOverview";
 import { useIndexProgress } from "../useIndexProgress";
+import { useLatest } from "../useLatest";
+import { useListMenu } from "../useListMenu";
 import { useLiveIndexStatus } from "../useLiveIndexStatus";
-import { useSelection } from "../useSelection";
+import { usePageSelection } from "../usePageSelection";
+import { usePanelLayout, type ListName } from "../usePanelLayout";
+import { useSortedEntries } from "../useSortedEntries";
 import { useViewMode } from "../useViewMode";
 import styles from "./IndexScreen.module.css";
 
 const NO_ENTRIES: Entry[] = [];
+const KEEPS_SELECTION = "button, a, input, select, textarea, label, dialog, [role='menu']";
+
+const INDEXED_HINT = (
+  <>
+    Hover a folder and click <b>+</b> to start indexing it
+  </>
+);
+const EXCLUDED_HINT = (
+  <>
+    Right-click a folder and choose <b>Exclude</b> to keep it out of the index
+  </>
+);
 
 interface MenuState {
   entries: Entry[];
@@ -42,12 +66,65 @@ export function IndexScreen({ onBack, active }: Props) {
   const [view, setView] = useViewMode();
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const changeSort = useCallback((column: SortColumn) => setSort((current) => nextSort(current, column)), []);
-  const entries = listing?.entries ?? NO_ENTRIES;
-  const { selected, select, clear } = useSelection(listing?.path ?? "", entries, active);
-  const selectedEntries = useMemo(() => entries.filter((entry) => selected.has(entry.path)), [entries, selected]);
 
-  const { progress, refresh: refreshProgress } = useIndexProgress();
-  useLiveIndexStatus(listing, setListing, refreshProgress);
+  const { progress, refresh: refreshProgress } = useIndexProgress(active);
+
+  const { indexed, excluded, loaded, refresh: refreshLists } = useIndexLists(
+    `${progress?.name ?? ""}|${progress?.queued ?? 0}|${progress?.paused ? 1 : 0}`,
+    active,
+  );
+  const listItems = { indexed, excluded };
+
+  const entries = listing?.entries ?? NO_ENTRIES;
+  const sortedEntries = useSortedEntries(entries, sort);
+  const displayed = view === "list" ? sortedEntries : entries;
+
+  const {
+    selected,
+    active: activeEntry,
+    select,
+    clear,
+    move,
+    listSelection,
+    clearListSelection,
+    selectInList,
+    listHandlers,
+    selectedIn,
+    activeIn,
+    marqueeRegions,
+  } = usePageSelection({ folder: listing?.path ?? "", displayed, enabled: active, indexed, excluded });
+  const {
+    root: page,
+    box: marqueeBox,
+    dragging,
+    onPointerDown: onMarqueePointerDown,
+  } = useMarquee({ regions: marqueeRegions, onBackground: clear });
+
+  const selectedEntries = useMemo(() => entries.filter((entry) => selected.has(entry.path)), [entries, selected]);
+  const explorer = useRef<HTMLElement>(null);
+  useDefaultScroll(active, () => explorer.current?.querySelector<HTMLElement>("[data-scroller]") ?? null);
+
+  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress);
+  const refreshAll = async () => {
+    await refreshStatuses();
+    await refreshProgress();
+  };
+
+  const overview = useIndexOverview(active);
+  const summary = overview === null ? null : describeIndexTotals(overview.files, overview.bytes);
+
+  const { open, choose } = usePanelLayout(indexed.length, excluded.length, loaded);
+  const expandIndexed = useCallback(() => choose("indexed"), [choose]);
+  const expandExcluded = useCallback(() => choose("excluded"), [choose]);
+  const [animate, setAnimate] = useState(false);
+  useEffect(() => {
+    if (!loaded) return;
+    const frame = requestAnimationFrame(() => setAnimate(true));
+    return () => cancelAnimationFrame(frame);
+  }, [loaded]);
+  useEffect(() => {
+    if (listSelection.list !== null && open !== listSelection.list) clearListSelection();
+  }, [open, listSelection.list, clearListSelection]);
 
   const load = useCallback(async (path: string) => {
     const request = ++latestRequest.current;
@@ -83,13 +160,15 @@ export function IndexScreen({ onBack, active }: Props) {
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  const { actionsFor, askAboutExclusions, askToCancel, confirmation, confirm, dismiss } = useIndexActions({
+  const { actionsFor, addEntry, stopEntry, undoRecentAdd, undoRecentStop, listActions, askAboutIndexAll, confirmation, confirm, dismiss } = useIndexActions({
     folder: listing?.path ?? null,
     entries,
     shownFolder,
     load,
     refreshProgress,
+    refreshLists,
     clearSelection: clear,
+    clearListSelection,
     setError,
     markStopped,
   });
@@ -100,103 +179,197 @@ export function IndexScreen({ onBack, active }: Props) {
       if (entry.kind === "file") {
         api.openFile(entry.path).catch((e) => setError(`Couldn't open ${entry.name}. ${errorText(e)}`));
       } else {
+        void undoRecentAdd(entry);
+        void undoRecentStop(entry);
         clear();
         load(entry.path);
       }
     },
-    [clear, load],
+    [clear, load, undoRecentAdd, undoRecentStop],
   );
 
-  const showInFolder = (entry: Entry) =>
-    api.showInFolder(entry.path).catch((e) => setError(`Couldn't show ${entry.name}. ${errorText(e)}`));
+  const showInFolder = useCallback(
+    (entry: Entry) => api.showInFolder(entry.path).catch((e) => setError(`Couldn't show ${entry.name}. ${errorText(e)}`)),
+    [],
+  );
 
-  const selectionNow = useRef({ selected, selectedEntries });
-  useLayoutEffect(() => {
-    selectionNow.current = { selected, selectedEntries };
+  const openListed = useCallback(
+    (item: Listed) => {
+      if (!item.missing) return openEntry(item);
+      clear();
+      load(parentOf(item.path));
+    },
+    [clear, load, openEntry],
+  );
+
+  const listMenu = useListMenu({
+    indexed,
+    excluded,
+    listSelection,
+    selectInList,
+    openListed,
+    showInFolder,
+    listActions,
+    onOpening: closeMenu,
   });
+
+  const selectionNow = useLatest({ selected, selectedEntries });
+  const closeListMenu = listMenu.close;
   const openMenu = useCallback(
     (entry: Entry, x: number, y: number) => {
       const { selected, selectedEntries } = selectionNow.current;
       const inSelection = selected.has(entry.path);
       if (!inSelection) select(entry.path, false);
+      closeListMenu();
       setMenu({ entries: inSelection ? selectedEntries : [entry], x, y });
     },
-    [select],
+    [select, closeListMenu, selectionNow],
   );
 
+  const clearOnBackground = (e: React.MouseEvent) => {
+    if (e.target instanceof Element && e.target.closest(KEEPS_SELECTION) === null) clear();
+  };
+
   const selectionActions = actionsFor(selectedEntries);
+  useIndexKeys({
+    enabled: active,
+    somethingSelected: selected.size > 0 || listSelection.list !== null,
+    dragging,
+    clear,
+    actions: selectionActions,
+  });
 
   return (
-    <div className={styles.app}>
+    <div ref={page} className={styles.app} onClick={clearOnBackground} onPointerDown={onMarqueePointerDown}>
+      <div ref={marqueeBox} className={styles.marquee} aria-hidden />
       <TopBar
         onBack={onBack}
         progress={progress}
-        onRefreshProgress={refreshProgress}
-        onIndexAll={() => askAboutExclusions("indexAll")}
-        onClearIndex={() => askAboutExclusions("clearIndex")}
-        onCancelIndexing={askToCancel}
+        onRefreshProgress={refreshAll}
+        onIndexAll={askAboutIndexAll}
+        everythingIndexed={overview?.everythingIndexed ?? false}
         onError={setError}
         stoppedAt={stoppedAt}
+        summary={summary}
         selection={{
           selected: selectedEntries.length,
           add: selectionActions.add,
-          remove: selectionActions.remove,
           onAdd: selectionActions.doAdd,
-          onRemove: selectionActions.doRemove,
         }}
       />
 
-      <main className={styles.explorer} aria-busy={loading}>
-        <NavBar
-          crumbs={listing?.breadcrumbs ?? []}
-          parent={listing?.parent ?? null}
-          onOpen={load}
-          view={view}
-          onViewChange={setView}
-        />
-
-        {error && (
-          <div className={styles.error} role="alert">
-            <span>{error}</span>
-            <button
-              type="button"
-              className={styles.dismiss}
-              onClick={() => setError(null)}
-              aria-label="Dismiss"
-            >
-              <X size={16} aria-hidden />
-            </button>
-          </div>
-        )}
-
-        {view === "grid" ? (
-          <FileGrid
-            key={listing?.path ?? ""}
-            entries={entries}
-            loading={loading}
-            selected={selected}
-            onSelect={select}
-            onClear={clear}
-            onOpen={openEntry}
-            onContextMenu={openMenu}
+      <div className={styles.body}>
+        <main ref={explorer} className={styles.explorer} aria-busy={loading}>
+          <NavBar
+            crumbs={listing?.breadcrumbs ?? []}
+            parent={listing?.parent ?? null}
+            onOpen={load}
+            view={view}
+            onViewChange={setView}
           />
-        ) : (
-          <FileList
-            key={listing?.path ?? ""}
-            entries={entries}
-            loading={loading}
-            selected={selected}
-            onSelect={select}
-            onClear={clear}
-            sort={sort}
-            onSort={changeSort}
-            onOpen={openEntry}
-            onContextMenu={openMenu}
-          />
-        )}
-      </main>
 
-      <StatusBar entries={listing?.entries ?? null} selected={selectedEntries} />
+          {error && (
+            <div className={styles.error} role="alert">
+              <span>{error}</span>
+              <button
+                type="button"
+                className={styles.dismiss}
+                onClick={() => setError(null)}
+                aria-label="Dismiss"
+              >
+                <X size={16} aria-hidden />
+              </button>
+            </div>
+          )}
+
+          {view === "grid" ? (
+            <FileGrid
+              key={listing?.path ?? ""}
+              entries={entries}
+              loading={loading}
+              selected={selected}
+              active={activeEntry}
+              onSelect={select}
+              onMove={move}
+              onOpen={openEntry}
+              onAdd={addEntry}
+              onStop={stopEntry}
+              onContextMenu={openMenu}
+            />
+          ) : (
+            <FileList
+              key={listing?.path ?? ""}
+              entries={sortedEntries}
+              loading={loading}
+              selected={selected}
+              active={activeEntry}
+              onSelect={select}
+              onMove={move}
+              sort={sort}
+              onSort={changeSort}
+              onOpen={openEntry}
+              onContextMenu={openMenu}
+            />
+          )}
+        </main>
+
+        <aside
+          className={styles.side}
+          aria-label="What is indexed and what is excluded"
+          style={loaded ? undefined : { visibility: "hidden" }}
+        >
+          <ItemsPanel
+            title="Indexed"
+            items={indexed}
+            selected={selectedIn("indexed")}
+            active={activeIn("indexed")}
+            {...listHandlers.indexed}
+            onOpen={openListed}
+            onContextMenu={listMenu.openIndexed}
+            onRemove={listActions.unindex}
+            verb="Remove"
+            danger
+            removeLabel="Remove from index"
+            empty="Nothing is indexed yet."
+            emptyHint={INDEXED_HINT}
+            collapsed={open !== "indexed"}
+            onExpand={open === "indexed" ? undefined : expandIndexed}
+            animate={animate}
+            region="indexed"
+          />
+          <ItemsPanel
+            title="Excluded"
+            items={excluded}
+            selected={selectedIn("excluded")}
+            active={activeIn("excluded")}
+            {...listHandlers.excluded}
+            onOpen={openListed}
+            onContextMenu={listMenu.openExcluded}
+            onRemove={listActions.stopExcluding}
+            verb="Stop excluding"
+            removeLabel="Stop excluding"
+            empty="Nothing is excluded."
+            emptyHint={EXCLUDED_HINT}
+            collapsed={open !== "excluded"}
+            onExpand={open === "excluded" ? undefined : expandExcluded}
+            animate={animate}
+            region="excluded"
+          />
+        </aside>
+      </div>
+
+      <StatusBar
+        entries={listing?.entries ?? null}
+        selected={selectedEntries}
+        selectedInList={
+          listSelection.list === null
+            ? null
+            : {
+                name: listSelection.list === "indexed" ? "Indexed" : "Excluded",
+                count: listItems[listSelection.list].filter((item) => listSelection.paths.has(item.path)).length,
+              }
+        }
+      />
 
       {menu && (
         <ContextMenu
@@ -208,6 +381,16 @@ export function IndexScreen({ onBack, active }: Props) {
         />
       )}
 
+      {listMenu.menu && (
+        <ContextMenu
+          key={`${listMenu.menu.list}:${listMenu.menu.items[0].path}:${listMenu.menu.x}:${listMenu.menu.y}`}
+          x={listMenu.menu.x}
+          y={listMenu.menu.y}
+          groups={listMenu.groups(listMenu.menu)}
+          onClose={listMenu.close}
+        />
+      )}
+
       <ConfirmDialog
         open={confirmation !== null}
         title={confirmation?.title ?? ""}
@@ -216,11 +399,11 @@ export function IndexScreen({ onBack, active }: Props) {
         onCancel={dismiss}
         onConfirm={confirm}
       >
-        {confirmation?.message.map((paragraph) =>
+        {confirmation?.message.map((paragraph, i) =>
           typeof paragraph === "string" ? (
-            <p key={paragraph}>{paragraph}</p>
+            <p key={i}>{paragraph}</p>
           ) : (
-            <p key={paragraph.note}>
+            <p key={i}>
               <strong>Note:</strong> {paragraph.note}
             </p>
           ),

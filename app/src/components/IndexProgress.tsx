@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Pause, Play, X } from "lucide-react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Pause, Play } from "lucide-react";
 import { api, errorText, type Progress } from "../api";
 import { cx } from "../cx";
 import { IconButton } from "./IconButton";
@@ -12,7 +12,6 @@ const STOP_WINDOW_MS = 3000;
 interface Props {
   progress: Progress | null;
   onRefresh: () => Promise<void>;
-  onCancel: (subject: string) => void;
   onError: (message: string) => void;
   stoppedAt: number;
 }
@@ -35,7 +34,7 @@ function useLeaving(progress: Progress | null, stoppedAt: number) {
   return { leaving, finish: () => setLeaving(null) };
 }
 
-export function IndexProgress({ progress: current, onRefresh, onCancel, onError, stoppedAt }: Props) {
+export function IndexProgress({ progress: current, onRefresh, onError, stoppedAt }: Props) {
   const { leaving, finish } = useLeaving(current, stoppedAt);
   const isLeaving = current === null && leaving !== null;
 
@@ -55,15 +54,6 @@ export function IndexProgress({ progress: current, onRefresh, onCancel, onError,
     onRefresh();
   };
 
-  const stopUpdating = async () => {
-    try {
-      await api.cancelIndexing();
-    } catch (e) {
-      onError(`Couldn't stop updating. ${errorText(e)}`);
-    }
-    onRefresh();
-  };
-
   return (
     <div className={styles.root}>
       <Reveal show={!isLeaving} from="right" hold={leaving?.completed} onExited={finish}>
@@ -77,13 +67,6 @@ export function IndexProgress({ progress: current, onRefresh, onCancel, onError,
           >
             {progress.paused ? <Play size={18} aria-hidden /> : <Pause size={18} aria-hidden />}
           </IconButton>
-          <IconButton
-            label={progress.updating ? "Stop updating" : "Cancel indexing"}
-            tone={progress.updating ? undefined : "danger"}
-            onClick={progress.updating ? stopUpdating : () => onCancel(cancelSubject(progress))}
-          >
-            <X size={18} aria-hidden />
-          </IconButton>
         </div>
       </Reveal>
     </div>
@@ -91,10 +74,6 @@ export function IndexProgress({ progress: current, onRefresh, onCancel, onError,
 }
 
 const quoted = (name: string) => `\u201c${name}\u201d`;
-
-function cancelSubject({ name, queued }: Progress): string {
-  return queued > 0 ? `${quoted(name)} and ${queued} more` : quoted(name);
-}
 
 export function Label({ progress: { name, queued, updating } }: { progress: Progress }) {
   return (
@@ -113,14 +92,39 @@ function Count({ progress }: { progress: Progress }) {
   const longest = figures({ ...progress, done: progress.total });
   return (
     <span className={styles.count}>
-      <span className={styles.sizer} aria-hidden>
-        {longest}
-      </span>
-      <span className={styles.shown}>
-        <Reveal show={progress.paused}>
-          <span className={styles.pausedTag}>{text ? "Paused \u00b7" : "Paused"}</span>
-        </Reveal>
-        <span>{text}</span>
+      <Reveal show={progress.paused}>
+        <span className={styles.pausedTag}>{text ? "Paused \u00b7" : "Paused"}</span>
+      </Reveal>
+      <SmoothWidth>
+        <span className={styles.figures}>
+          <span className={styles.sizer} aria-hidden>
+            {longest}
+          </span>
+          <span key={progress.counting ? "finding" : "counted"} className={styles.text}>
+            {text}
+          </span>
+        </span>
+      </SmoothWidth>
+    </span>
+  );
+}
+
+function SmoothWidth({ children }: { children: ReactNode }) {
+  const inner = useRef<HTMLSpanElement>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = inner.current;
+    if (!el) return;
+    const measure = () => setWidth(el.getBoundingClientRect().width);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <span className={styles.smooth} style={width === null ? undefined : { width }}>
+      <span ref={inner} className={styles.smoothInner}>
+        {children}
       </span>
     </span>
   );
@@ -138,7 +142,7 @@ export function Bar({ progress }: { progress: Progress }) {
 
   return (
     <div
-      className={cx(styles.track, !determinate && !paused && styles.indeterminate, paused && styles.paused)}
+      className={cx(styles.track, paused && styles.paused)}
       role="progressbar"
       aria-label="Indexing progress"
       aria-valuemin={0}
@@ -147,7 +151,8 @@ export function Bar({ progress }: { progress: Progress }) {
       aria-valuetext={determinate ? `${percent}%, ${done} of ${total} files` : "Finding files"}
       title={determinate ? `${percent}% \u00b7 ${number.format(done)} of ${number.format(total)} files` : undefined}
     >
-      <div className={styles.fill} style={determinate ? { width: `${percent}%` } : undefined} />
+      <div className={styles.fill} style={{ width: determinate ? `${percent}%` : paused ? "100%" : "0%" }} />
+      <div className={cx(styles.searching, (determinate || paused) && styles.searchingGone)} />
     </div>
   );
 }

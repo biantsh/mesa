@@ -4,9 +4,9 @@ import { previewUrl, type Entry } from "../api";
 import { cx } from "../cx";
 import { formatModified, formatSize, typeLabel } from "../format";
 import type { Sort, SortColumn } from "../sort";
+import { useArrowKeys } from "../useArrowKeys";
 import { usePreview } from "../usePreview";
 import { useRevealOnMount } from "../useRevealOnMount";
-import { useSortedEntries } from "../useSortedEntries";
 import { EmptyFolder } from "./EmptyFolder";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
@@ -17,8 +17,9 @@ interface Props {
   entries: Entry[];
   loading: boolean;
   selected: ReadonlySet<string>;
-  onSelect: (path: string, toggle: boolean) => void;
-  onClear: () => void;
+  active: string | null;
+  onSelect: (path: string, toggle: boolean, range?: boolean) => void;
+  onMove: (path: string, extend: boolean) => void;
   sort: Sort;
   onSort: (column: SortColumn) => void;
   onOpen: (entry: Entry) => void;
@@ -29,15 +30,23 @@ export const FileList = memo(function FileList({
   entries,
   loading,
   selected,
+  active,
   onSelect,
-  onClear,
+  onMove,
   sort,
   onSort,
   onOpen,
   onContextMenu,
 }: Props) {
-  const sorted = useSortedEntries(entries, sort);
-  const firstSelected = sorted.find((entry) => selected.has(entry.path))?.path;
+  const onKeyDown = useArrowKeys({
+    items: entries,
+    selectable: (entry) => entry.readable,
+    active,
+    columns: () => 1,
+    onMove,
+  });
+
+  const firstSelected = entries.find((entry) => selected.has(entry.path))?.path;
   const selectedRow = useRef<HTMLButtonElement>(null);
   useRevealOnMount(selectedRow);
 
@@ -46,22 +55,24 @@ export const FileList = memo(function FileList({
   return (
     <div
       className={cx(styles.list, loading && styles.loading)}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClear();
-      }}
+      tabIndex={-1}
+      data-scroller
+      data-region="files"
+      onKeyDown={onKeyDown}
     >
-      <div className={styles.header}>
+      <div className={styles.header} data-no-marquee>
         <SortHeader column="name" label="Name" sort={sort} onSort={onSort} />
         <SortHeader column="status" label="Status" sort={sort} onSort={onSort} />
         <SortHeader column="type" label="Type" sort={sort} onSort={onSort} className={styles.type} />
         <SortHeader column="size" label="Size" sort={sort} onSort={onSort} className={styles.size} />
         <SortHeader column="modified" label="Modified" sort={sort} onSort={onSort} />
       </div>
-      {sorted.map((entry) => (
+      {entries.map((entry) => (
         <Row
           key={entry.path}
           entry={entry}
           selected={selected.has(entry.path)}
+          leader={entry.path === active}
           rowRef={entry.path === firstSelected ? selectedRow : undefined}
           onSelect={onSelect}
           onOpen={onOpen}
@@ -102,19 +113,20 @@ function SortHeader({ column, label, sort, onSort, className }: SortHeaderProps)
 interface RowProps {
   entry: Entry;
   selected: boolean;
+  leader: boolean;
   rowRef?: Ref<HTMLButtonElement>;
-  onSelect: (path: string, toggle: boolean) => void;
+  onSelect: (path: string, toggle: boolean, range?: boolean) => void;
   onOpen: (entry: Entry) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
 }
 
-const Row = memo(function Row({ entry, selected, rowRef, onSelect, onOpen, onContextMenu }: RowProps) {
+const Row = memo(function Row({ entry, selected, leader, rowRef, onSelect, onOpen, onContextMenu }: RowProps) {
   const { wanted, loaded, onLoad, onError } = usePreview(entry);
   return (
     <button
       ref={rowRef}
       type="button"
-      className={cx(styles.row, selected && styles.selected, !entry.readable && styles.unreadable)}
+      className={cx(styles.row, selected && styles.selected, selected && leader && styles.leader, !entry.readable && styles.unreadable)}
       {...entryProps(entry, { selected, onSelect, onOpen, onContextMenu })}
     >
       <span className={styles.nameCell}>
@@ -137,7 +149,7 @@ const Row = memo(function Row({ entry, selected, rowRef, onSelect, onOpen, onCon
             />
           )}
         </span>
-        <span className={styles.name}>{entry.name}</span>
+        <span className={styles.name} data-clip>{entry.name}</span>
       </span>
       <span className={styles.statusCell}>
         <StatusBadge entry={entry} />

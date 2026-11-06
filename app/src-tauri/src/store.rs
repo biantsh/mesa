@@ -3,7 +3,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fmt, fs, io, mem,
+    fmt, fs, io,
     path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
 
@@ -147,7 +147,6 @@ pub struct ScannedDir {
 }
 
 pub struct Store {
-    dir: PathBuf,
     conn: Connection,
     vectors: VectorFile,
 }
@@ -171,26 +170,7 @@ impl Store {
         } else {
             vectors.truncate_to(expected)?;
         }
-        Ok(Self {
-            dir: dir.to_owned(),
-            conn,
-            vectors,
-        })
-    }
-
-    pub fn reset(&mut self) -> Result<()> {
-        self.vectors.truncate_to(0)?;
-        self.vectors.sync()?;
-        let closed = mem::replace(&mut self.conn, Connection::open_in_memory()?);
-        closed.close().map_err(|(_, e)| e)?;
-        for name in ["mesa.db", "mesa.db-wal", "mesa.db-shm"] {
-            match fs::remove_file(self.dir.join(name)) {
-                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e.into()),
-                _ => {}
-            }
-        }
-        self.conn = open_db(&self.dir)?;
-        Ok(())
+        Ok(Self { conn, vectors })
     }
 
     pub fn load_rules(&self) -> Result<HashMap<PathBuf, bool>> {

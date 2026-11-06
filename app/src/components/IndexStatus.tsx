@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
 import type { Overview } from "../api";
 import { cx } from "../cx";
+import { prefersReducedMotion } from "../motion";
 import { Bar, figures, Label } from "./IndexProgress";
 import styles from "./IndexStatus.module.css";
 
@@ -20,7 +21,7 @@ export function IndexStatus({ overview, onOpenIndex, attention, raised = false }
   useEffect(() => {
     if (attention === attended.current) return;
     attended.current = attention;
-    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const still = prefersReducedMotion();
     const none = { backgroundColor: "transparent", boxShadow: "0 0 0 0 transparent" };
     const lit = {
       backgroundColor: "var(--color-selected-bg)",

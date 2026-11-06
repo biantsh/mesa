@@ -123,6 +123,44 @@ pub fn list(path: &str) -> io::Result<Listing> {
     })
 }
 
+pub fn describe(path: &Path) -> (Entry, bool) {
+    let name = display_name(path);
+    let (entry, missing) = match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => (
+            if path.parent().is_none() {
+                Entry::drive(path)
+            } else {
+                Entry::folder(name, path)
+            },
+            false,
+        ),
+        Ok(_) => match category_of(&name) {
+            Some(category) => (Entry::file(name, path, category), false),
+            None => (Entry::new(name, path, Kind::File), false),
+        },
+        Err(e) => {
+            let entry = if path.parent().is_none() {
+                Entry::new(name, path, Kind::Drive)
+            } else if let Some(category) = category_of(&name) {
+                Entry::file(name, path, category)
+            } else {
+                Entry {
+                    has_contents: true,
+                    ..Entry::new(name, path, Kind::Folder)
+                }
+            };
+            (entry, e.kind() == io::ErrorKind::NotFound)
+        }
+    };
+    (
+        Entry {
+            readable: true,
+            ..entry
+        },
+        missing,
+    )
+}
+
 #[cfg(windows)]
 pub fn roots() -> Vec<PathBuf> {
     ('A'..='Z')
@@ -184,6 +222,10 @@ fn root_entries() -> Vec<Entry> {
     roots().iter().map(|root| Entry::drive(root)).collect()
 }
 
+pub fn listing_order(entry: &Entry) -> (bool, String) {
+    (entry.kind == Kind::File, entry.name.to_lowercase())
+}
+
 fn read_entries(dir: &Path) -> io::Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for item in fs::read_dir(dir)? {
@@ -204,7 +246,7 @@ fn read_entries(dir: &Path) -> io::Result<Vec<Entry>> {
             },
         });
     }
-    entries.sort_by_cached_key(|e| (e.kind == Kind::File, e.name.to_lowercase()));
+    entries.sort_by_cached_key(listing_order);
     Ok(entries)
 }
 
@@ -282,6 +324,11 @@ pub fn is_listed_file(path: &Path) -> bool {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| category_of(name).is_some())
+}
+
+pub fn has_listed_name(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| category_of(&name.to_string_lossy()).is_some())
 }
 
 pub fn category_of(name: &str) -> Option<Category> {

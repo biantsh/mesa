@@ -1,25 +1,34 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Entry } from "./api";
-import { clicked, everything } from "./selection";
+import { everything, howToPick, NOTHING_PICKED, pick, type Pick, type Picked } from "./selection";
+import { useLatest } from "./useLatest";
 
-const NOTHING: ReadonlySet<string> = new Set();
+export function useSelection(folder: string, entries: Entry[], enabled = true, onSelectAll?: () => void) {
+  const [selection, setSelection] = useState({ folder, ...NOTHING_PICKED });
+  if (selection.folder !== folder) setSelection({ folder, ...NOTHING_PICKED });
+  const current: Picked = selection.folder === folder ? selection : NOTHING_PICKED;
+  const order = useMemo(() => entries.filter((entry) => entry.readable).map((entry) => entry.path), [entries]);
+  const orderNow = useLatest(order);
 
-export function useSelection(folder: string, entries: Entry[], enabled = true) {
-  const [selection, setSelection] = useState({ folder, paths: NOTHING });
-  if (selection.folder !== folder) setSelection({ folder, paths: NOTHING });
-  const selected = selection.folder === folder ? selection.paths : NOTHING;
-
-  const select = useCallback(
-    (path: string, toggle: boolean) => {
-      setSelection((current) => ({
+  const pickPath = useCallback(
+    (path: string, how: Pick) => {
+      setSelection((state) => ({
         folder,
-        paths: clicked(current.folder === folder ? current.paths : NOTHING, path, toggle),
+        ...pick(state.folder === folder ? state : NOTHING_PICKED, orderNow.current, path, how),
       }));
     },
     [folder],
   );
 
-  const clear = useCallback(() => setSelection({ folder, paths: NOTHING }), [folder]);
+  const select = useCallback(
+    (path: string, toggle: boolean, range = false) => pickPath(path, howToPick(toggle, range)),
+    [pickPath],
+  );
+  const move = useCallback((path: string, extend: boolean) => pickPath(path, extend ? "range" : "replace"), [pickPath]);
+
+  const clear = useCallback(() => setSelection({ folder, ...NOTHING_PICKED }), [folder]);
+
+  const choose = useCallback((picked: Picked) => setSelection({ folder, ...picked }), [folder]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -27,18 +36,24 @@ export function useSelection(folder: string, entries: Entry[], enabled = true) {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
       if (isForSomethingElse(e.target)) return;
       e.preventDefault();
-      setSelection({ folder, paths: e.shiftKey ? NOTHING : everything(entries) });
+      setSelection((state) => ({
+        ...(state.folder === folder ? state : { folder, ...NOTHING_PICKED }),
+        folder,
+        paths: e.shiftKey ? NOTHING_PICKED.paths : everything(entries),
+      }));
+      if (!e.shiftKey) onSelectAll?.();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [folder, entries, enabled]);
+  }, [folder, entries, enabled, onSelectAll]);
 
-  return { selected, select, clear };
+  return { selected: current.paths, active: current.active, anchor: current.anchor, select, move, choose, clear };
 }
 
 export function isForSomethingElse(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
-    (target.isContentEditable || target.closest("input, textarea, select, dialog, [role='menu']") !== null)
+    (target.isContentEditable ||
+      target.closest("input, textarea, select, dialog, [role='menu'], [data-own-keys]") !== null)
   );
 }

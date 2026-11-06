@@ -1,6 +1,6 @@
-import { useCallback, useState } from "react";
-import { api, errorText, type Entry } from "./api";
-import { CONFIRMATIONS, type Confirmation, type ConfirmContext } from "./confirmations";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { api, errorText, type Entry, type Listed } from "./api";
+import { CONFIRMATIONS, removeItems, type Confirmation, type ConfirmContext } from "./confirmations";
 import { describeKinds, excludeLabel, menuTargets, wholeFolderAdd } from "./menuTargets";
 
 interface Inputs {
@@ -9,10 +9,14 @@ interface Inputs {
   shownFolder: { readonly current: string | null };
   load: (path: string) => Promise<void>;
   refreshProgress: () => Promise<void>;
+  refreshLists: () => Promise<void>;
   clearSelection: () => void;
+  clearListSelection: () => void;
   setError: (message: string | null) => void;
   markStopped: () => void;
 }
+
+const UNDO_ADD_MS = 800;
 
 type Asking = ({ which: Confirmation; subject: string } & Partial<ConfirmContext>) | null;
 
@@ -24,7 +28,9 @@ export function useIndexActions({
   shownFolder,
   load,
   refreshProgress,
+  refreshLists,
   clearSelection,
+  clearListSelection,
   setError,
   markStopped,
 }: Inputs) {
@@ -37,12 +43,12 @@ export function useIndexActions({
         await refreshProgress();
         afterwards?.();
         const shown = shownFolder.current;
-        if (shown !== null) await load(shown);
+        await Promise.all([shown !== null ? load(shown) : undefined, refreshLists()]);
       } catch (e) {
         setError(`Couldn't update the index. ${errorText(e)}`);
       }
     },
-    [load, refreshProgress, setError, shownFolder],
+    [load, refreshProgress, refreshLists, setError, shownFolder],
   );
 
   const changeSelection = (action: () => Promise<void>) => changeIndex(action, clearSelection);
@@ -91,15 +97,86 @@ export function useIndexActions({
     };
   };
 
-  const askAboutExclusions = async (which: "indexAll" | "clearIndex") => {
+  const listActions = useMemo(() => ({
+    unindex: (items: Listed[]) => {
+      const paths = items.map((item) => item.path);
+      const dropping = items.filter((item) => item.droppable).map((item) => item.path);
+      if (items.length > 1) {
+        setAsking({ which: "removeFromIndex", subject: describeKinds(items), paths, dropping });
+        return;
+      }
+      if (dropping.length > 0) markStopped();
+      void changeIndex(() => removeItems(paths, dropping), clearListSelection);
+    },
+    stopExcluding: (items: Listed[]) =>
+      void changeIndex(() => api.stopExcluding(items.map((item) => item.path)), clearListSelection),
+  }), [changeIndex, markStopped, clearListSelection]);
+
+  const lastAdded = useRef<{ path: string; at: number; done: Promise<void> } | null>(null);
+  const addEntry = useCallback(
+    (entry: Entry) => {
+      lastAdded.current = {
+        path: entry.path,
+        at: Date.now(),
+        done: changeIndex(() => api.addToIndex([entry.path])),
+      };
+    },
+    [changeIndex],
+  );
+
+  const lastStopped = useRef<{ path: string; at: number; done: Promise<void> } | null>(null);
+  const stopEntry = useCallback(
+    (entry: Entry) => {
+      markStopped();
+      lastStopped.current = {
+        path: entry.path,
+        at: Date.now(),
+        done: changeIndex(() => removeItems([entry.path], [entry.path])),
+      };
+    },
+    [changeIndex, markStopped],
+  );
+
+  const undoRecentStop = useCallback(
+    async (entry: Entry) => {
+      const stopped = lastStopped.current;
+      if (!stopped || stopped.path !== entry.path || Date.now() - stopped.at > UNDO_ADD_MS) return;
+      lastStopped.current = null;
+      try {
+        await stopped.done;
+        await api.addToIndex([entry.path]);
+        await Promise.all([refreshProgress(), refreshLists()]);
+      } catch (e) {
+        setError(`Couldn't update the index. ${errorText(e)}`);
+      }
+    },
+    [refreshProgress, refreshLists, setError],
+  );
+
+  const undoRecentAdd = useCallback(
+    async (entry: Entry) => {
+      const added = lastAdded.current;
+      if (!added || added.path !== entry.path || Date.now() - added.at > UNDO_ADD_MS) return;
+      lastAdded.current = null;
+      markStopped();
+      try {
+        await added.done;
+        await removeItems([entry.path], [entry.path]);
+        await Promise.all([refreshProgress(), refreshLists()]);
+      } catch (e) {
+        setError(`Couldn't update the index. ${errorText(e)}`);
+      }
+    },
+    [markStopped, refreshProgress, refreshLists, setError],
+  );
+
+  const askAboutIndexAll = async () => {
     try {
-      setAsking({ which, subject: "", exclusions: await api.exclusionCount() });
+      setAsking({ which: "indexAll", subject: "", exclusions: await api.exclusionCount() });
     } catch (e) {
       setError(errorText(e));
     }
   };
-
-  const askToCancel = (subject: string) => setAsking({ which: "cancelIndexing", subject });
 
   const confirmation = asking
     ? CONFIRMATIONS[asking.which](asking.subject, {
@@ -107,6 +184,7 @@ export function useIndexActions({
         exclusions: asking.exclusions ?? 0,
         withData: asking.withData ?? 0,
         stops: asking.stops ?? false,
+        dropping: asking.dropping ?? [],
       })
     : null;
 
@@ -118,5 +196,16 @@ export function useIndexActions({
     changeIndex(confirmation.run, ofSelection ? clearSelection : undefined);
   };
 
-  return { actionsFor, askAboutExclusions, askToCancel, confirmation, confirm, dismiss: () => setAsking(null) };
+  return {
+    actionsFor,
+    addEntry,
+    stopEntry,
+    undoRecentAdd,
+    undoRecentStop,
+    listActions,
+    askAboutIndexAll,
+    confirmation,
+    confirm,
+    dismiss: () => setAsking(null),
+  };
 }

@@ -273,10 +273,7 @@ impl State {
                     }
                 }
                 Ok(_) => {
-                    let supported = path
-                        .file_name()
-                        .is_some_and(|name| browse::category_of(&name.to_string_lossy()).is_some());
-                    if supported && (heard.arrived || heard.changed) {
+                    if browse::has_listed_name(&path) && (heard.arrived || heard.changed) {
                         look.push(path);
                     }
                 }
@@ -361,7 +358,7 @@ fn worth_a_look(path: &Path, what: What) -> bool {
     };
     match what {
         What::Gone => true,
-        What::Changed => browse::category_of(&name).is_some(),
-        What::Arrived => browse::category_of(&name).is_some() || !name.contains('.') || path.is_dir(),
+        What::Changed => browse::has_listed_name(path),
+        What::Arrived => browse::has_listed_name(path) || !name.contains('.') || path.is_dir(),
     }
 }

@@ -3,12 +3,8 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 30px;
-  margin: 8px 16px 16px;
-  padding: 0 16px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
+  height: 16px;
+  margin: 8px 16px 12px;
   color: var(--color-text-faint);
   font-size: 12px;
   white-space: nowrap;

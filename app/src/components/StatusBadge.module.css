@@ -46,3 +46,10 @@
     transform: rotate(360deg);
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .indexing svg {
+    animation-duration: 2400ms !important;
+    animation-iteration-count: infinite !important;
+  }
+}

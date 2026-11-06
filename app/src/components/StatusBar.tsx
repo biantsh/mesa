@@ -5,9 +5,10 @@ import styles from "./StatusBar.module.css";
 interface Props {
   entries: Entry[] | null;
   selected: Entry[];
+  selectedInList: { name: string; count: number } | null;
 }
 
-export function StatusBar({ entries, selected }: Props) {
+export function StatusBar({ entries, selected, selectedInList }: Props) {
   if (entries === null) return <footer className={styles.bar} />;
   const indexed = selected.length > 0 ? describeIndexed(selected, true) : describeIndexed(entries);
   return (
@@ -17,6 +18,14 @@ export function StatusBar({ entries, selected }: Props) {
         <>
           <span className={styles.separator} aria-hidden />
           <span>{selected.length} selected</span>
+        </>
+      )}
+      {selectedInList !== null && selectedInList.count > 0 && (
+        <>
+          <span className={styles.separator} aria-hidden />
+          <span>
+            {selectedInList.count} selected in {selectedInList.name}
+          </span>
         </>
       )}
       {indexed && <span className={styles.indexed}>{indexed}</span>}

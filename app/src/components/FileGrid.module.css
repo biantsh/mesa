@@ -2,12 +2,12 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   align-content: start;
-  gap: 8px;
-  padding: 12px;
+  gap: 4px;
+  padding: 12px 9px 12px 12px;
   overflow-y: auto;
-  scrollbar-gutter: stable both-edges;
+  scrollbar-gutter: stable;
   transition: opacity 120ms ease;
 }
 
@@ -19,9 +19,9 @@
   scroll-margin: 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  padding: 4px 8px 8px;
+  padding: 4px 6px 3px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
@@ -38,12 +38,28 @@
   border-color: var(--color-selected-border);
 }
 
+.tile.leader {
+  background: var(--color-leader-bg);
+}
+
+.tile:focus-visible {
+  outline: none;
+}
+
+.tile:focus-visible:not(.selected) {
+  background: var(--color-hover-bg);
+}
+
+.grid:focus-visible {
+  outline: none;
+}
+
 .preview {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 84px;
+  height: 56px;
 }
 
 .thumb {
@@ -83,6 +99,113 @@
   right: 4px;
   bottom: 4px;
   display: flex;
+}
+
+.add {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.addDisc {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  box-shadow: 0 0 0 2px var(--color-on-primary);
+  transition: background-color 120ms ease;
+}
+
+.tile:hover .add {
+  opacity: 1;
+}
+
+.add:hover .addDisc {
+  background: var(--color-primary-hover);
+}
+
+.stoppable {
+  position: relative;
+  display: flex;
+}
+
+.status {
+  display: flex;
+  transition: opacity 120ms ease;
+}
+
+.stop {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.stopDisc {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  color: var(--color-on-danger);
+  box-shadow: 0 0 0 2px var(--color-on-primary);
+}
+
+.stop:hover .stopDisc {
+  background: var(--color-danger-hover);
+}
+
+.stoppable:hover .stop {
+  opacity: 1;
+}
+
+.stoppable:hover .status {
+  opacity: 0;
+}
+
+.engaged .stop {
+  opacity: 1;
+}
+
+.engaged .status {
+  opacity: 0;
+  transition: none;
+}
+
+.engaged .stopDisc {
+  animation: fromPlus 200ms ease-out backwards;
+}
+
+@keyframes fromPlus {
+  from {
+    background: var(--color-primary);
+  }
+}
+
+.grid[data-selecting] .stop,
+:global([data-marquee="on"]) .stop {
+  display: none;
+}
+
+.grid[data-selecting] .stoppable:hover .status,
+:global([data-marquee="on"]) .stoppable:hover .status {
+  opacity: 1;
+}
+
+.grid[data-selecting] .add,
+:global([data-marquee="on"]) .add {
+  display: none;
 }
 
 .name {

@@ -76,7 +76,7 @@ export default function App() {
     if (!onIndex) return;
     const onKeyDown = (e: KeyboardEvent) => {
       const back = e.key === "Escape" || (e.altKey && e.key === "ArrowLeft");
-      if (!back || document.querySelector(OPEN_ON_TOP)) return;
+      if (!back || e.defaultPrevented || document.querySelector(OPEN_ON_TOP)) return;
       e.preventDefault();
       goHome();
     };

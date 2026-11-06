@@ -3,17 +3,18 @@ import { cx } from "../cx";
 import { Button, type ButtonProps } from "./Button";
 import styles from "./MorphButton.module.css";
 
-const ICON = 16;
+const DEFAULT_ICON = 16;
 const GAP = 8;
 
 interface Props extends Omit<ButtonProps, "children"> {
   selecting: boolean;
   icon: ReactNode;
+  iconSize?: number;
   label: string;
   selectingLabel: string;
 }
 
-export function MorphButton({ selecting, icon, label, selectingLabel, className, ...rest }: Props) {
+export function MorphButton({ selecting, icon, iconSize = DEFAULT_ICON, label, selectingLabel, className, ...rest }: Props) {
   const first = useRef<HTMLSpanElement>(null);
   const second = useRef<HTMLSpanElement>(null);
   const [widths, setWidths] = useState({ first: 0, second: 0 });
@@ -33,14 +34,14 @@ export function MorphButton({ selecting, icon, label, selectingLabel, className,
     return () => observer.disconnect();
   }, []);
 
-  const iconAt = -(ICON + GAP + widths.first) / 2;
-  const labelAt = selecting ? -widths.second / 2 : iconAt + ICON + GAP;
+  const iconAt = -(iconSize + GAP + widths.first) / 2;
+  const labelAt = selecting ? -widths.second / 2 : iconAt + iconSize + GAP;
 
   return (
     <Button className={cx(styles.morph, className)} {...rest}>
       <span className={styles.sizers} aria-hidden>
         <span>
-          <span className={styles.iconSpace} />
+          <span className={styles.iconSpace} style={{ width: iconSize }} />
           <span ref={first}>{label}</span>
         </span>
         <span>

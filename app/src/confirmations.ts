@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-export type Confirmation = "indexAll" | "clearIndex" | "cancelIndexing" | "removeFromIndex" | "excludeFromIndex";
+export type Confirmation = "indexAll" | "removeFromIndex" | "excludeFromIndex";
 
 export interface ConfirmationText {
   title: string;
@@ -16,6 +16,12 @@ export interface ConfirmContext {
   exclusions: number;
   withData: number;
   stops: boolean;
+  dropping: string[];
+}
+
+export async function removeItems(paths: string[], dropping: string[]): Promise<void> {
+  if (dropping.length > 0) await api.dropFromQueue(dropping).catch(() => undefined);
+  await api.removeFromIndex(paths);
 }
 
 export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: ConfirmContext) => ConfirmationText> = {
@@ -25,43 +31,21 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     danger: false,
     stopsIndexing: false,
     message: [
-      "Mesa will index every supported file in your user folder, which can take a long time.",
-      "Indexing goes gently in the background unless Turbo indexing is on.",
+      "This will index every supported file in your user folder, which can take a long time.",
+      "Indexing runs gently in the background unless Turbo indexing is on.",
       ...(exclusions > 0 ? [{ note: "Your excluded items will not be indexed." }] : []),
     ],
     run: api.indexEverything,
   }),
-  clearIndex: (_, { exclusions }) => ({
-    title: "Clear the entire index?",
-    confirmLabel: "Clear index",
-    danger: true,
-    stopsIndexing: true,
-    message: [
-      "This removes every file and folder from Mesa's index. Your files themselves are not touched.",
-      "Anything you want to search for will need to be indexed again.",
-      ...(exclusions > 0 ? [{ note: "Your excluded items will no longer be excluded." }] : []),
-    ],
-    run: api.clearIndex,
-  }),
-  cancelIndexing: (subject) => ({
-    title: `Cancel indexing ${subject}?`,
-    confirmLabel: "Stop and remove",
-    danger: true,
-    stopsIndexing: true,
-    message: [
-      `Mesa will stop and remove ${subject} from the index, including everything already indexed from ${subject.includes(" and ") ? "them" : "it"}.`,
-    ],
-    run: api.cancelIndexing,
-  }),
-  removeFromIndex: (subject, { paths }) => ({
+  removeFromIndex: (subject, { paths, dropping }) => ({
     title: `Remove ${subject} from the index?`,
     confirmLabel: "Remove",
     danger: true,
-    stopsIndexing: false,
+    stopsIndexing: dropping.length > 0,
     message: [
-      `Mesa will remove ${subject} from the index. Your files themselves are not touched.`,
+      `This will remove ${subject} from the index. Your files themselves are not touched.`,
     ],
-    run: () => api.removeFromIndex(paths),
+    run: () => removeItems(paths, dropping),
   }),
   excludeFromIndex: (subject, { paths, withData, stops }) => ({
     title: `Exclude ${subject}?`,
@@ -69,7 +53,7 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     danger: true,
     stopsIndexing: stops,
     message: [
-      `Mesa will leave ${subject} out of the index from now on. ` +
+      `This will leave ${subject} out of the index from now on. ` +
         (withData >= paths.length
           ? "What was already indexed of them will be removed."
           : `What was already indexed of ${withData} of them will be removed.`),

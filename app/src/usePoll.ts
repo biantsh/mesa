@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { useLatest } from "./useLatest";
 
 interface Options {
   active?: boolean;
@@ -10,10 +11,7 @@ export function usePoll(
   task: () => Promise<void> | void,
   { active = true, ms = 500, immediately = false }: Options = {},
 ) {
-  const latest = useRef(task);
-  useEffect(() => {
-    latest.current = task;
-  });
+  const latest = useLatest(task);
 
   useEffect(() => {
     if (!active) return;
@@ -48,5 +46,5 @@ export function usePoll(
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [active, ms, immediately]);
+  }, [active, ms, immediately, latest]);
 }

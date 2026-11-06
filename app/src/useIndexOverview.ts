@@ -10,6 +10,7 @@ export function useIndexOverview(active: boolean): Overview | null {
       setOverview((current) =>
         current &&
         current.empty === next.empty &&
+        current.everythingIndexed === next.everythingIndexed &&
         current.files === next.files &&
         current.bytes === next.bytes &&
         sameProgress(current.progress, next.progress)

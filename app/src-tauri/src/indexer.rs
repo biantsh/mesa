@@ -66,7 +66,7 @@ pub fn work(shared: &Shared, jobs: Receiver<Message>) {
             continue;
         }
         shared.control.wait_while_paused();
-        count_files(shared, job.ticket, &job.root);
+        await_counts(shared, job.ticket);
         let stored = walk(shared, job.ticket, &job.root);
         let wanted = lock(&shared.progress).finish_job(job.ticket);
 
@@ -97,7 +97,7 @@ fn check(shared: &Shared, path: &Path) {
     if !shared.is_indexed(path) {
         return;
     }
-    walk_tree(shared, 0, path, true);
+    walk_tree(shared, Tracking::Unseen, path);
     if shared.urgent.load(Ordering::SeqCst) > 0 {
         lock(&shared.quiet).again(path.to_owned());
     }
@@ -116,11 +116,42 @@ pub fn is_gone(path: &Path) -> bool {
             .any(|above| fs::symlink_metadata(above).is_ok())
 }
 
+const COUNT_POLL: Duration = Duration::from_millis(20);
+
+fn await_counts(shared: &Shared, ticket: u64) {
+    loop {
+        let ready = lock(&shared.progress).ready(ticket);
+        match ready {
+            Some(true) => return lock(&shared.progress).release(),
+            None => return,
+            Some(false) => {
+                let next = lock(&shared.progress).next_to_count();
+                match next {
+                    Some((ticket, root)) => count_files(shared, ticket, &root),
+                    None => {
+                        shared.control.wait_while_paused();
+                        thread::sleep(COUNT_POLL);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn count_ahead(shared: &Shared, wake: Receiver<()>) {
+    while wake.recv().is_ok() {
+        loop {
+            let next = lock(&shared.progress).next_to_count();
+            let Some((ticket, root)) = next else { break };
+            count_files(shared, ticket, &root);
+        }
+    }
+}
+
 fn count_files(shared: &Shared, ticket: u64, root: &Path) {
     if root.is_dir() {
         crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
-            shared.control.wait_while_paused();
-            if !shared.is_indexed(&dir) {
+            if !shared.is_indexed(&dir) || !lock(&shared.progress).has(ticket) {
                 return Vec::new();
             }
             let mut subdirs = Vec::new();
@@ -146,11 +177,12 @@ fn count_files(shared: &Shared, ticket: u64, root: &Path) {
 }
 
 fn walk(shared: &Shared, ticket: u64, root: &Path) -> bool {
-    walk_tree(shared, ticket, root, false)
+    walk_tree(shared, Tracking::Job(ticket), root)
 }
 
-fn walk_tree(shared: &Shared, ticket: u64, root: &Path, quiet: bool) -> bool {
-    let mut walker = Walker::new(shared, ticket, quiet, root);
+fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
+    let in_progress = tracking.is_in_progress();
+    let mut walker = Walker::new(shared, tracking, root);
     let abandoned = AtomicBool::new(false);
 
     if root.is_dir() {
@@ -163,14 +195,14 @@ fn walk_tree(shared: &Shared, ticket: u64, root: &Path, quiet: bool) -> bool {
 
                     let found = if shared.is_indexed(&dir)
                         && !abandoned.load(Ordering::Relaxed)
-                        && !(quiet && shared.urgent.load(Ordering::SeqCst) > 0)
+                        && !(!in_progress && shared.urgent.load(Ordering::SeqCst) > 0)
                     {
                         scan_dir(&dir)
                     } else {
                         None
                     };
 
-                    if !quiet {
+                    if in_progress {
                         let mut pending = lock(&shared.pending);
                         if let Some(found) = &found {
                             found.subdirs.iter().for_each(|sub| pending.add(sub.clone()));
@@ -214,10 +246,30 @@ fn walk_tree(shared: &Shared, ticket: u64, root: &Path, quiet: bool) -> bool {
     }
     walker.embed_waiting();
     let stored = walker.stored & walker.batch.store(shared);
-    if quiet && walker.batch.ticket != 0 {
-        lock(&shared.progress).finish_job(walker.batch.ticket);
+    if let Tracking::Seen(ticket) = walker.batch.tracking {
+        lock(&shared.progress).finish_job(ticket);
     }
     stored
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tracking {
+    Job(u64),
+    Unseen,
+    Seen(u64),
+}
+
+impl Tracking {
+    fn is_in_progress(self) -> bool {
+        matches!(self, Tracking::Job(_))
+    }
+
+    fn ticket(self) -> Option<u64> {
+        match self {
+            Tracking::Job(ticket) | Tracking::Seen(ticket) => Some(ticket),
+            Tracking::Unseen => None,
+        }
+    }
 }
 
 struct Walker<'a> {
@@ -233,11 +285,11 @@ struct Walker<'a> {
 }
 
 impl<'a> Walker<'a> {
-    fn new(shared: &'a Shared, ticket: u64, quiet: bool, root: &Path) -> Self {
+    fn new(shared: &'a Shared, tracking: Tracking, root: &Path) -> Self {
         Self {
             shared,
             root: root.to_owned(),
-            batch: Batch::new(ticket, quiet),
+            batch: Batch::new(tracking),
             folders: Vec::new(),
             waiting: Vec::new(),
             failed: false,
@@ -252,19 +304,22 @@ impl<'a> Walker<'a> {
     }
 
     fn dropped(&self) -> bool {
-        self.batch.quiet && self.batch.ticket != 0 && !lock(&self.shared.progress).has(self.batch.ticket)
+        matches!(self.batch.tracking, Tracking::Seen(ticket) if !lock(&self.shared.progress).has(ticket))
     }
 
     fn show(&mut self, files: usize) {
         let mut progress = lock(&self.shared.progress);
-        if self.batch.ticket == 0 {
-            self.batch.ticket = progress.add_quiet(self.root.clone());
-        }
-        progress.add_total(self.batch.ticket, files as u64);
+        let ticket = match self.batch.tracking {
+            Tracking::Seen(ticket) => ticket,
+            Tracking::Unseen => progress.add_quiet(self.root.clone()),
+            Tracking::Job(_) => return,
+        };
+        self.batch.tracking = Tracking::Seen(ticket);
+        progress.add_total(ticket, files as u64);
     }
 
     fn release(&self, path: &Path) {
-        if !self.batch.quiet {
+        if self.batch.tracking.is_in_progress() {
             lock(&self.shared.pending).release(path);
         }
     }
@@ -301,11 +356,11 @@ impl<'a> Walker<'a> {
         }
         if up_to_date > 0 {
             self.batch.files += up_to_date;
-            if !self.batch.quiet {
-                lock(&self.shared.progress).processed(self.batch.ticket, up_to_date as u64);
+            if let Tracking::Job(ticket) = self.batch.tracking {
+                lock(&self.shared.progress).processed(ticket, up_to_date as u64);
             }
         }
-        if self.batch.quiet && self.waiting.len() > waiting_before {
+        if !self.batch.tracking.is_in_progress() && self.waiting.len() > waiting_before {
             self.show(self.waiting.len() - waiting_before);
         }
         if !self.warmed_up && !self.waiting.is_empty() {
@@ -347,7 +402,7 @@ impl<'a> Walker<'a> {
                 for &n in &left {
                     self.release(&path_of(&folders, places[n]));
                 }
-                lock(&shared.progress).processed(self.batch.ticket, left.len() as u64);
+                self.batch.processed(shared, left.len() as u64);
                 break;
             }
             self.stored &= self.batch.pause_point(shared);
@@ -385,7 +440,7 @@ impl<'a> Walker<'a> {
                         subfolders: None,
                     });
                     batch.files += 1;
-                    lock(&shared.progress).processed(batch.ticket, 1);
+                    batch.processed(shared, 1);
                     finished[i] = true;
                     if batch.due() {
                         *stored &= batch.store(shared);
@@ -429,20 +484,24 @@ struct Batch {
     files: usize,
     new: u64,
     started: Instant,
-    ticket: u64,
-    quiet: bool,
+    tracking: Tracking,
 }
 
 impl Batch {
-    fn new(ticket: u64, quiet: bool) -> Self {
+    fn new(tracking: Tracking) -> Self {
         Self {
             scans: Vec::new(),
             finished: Vec::new(),
             files: 0,
             new: 0,
             started: Instant::now(),
-            ticket,
-            quiet,
+            tracking,
+        }
+    }
+
+    fn processed(&self, shared: &Shared, files: u64) {
+        if let Some(ticket) = self.tracking.ticket() {
+            lock(&shared.progress).processed(ticket, files);
         }
     }
 
@@ -472,11 +531,11 @@ impl Batch {
             shared.landed_new.fetch_add(mem::take(&mut self.new), Ordering::SeqCst);
             drop(store);
         }
-        if self.quiet {
-            self.finished.clear();
-        } else {
+        if self.tracking.is_in_progress() {
             let mut pending = lock(&shared.pending);
             self.finished.drain(..).for_each(|path| pending.release(&path));
+        } else {
+            self.finished.clear();
         }
         self.scans.clear();
         self.files = 0;
@@ -707,7 +766,7 @@ mod tests {
             progress: Mutex::new(ProgressState::default()),
             finished_new: std::sync::atomic::AtomicU64::new(0),
             landed_new: std::sync::atomic::AtomicU64::new(0),
-            control: Control::new(false),
+            control: Control::with_turbo(false, true),
             quiet: Default::default(),
             urgent: Default::default(),
             embedder: embedder.clone(),

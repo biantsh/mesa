@@ -128,11 +128,6 @@ struct ControlState {
 }
 
 impl Control {
-    #[cfg(test)]
-    pub fn new(paused: bool) -> Self {
-        Self::with_turbo(paused, true)
-    }
-
     pub fn with_turbo(paused: bool, turbo: bool) -> Self {
         Self {
             state: Mutex::new(ControlState {
@@ -235,6 +230,7 @@ impl Shared {
 pub struct Index {
     shared: Arc<Shared>,
     queue: Mutex<Sender<Message>>,
+    counter: Mutex<Sender<()>>,
     dir: PathBuf,
     counted: Mutex<Option<Counted>>,
     latest_search: Mutex<Option<Arc<Ranking>>>,
@@ -306,10 +302,17 @@ impl Index {
             .name("indexer".into())
             .spawn(move || indexer::work(&worker, receiver))
             .map_err(store::Error::Io)?;
+        let (wake, woken) = mpsc::channel();
+        let counter = shared.clone();
+        thread::Builder::new()
+            .name("counter".into())
+            .spawn(move || indexer::count_ahead(&counter, woken))
+            .map_err(store::Error::Io)?;
 
         let index = Self {
             shared,
             queue: Mutex::new(sender),
+            counter: Mutex::new(wake),
             dir: dir.to_owned(),
             counted: Mutex::new(None),
             latest_search: Mutex::new(None),
@@ -365,6 +368,18 @@ impl Index {
         }
     }
 
+    fn drop_jobs_under(&self, paths: &[PathBuf]) -> Vec<i64> {
+        let mut ids = Vec::new();
+        for path in paths {
+            let roots = lock(&self.shared.progress).roots_under(path);
+            for root in roots {
+                let id = lock(&self.shared.progress).drop_job(&root);
+                ids.extend(id);
+            }
+        }
+        ids
+    }
+
     pub fn drop_jobs(&self, paths: &[PathBuf]) -> Result<(), String> {
         let (mut dropped, mut ids) = (Vec::new(), Vec::new());
         for path in paths {
@@ -375,7 +390,7 @@ impl Index {
             }
         }
         if dropped.is_empty() {
-            return Err("That isn't in the queue any more.".into());
+            return Ok(());
         }
         lock(&self.shared.store).finish_jobs(&ids)?;
         self.set_many(&dropped, false)
@@ -390,7 +405,13 @@ impl Index {
         if indexed {
             self.refuse_to_add(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>())?;
         }
+        let ended = if indexed {
+            Vec::new()
+        } else {
+            self.drop_jobs_under(paths)
+        };
         let mut store = lock(&self.shared.store);
+        store.finish_jobs(&ended)?;
         let mut rules = lock(&self.shared.rules).clone();
         rules::set_rules(&mut rules, paths, indexed);
         if !indexed {
@@ -461,14 +482,7 @@ impl Index {
     }
 
     pub fn exclude_many(&self, paths: &[PathBuf]) -> Result<(), String> {
-        let mut ids = Vec::new();
-        for path in paths {
-            let roots = lock(&self.shared.progress).roots_under(path);
-            for root in roots {
-                let id = lock(&self.shared.progress).drop_job(&root);
-                ids.extend(id);
-            }
-        }
+        let ids = self.drop_jobs_under(paths);
 
         let mut store = lock(&self.shared.store);
         store.finish_jobs(&ids)?;
@@ -531,17 +545,34 @@ impl Index {
         lock(&self.shared.excluded).len()
     }
 
-    pub fn clear(&self) -> Result<(), String> {
-        *lock(&self.counted) = None;
-        *lock(&self.latest_search) = None;
-        let mut store = lock(&self.shared.store);
-        lock(&self.shared.rules).clear();
-        lock(&self.shared.gaps).clear();
-        lock(&self.shared.included).clear();
-        lock(&self.shared.excluded).clear();
-        lock(&self.shared.progress).cancel_all();
-        self.shared.control.set_paused(false);
-        Ok(store.reset()?)
+    pub fn indexed_roots(&self) -> Vec<(PathBuf, usize)> {
+        let rules = lock(&self.shared.rules);
+        let mut roots: BTreeMap<&Path, usize> = rules
+            .iter()
+            .filter(|(path, indexed)| {
+                **indexed
+                    && !path.parent().is_some_and(|parent| effective(&rules, parent))
+                    && !unindexable::is_unindexable(path)
+                    && !self.shared.is_excluded(path)
+            })
+            .map(|(path, _)| (path.as_path(), 0))
+            .collect();
+        for gap in rules.iter().filter(|(_, indexed)| !**indexed).map(|(path, _)| path) {
+            let owner = gap.ancestors().skip(1).find(|above| rules.contains_key(*above));
+            if let Some(left_out) = owner.and_then(|owner| roots.get_mut(owner)) {
+                *left_out += 1;
+            }
+        }
+        roots
+            .into_iter()
+            .map(|(path, left_out)| (path.to_path_buf(), left_out))
+            .collect()
+    }
+
+    pub fn excluded_paths(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = lock(&self.shared.excluded).iter().cloned().collect();
+        paths.sort();
+        paths
     }
 
     pub fn search(&self, text: &str, filter: Filter) -> Result<Page, String> {
@@ -701,6 +732,7 @@ impl Index {
         Ok(self.shared.set_paused(&store, paused)?)
     }
 
+    #[cfg(test)]
     pub fn cancel(&self) -> Result<(), String> {
         if lock(&self.shared.progress).cancel_check() {
             self.shared.control.poke();
@@ -718,9 +750,33 @@ impl Index {
 
     pub fn set_everything(&self, roots: &[PathBuf]) -> Result<(), String> {
         let mut store = lock(&self.shared.store);
-        let rules = roots.iter().map(|root| (root.clone(), true)).collect();
+        let mut rules = lock(&self.shared.rules).clone();
+        let roots: Vec<PathBuf> = roots
+            .iter()
+            .filter(|root| self.is_left_to_index(&rules, root))
+            .cloned()
+            .collect();
+        rules::set_rules(&mut rules, &roots, true);
         self.replace_rules(&mut store, rules)?;
-        self.start_jobs(&store, roots)
+        self.shared.control.poke();
+        self.start_jobs(&store, &roots)
+    }
+
+    fn is_left_to_index(&self, rules: &Rules, root: &Path) -> bool {
+        if unindexable::is_unindexable(root) || self.shared.is_excluded(root) {
+            return false;
+        }
+        let gaps = lock(&self.shared.gaps);
+        let gap_inside = gaps
+            .range::<Path, _>((Bound::Included(root), Bound::Unbounded))
+            .next()
+            .is_some_and(|gap| gap.starts_with(root));
+        !effective(rules, root) || gap_inside
+    }
+
+    pub fn has_everything(&self, roots: &[PathBuf]) -> bool {
+        let rules = lock(&self.shared.rules);
+        !roots.is_empty() && !roots.iter().any(|root| self.is_left_to_index(&rules, root))
     }
 
     fn replace_rules(&self, store: &mut Store, rules: Rules) -> Result<(), String> {
@@ -757,6 +813,7 @@ impl Index {
             waiting: !first,
         };
         self.shared.urgent.fetch_add(1, Ordering::SeqCst);
+        let _ = lock(&self.counter).send(());
         let _ = lock(&self.queue).send(Message::Job(job));
     }
 

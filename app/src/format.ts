@@ -58,10 +58,14 @@ export function describeIndexed(entries: Entry[], selection = false): string | n
   );
   if (possible.length === 0) return null;
   const indexed = possible.filter((entry) => entry.index === "indexed").length;
-  return `${indexed} of ${possible.length} ${selection ? "selected " : ""}indexed`;
+  return `${indexed} of ${possible.length} ${selection ? "selected are " : ""}indexed`;
 }
 
 const downloadedFormat = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+export function nameParts(name: string): string[] {
+  return name.split(/(?<=[_\-.])|(?<=[a-z0-9])(?=[A-Z])/);
+}
+
 const totalFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 
 export function describeDownload(done: number, total: number): string {

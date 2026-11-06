@@ -81,6 +81,22 @@
   border-color: var(--color-selected-border);
 }
 
+.row.leader {
+  background: var(--color-leader-bg);
+}
+
+.row:focus-visible {
+  outline: none;
+}
+
+.row:focus-visible:not(.selected) {
+  background: var(--color-hover-bg);
+}
+
+.list:focus-visible {
+  outline: none;
+}
+
 .nameCell,
 .statusCell {
   min-width: 0;

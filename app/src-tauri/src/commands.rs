@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -51,16 +55,18 @@ pub fn index_progress(index: State<'_, Index>) -> Option<Progress> {
 pub struct Overview {
     pub empty: bool,
     pub progress: Option<Progress>,
+    pub everything_indexed: bool,
     #[serde(flatten)]
     pub stats: Stats,
 }
 
 #[tauri::command(async)]
-pub fn index_overview(index: State<'_, Index>) -> Overview {
+pub fn index_overview(app: AppHandle, index: State<'_, Index>) -> Overview {
     let progress = index.progress();
     Overview {
         empty: progress.is_none() && index.is_empty(),
         progress,
+        everything_indexed: index.has_everything(&everything_roots(&app)),
         stats: index.stats(),
     }
 }
@@ -137,11 +143,6 @@ pub fn search_more(id: u64, index: State<'_, Index>) -> Result<SearchPage, Strin
 #[tauri::command(async)]
 pub fn set_indexing_paused(paused: bool, index: State<'_, Index>) -> Result<(), String> {
     index.set_paused(paused)
-}
-
-#[tauri::command(async)]
-pub fn cancel_indexing(index: State<'_, Index>) -> Result<(), String> {
-    index.cancel()
 }
 
 #[tauri::command(async)]
@@ -228,18 +229,80 @@ pub fn exclusion_count(index: State<'_, Index>) -> usize {
     index.exclusion_count()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Listed {
+    #[serde(flatten)]
+    pub entry: browse::Entry,
+    pub missing: bool,
+    pub left_out: usize,
+}
+
+async fn listed(items: Vec<(PathBuf, usize)>, index: &Index) -> Result<Vec<Listed>, String> {
+    let described = tauri::async_runtime::spawn_blocking(move || {
+        let mut described: Vec<Listed> = items
+            .into_iter()
+            .map(|(path, left_out)| {
+                let (entry, missing) = browse::describe(&path);
+                Listed {
+                    entry,
+                    missing,
+                    left_out,
+                }
+            })
+            .collect();
+        described.sort_by_cached_key(|item| (browse::listing_order(&item.entry), item.entry.path.clone()));
+        described
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(described
+        .into_iter()
+        .map(|mut item| {
+            let state = index.state(Path::new(&item.entry.path));
+            item.entry.index = state.status;
+            item.entry.droppable = state.droppable;
+            item.entry.excluded_here = state.excluded_here;
+            item
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn indexed_items(index: State<'_, Index>) -> Result<Vec<Listed>, String> {
+    listed(index.indexed_roots(), &index).await
+}
+
+#[tauri::command]
+pub async fn excluded_items(index: State<'_, Index>) -> Result<Vec<Listed>, String> {
+    listed(
+        index.excluded_paths().into_iter().map(|path| (path, 0)).collect(),
+        &index,
+    )
+    .await
+}
+
 fn to_paths(paths: Vec<String>) -> Vec<PathBuf> {
     paths.into_iter().map(PathBuf::from).collect()
 }
 
-#[tauri::command(async)]
-pub fn clear_index(index: State<'_, Index>) -> Result<(), String> {
-    index.clear()
+fn everything_roots(app: &AppHandle) -> Vec<PathBuf> {
+    static FOUND: Mutex<Option<(Instant, Vec<PathBuf>)>> = Mutex::new(None);
+    const FOR: Duration = Duration::from_secs(30);
+    let mut found = FOUND.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match &*found {
+        Some((at, roots)) if at.elapsed() < FOR => roots.clone(),
+        _ => {
+            let roots = browse::user_roots(app.path().home_dir().ok());
+            *found = Some((Instant::now(), roots.clone()));
+            roots
+        }
+    }
 }
 
 #[tauri::command(async)]
 pub fn index_everything(app: AppHandle, index: State<'_, Index>) -> Result<(), String> {
-    let roots = browse::user_roots(app.path().home_dir().ok());
+    let roots = everything_roots(&app);
     if roots.is_empty() {
         return Err("Couldn't find your folders.".into());
     }
