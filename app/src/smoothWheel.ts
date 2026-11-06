@@ -9,21 +9,27 @@ export function smoothMouseWheel() {
   window.addEventListener("wheel", onWheel, { passive: false, capture: true });
 }
 
+const RUN_MS = 250;
+let lastScrolledAt = -Infinity;
+
 function onWheel(e: WheelEvent) {
-  if (e.defaultPrevented || e.ctrlKey || (e.deltaMode === 0 && !isNotch(e))) return;
+  const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
+  if (e.defaultPrevented || e.ctrlKey || !isWheelTurn(e.deltaMode, legacy, performance.now() - lastScrolledAt)) return;
   if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || prefersReducedMotion()) return;
   if (document.querySelector("[data-marquee='on']")) return;
 
   const view = scrollingViewFrom(e.target, e.deltaY);
   if (!view) return;
   e.preventDefault();
+  lastScrolledAt = performance.now();
   const unit = e.deltaMode === 1 ? LINE_PX : e.deltaMode === 2 ? view.clientHeight : 1;
   scrollSmoothly(view, e.deltaY * unit);
 }
 
-function isNotch(e: WheelEvent) {
-  const legacy = (e as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
-  return legacy !== undefined && legacy !== 0 && legacy % 120 === 0;
+export function isWheelTurn(deltaMode: number, wheelDeltaY: number | undefined, sinceLast: number): boolean {
+  if (deltaMode !== 0) return true;
+  if (wheelDeltaY !== undefined && wheelDeltaY !== 0 && wheelDeltaY % 120 === 0) return true;
+  return sinceLast < RUN_MS;
 }
 
 function scrollingViewFrom(from: EventTarget | null, deltaY: number): HTMLElement | null {

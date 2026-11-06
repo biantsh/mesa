@@ -207,7 +207,6 @@ export const ItemsPanel = memo(function ItemsPanel({
           return;
         }
         if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return onArrowKey(e);
-        e.preventDefault();
         onSetSelection(e.shiftKey ? new Set() : new Set(items.map((item) => item.path)));
       }}
     >

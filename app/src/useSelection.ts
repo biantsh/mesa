@@ -35,7 +35,7 @@ export function useSelection(folder: string, entries: Entry[], enabled = true, o
     const onKeyDown = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
       if (isForSomethingElse(e.target)) return;
-      e.preventDefault();
+      // No preventDefault(): WebKit would hide the pointer until it moves.
       setSelection((state) => ({
         ...(state.folder === folder ? state : { folder, ...NOTHING_PICKED }),
         folder,

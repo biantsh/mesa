@@ -7,7 +7,6 @@ mod clipboard;
 mod commands;
 mod crawl;
 mod embed;
-mod glass;
 mod hotkey;
 mod index;
 mod indexer;
@@ -81,11 +80,33 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
                 main_window::show(tray.app_handle());
             }
         });
+    #[cfg(target_os = "macos")]
+    if let Some(icon) = menu_bar_icon() {
+        tray = tray.icon(icon).icon_as_template(true);
+        tray.build(app)?;
+        return Ok(());
+    }
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn menu_bar_icon() -> Option<tauri::image::Image<'static>> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(
+        include_bytes!("../icons/tray-template.png").as_slice(),
+    ));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().ok()?;
+    let mut pixels = vec![0; reader.output_buffer_size()?];
+    let frame = reader.next_frame(&mut pixels).ok()?;
+    if frame.color_type != png::ColorType::Rgba || frame.bit_depth != png::BitDepth::Eight {
+        return None;
+    }
+    pixels.truncate(frame.buffer_size());
+    Some(tauri::image::Image::new_owned(pixels, frame.width, frame.height))
 }
 
 fn main() {
@@ -158,7 +179,6 @@ fn main() {
             }
             main_window::set_up_dock(app);
             widget::float_over_everything(app.handle());
-            glass::install(app.handle());
             main_window::show_if_the_page_does_not(app);
             Ok(())
         })
@@ -204,8 +224,6 @@ fn main() {
             commands::open_main,
             commands::show_main,
             commands::set_widget_box,
-            commands::widget_glass,
-            commands::set_widget_dark,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -13,6 +13,8 @@ import { resultMenuGroups, type ResultActions } from "../resultMenu";
 import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chosen, type Month, type Understood } from "../understand";
 import { BACKGROUND_PRESS } from "../background";
 import { MAIN_HIDDEN } from "../events";
+import { scrollByKey } from "../scrollKeys";
+import { useDefaultScroll } from "../useDefaultScroll";
 import { isForSomethingElse } from "../useSelection";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { useResultSelection } from "../useResultSelection";
@@ -174,6 +176,13 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const search = useRef<HTMLDivElement>(null);
   const resultsPane = useRef<HTMLDivElement>(null);
   const forwardWheel = useForwardedWheel(resultsPane);
+  useDefaultScroll(true, () => (!results || home.current?.closest("[inert]") ? null : resultsPane.current));
+  const scrollResultsByKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || e.nativeEvent.isComposing) return;
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "PageUp" && e.key !== "PageDown") return;
+    const pane = resultsPane.current;
+    if (query.trim() !== "" && pane && scrollByKey(pane, e.key, e.repeat)) e.preventDefault();
+  };
   const actions = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
   const [attention, setAttention] = useState(0);
@@ -275,7 +284,6 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       if (key !== "a" && key !== "c") return;
       if (isForSomethingElse(e.target) || home.current?.closest("[inert]")) return;
       if (key === "a") {
-        e.preventDefault();
         if (e.shiftKey) clearSelection();
         else selectAll();
       } else if (selectedHits.length > 0) {
@@ -472,6 +480,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               onBlur={() => { if (!blocked && document.hasFocus() && !away.current) setFocus(false); }}
               value={query}
               onChange={(e) => change(e.target.value)}
+              onKeyDown={scrollResultsByKey}
               spellCheck={false}
               autoComplete="off"
             />

@@ -106,9 +106,9 @@
 
 .asWidget {
   --widget-inset: -14px;
-  --widget-glass-color: var(--color-bg);
-  --widget-glass-tint: 76%;
-  --widget-fill: color-mix(in srgb, var(--widget-glass-color) var(--widget-glass-tint), transparent);
+  --widget-tint-color: var(--color-bg);
+  --widget-tint: 86%;
+  --widget-fill: color-mix(in srgb, var(--widget-tint-color) var(--widget-tint), transparent);
   --widget-box-moves:
     left var(--focus-time) var(--focus-ease),
     top var(--focus-time) var(--focus-ease),
@@ -119,13 +119,13 @@
 }
 
 :global(:root[data-theme="light"]) .asWidget {
-  --widget-glass-color: var(--color-bg);
-  --widget-glass-tint: 86%;
+  --widget-tint-color: var(--color-bg);
+  --widget-tint: 86%;
 }
 
 :global(:root[data-theme="dark"]) .asWidget {
-  --widget-glass-color: color-mix(in srgb, var(--color-bg) 30%, black);
-  --widget-glass-tint: 86%;
+  --widget-tint-color: color-mix(in srgb, var(--color-bg) 30%, black);
+  --widget-tint: 86%;
 }
 
 .asWidget .logo,

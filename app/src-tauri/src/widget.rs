@@ -22,17 +22,9 @@ static SHOWN_AT: Mutex<Option<Instant>> = Mutex::new(None);
 static VISIBLE: Mutex<Option<[f64; 4]>> = Mutex::new(None);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 const WATCH_EVERY: Duration = Duration::from_millis(16);
-const BOX_MARGIN: f64 = 2.0;
 
-pub fn set_visible_box(app: &AppHandle, rect: [f64; 4], radius: f64) {
-    crate::glass::set_box(app, rect, radius);
-    let [left, top, right, bottom] = rect;
-    *lock(&VISIBLE) = Some([
-        left - BOX_MARGIN,
-        top - BOX_MARGIN,
-        right + BOX_MARGIN,
-        bottom + BOX_MARGIN,
-    ]);
+pub fn set_visible_box(rect: [f64; 4]) {
+    *lock(&VISIBLE) = Some(rect);
 }
 
 fn pointer_is_in_box(pointer: (f64, f64), origin: (i32, i32), scale: f64, rect: [f64; 4]) -> bool {
@@ -122,7 +114,6 @@ pub fn show(app: &AppHandle) {
 
 pub fn hide(app: &AppHandle) {
     *lock(&SHOWN_AT) = None;
-    crate::glass::hide(app);
     WATCH.fetch_add(1, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.set_ignore_cursor_events(false);

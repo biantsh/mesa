@@ -170,10 +170,7 @@ export const api = {
   revealMain: () => invoke<void>("reveal_main"),
   hideWidget: () => invoke<void>("hide_widget"),
   openMain: (screen: "index" | "settings") => invoke<void>("open_main", { screen }),
-  setWidgetBox: (left: number, top: number, right: number, bottom: number, radius: number) =>
-    invoke<void>("set_widget_box", { left, top, right, bottom, radius }),
-  widgetGlass: () => invoke<boolean>("widget_glass"),
-  setWidgetDark: (dark: boolean) => invoke<void>("set_widget_dark", { dark }),
+  setWidgetBox: (left: number, top: number, right: number, bottom: number) => invoke<void>("set_widget_box", { left, top, right, bottom }),
   showMain: () => invoke<void>("show_main"),
 };
 

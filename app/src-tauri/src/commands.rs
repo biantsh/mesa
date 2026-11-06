@@ -437,20 +437,10 @@ pub fn open_main(app: AppHandle, screen: String) {
 }
 
 #[tauri::command]
-pub fn set_widget_box(window: tauri::WebviewWindow, left: f64, top: f64, right: f64, bottom: f64, radius: f64) {
+pub fn set_widget_box(window: tauri::WebviewWindow, left: f64, top: f64, right: f64, bottom: f64) {
     if window.label() == crate::widget::LABEL {
-        crate::widget::set_visible_box(window.app_handle(), [left, top, right, bottom], radius);
+        crate::widget::set_visible_box([left, top, right, bottom]);
     }
-}
-
-#[tauri::command]
-pub fn widget_glass() -> bool {
-    crate::glass::available()
-}
-
-#[tauri::command]
-pub fn set_widget_dark(app: AppHandle, dark: bool) {
-    crate::glass::set_dark(&app, dark);
 }
 
 #[tauri::command]
