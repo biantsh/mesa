@@ -205,7 +205,7 @@ fn act(app: &AppHandle, action: Action) {
                 eprintln!("Mesa: {e}");
             }
         }
-        Action::Open => crate::show_window(app),
+        Action::Open => crate::main_window::show(app),
     }
 }
 

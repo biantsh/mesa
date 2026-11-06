@@ -5,7 +5,7 @@ use std::{
 };
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
@@ -372,7 +372,7 @@ pub fn set_turbo_indexing(
 #[tauri::command]
 pub fn page_painted(window: tauri::WebviewWindow) {
     if window.label() == "main" {
-        crate::show_at_start(&window);
+        crate::main_window::show_at_start(&window);
     }
 }
 
@@ -381,20 +381,10 @@ pub fn hide_widget(app: AppHandle) {
     crate::widget::hide(&app);
 }
 
-static OPENING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-const OPENING_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(600);
-
 #[tauri::command]
 pub fn open_main(app: AppHandle, screen: String) {
     crate::widget::hide(&app);
-    OPENING.store(true, std::sync::atomic::Ordering::SeqCst);
-    let _ = app.emit_to("main", "navigate", screen);
-    std::thread::spawn(move || {
-        std::thread::sleep(OPENING_GIVE_UP);
-        if OPENING.swap(false, std::sync::atomic::Ordering::SeqCst) {
-            crate::show_window(&app);
-        }
-    });
+    crate::main_window::open_from_widget(&app, screen);
 }
 
 #[tauri::command]
@@ -406,7 +396,5 @@ pub fn set_widget_box(window: tauri::WebviewWindow, left: f64, top: f64, right: 
 
 #[tauri::command]
 pub fn show_main(app: AppHandle) {
-    if OPENING.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        crate::show_window(&app);
-    }
+    crate::main_window::page_is_ready(&app);
 }

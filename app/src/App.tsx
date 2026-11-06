@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
 import { cx } from "./cx";
+import { MAIN_HIDDEN } from "./events";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { IndexScreen } from "./screens/IndexScreen";
 import { api, type ModelStatus } from "./api";
@@ -13,10 +13,10 @@ import { useMaximized } from "./useMaximized";
 import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
 import { useModelStatus } from "./useModelStatus";
+import { useWidgetRequests } from "./useWidgetRequests";
 import styles from "./App.module.css";
 
 type Screen = "home" | "index";
-const FROM_WIDGET_MS = 450;
 const SETUP_FADE_MS = 300;
 
 function needsSetup(status: ModelStatus | null): boolean {
@@ -64,31 +64,13 @@ export default function App() {
     (onIndex ? index : home).current?.focus({ preventScroll: true });
   }, [onIndex]);
 
-  const [fromWidget, setFromWidget] = useState(false);
-  const fromWidgetTimer = useRef(0);
-  useEffect(() => () => window.clearTimeout(fromWidgetTimer.current), []);
-  useTauriEvent<string>("navigate", (screen) => {
-    flushSync(() => {
-      if (screen === "index") {
-        setFromWidget(true);
-        setScreen("index");
-      } else if (screen === "settings") {
-        setScreen("home");
-        setSettingsOpen(true);
-      }
-    });
-    window.clearTimeout(fromWidgetTimer.current);
-    fromWidgetTimer.current = window.setTimeout(() => setFromWidget(false), FROM_WIDGET_MS);
-    void api.showMain().catch(() => {});
+  const fromWidget = useWidgetRequests({
+    setScreen,
+    setSettingsOpen,
+    focusSearch: () => homeScreen.current?.focusField(),
   });
 
-  useTauriEvent("focus-search", () => {
-    setScreen("home");
-    setSettingsOpen(false);
-    requestAnimationFrame(() => requestAnimationFrame(() => homeScreen.current?.focusField()));
-  });
-
-  useTauriEvent("main-hidden", () => {
+  useTauriEvent(MAIN_HIDDEN, () => {
     setScreen("home");
     setSettingsOpen(false);
   });

@@ -12,6 +12,7 @@ import logo from "../logo";
 import { resultMenuGroups, type ResultActions } from "../resultMenu";
 import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chosen, type Month, type Understood } from "../understand";
 import { BACKGROUND_PRESS } from "../background";
+import { MAIN_HIDDEN } from "../events";
 import { isForSomethingElse } from "../useSelection";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { useResultSelection } from "../useResultSelection";
@@ -323,7 +324,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     window.addEventListener(BACKGROUND_PRESS, onPress);
     return () => window.removeEventListener(BACKGROUND_PRESS, onPress);
   }, [clearSelection]);
-  useTauriEvent("main-hidden", () => {
+  useTauriEvent(MAIN_HIDDEN, () => {
     leave();
     closeMenu();
   });

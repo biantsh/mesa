@@ -1,0 +1,92 @@
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
+
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow, Window};
+
+const LABEL: &str = "main";
+const HIDDEN_EVENT: &str = "main-hidden";
+const NAVIGATE_EVENT: &str = "navigate";
+const OPENING_GIVE_UP: Duration = Duration::from_millis(600);
+const PAGE_GIVE_UP: Duration = Duration::from_secs(6);
+static KEEP_HIDDEN: AtomicBool = AtomicBool::new(false);
+static SHOWN_ONCE: AtomicBool = AtomicBool::new(false);
+static RESET_ON_SHOW: AtomicBool = AtomicBool::new(false);
+static OPENING: AtomicBool = AtomicBool::new(false);
+
+pub fn keep_hidden_at_start(hidden: bool) {
+    KEEP_HIDDEN.store(hidden, Ordering::SeqCst);
+}
+
+fn bring_up(window: &WebviewWindow) {
+    if RESET_ON_SHOW.swap(false, Ordering::SeqCst) {
+        reset(window);
+    }
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+pub fn show_at_start(window: &WebviewWindow) {
+    if !KEEP_HIDDEN.load(Ordering::SeqCst) && !SHOWN_ONCE.swap(true, Ordering::SeqCst) {
+        bring_up(window);
+    }
+}
+
+pub fn show(app: &AppHandle) {
+    KEEP_HIDDEN.store(false, Ordering::SeqCst);
+    SHOWN_ONCE.store(true, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window(LABEL) {
+        bring_up(&window);
+    }
+}
+
+pub fn show_if_the_page_does_not(app: &tauri::App) {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(PAGE_GIVE_UP);
+        show_at_start(&window);
+    });
+}
+
+pub fn closed(window: &Window) {
+    KEEP_HIDDEN.store(true, Ordering::SeqCst);
+    let _ = window.hide();
+    RESET_ON_SHOW.store(true, Ordering::SeqCst);
+    let _ = window.emit_to(window.label(), HIDDEN_EVENT, ());
+}
+
+fn reset(window: &WebviewWindow) {
+    let _ = window.unmaximize();
+    let config = window.app_handle().config();
+    if let Some(first) = config
+        .app
+        .windows
+        .iter()
+        .find(|configured| configured.label == window.label())
+    {
+        let _ = window.set_size(tauri::LogicalSize::new(first.width, first.height));
+    }
+    let _ = window.center();
+}
+
+pub fn open_from_widget(app: &AppHandle, screen: String) {
+    OPENING.store(true, Ordering::SeqCst);
+    let _ = app.emit_to(LABEL, NAVIGATE_EVENT, screen);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(OPENING_GIVE_UP);
+        if OPENING.swap(false, Ordering::SeqCst) {
+            show(&app);
+        }
+    });
+}
+
+pub fn page_is_ready(app: &AppHandle) {
+    if OPENING.swap(false, Ordering::SeqCst) {
+        show(app);
+    }
+}

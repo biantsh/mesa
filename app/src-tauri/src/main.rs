@@ -7,6 +7,7 @@ mod crawl;
 mod embed;
 mod index;
 mod indexer;
+mod main_window;
 mod power;
 mod progress;
 mod rules;
@@ -22,57 +23,11 @@ mod vectors;
 mod watch;
 mod widget;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use tauri::{
-    Emitter, Manager, WindowEvent,
+    Manager, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-
-const HIDDEN_EVENT: &str = "main-hidden";
-pub static KEEP_HIDDEN: AtomicBool = AtomicBool::new(false);
-
-pub fn bring_up(window: &tauri::WebviewWindow) {
-    if RESET_ON_SHOW.swap(false, Ordering::SeqCst) {
-        reset_window(window);
-    }
-    let _ = window.unminimize();
-    let _ = window.show();
-    let _ = window.set_focus();
-}
-
-static SHOWN_ONCE: AtomicBool = AtomicBool::new(false);
-
-pub fn show_at_start(window: &tauri::WebviewWindow) {
-    if !KEEP_HIDDEN.load(Ordering::SeqCst) && !SHOWN_ONCE.swap(true, Ordering::SeqCst) {
-        bring_up(window);
-    }
-}
-
-fn show_window(app: &tauri::AppHandle) {
-    KEEP_HIDDEN.store(false, Ordering::SeqCst);
-    SHOWN_ONCE.store(true, Ordering::SeqCst);
-    if let Some(window) = app.get_webview_window("main") {
-        bring_up(&window);
-    }
-}
-
-static RESET_ON_SHOW: AtomicBool = AtomicBool::new(false);
-
-fn reset_window(window: &tauri::WebviewWindow) {
-    let _ = window.unmaximize();
-    let config = window.app_handle().config();
-    if let Some(first) = config
-        .app
-        .windows
-        .iter()
-        .find(|configured| configured.label == window.label())
-    {
-        let _ = window.set_size(tauri::LogicalSize::new(first.width, first.height));
-    }
-    let _ = window.center();
-}
 
 fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Mesa", true, None::<&str>)?;
@@ -90,7 +45,7 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "open" => show_window(app),
+            "open" => main_window::show(app),
             "search" => widget::show(app),
             "quit" => {
                 app.state::<index::Index>().shut_down();
@@ -105,7 +60,7 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
                 ..
             } = event
             {
-                show_window(tray.app_handle());
+                main_window::show(tray.app_handle());
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -115,19 +70,8 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
     Ok(())
 }
 
-fn show_window_if_the_page_does_not(app: &tauri::App) {
-    const GIVE_UP: std::time::Duration = std::time::Duration::from_secs(6);
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    std::thread::spawn(move || {
-        std::thread::sleep(GIVE_UP);
-        show_at_start(&window);
-    });
-}
-
 fn main() {
-    KEEP_HIDDEN.store(startup::starts_without_window(), Ordering::SeqCst);
+    main_window::keep_hidden_at_start(startup::starts_without_window());
     let previews = thumbnail::PreviewServer::start();
 
     tauri::Builder::default()
@@ -135,7 +79,7 @@ fn main() {
             if startup::wants_search(&args) {
                 widget::show(app);
             } else if !startup::in_background(&args) {
-                show_window(app);
+                main_window::show(app);
             }
         }))
         .plugin(
@@ -160,10 +104,7 @@ fn main() {
             (widget::LABEL, WindowEvent::Focused(false)) => widget::lost_focus(window.app_handle()),
             (_, WindowEvent::CloseRequested { api, .. }) => {
                 api.prevent_close();
-                KEEP_HIDDEN.store(true, Ordering::SeqCst);
-                let _ = window.hide();
-                RESET_ON_SHOW.store(true, Ordering::SeqCst);
-                let _ = window.emit_to(window.label(), HIDDEN_EVENT, ());
+                main_window::closed(window);
             }
             _ => {}
         })
@@ -192,7 +133,7 @@ fn main() {
             if startup::wants_search(&startup::arguments()) {
                 widget::show_soon(app.handle());
             }
-            show_window_if_the_page_does_not(app);
+            main_window::show_if_the_page_does_not(app);
             Ok(())
         })
         .register_asynchronous_uri_scheme_protocol("thumb", move |_ctx, request, responder| {

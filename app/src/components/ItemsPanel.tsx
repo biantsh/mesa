@@ -7,14 +7,10 @@ import { parentOf } from "../paths";
 import { EntryIcon } from "./EntryIcon";
 import { pressProps } from "./entryProps";
 import { useArrowKeys } from "../useArrowKeys";
+import type { Arrival } from "../useFirstArrival";
 import { IconButton } from "./IconButton";
 import { StatusBadge } from "./StatusBadge";
 import styles from "./ItemsPanel.module.css";
-
-export interface Arrival {
-  playing: boolean;
-  late: number;
-}
 
 interface Props {
   title: string;

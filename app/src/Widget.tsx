@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
+import { WIDGET_HIDDEN, WIDGET_SHOWN } from "./events";
 import { THEME_EVENT, chosenTheme, followTheme, type Theme } from "./theme";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { useIndexOverview } from "./useIndexOverview";
@@ -33,11 +34,11 @@ export default function Widget() {
   const openSettings = useCallback(() => void api.openMain("settings").catch(() => {}), []);
   const hide = useCallback(() => void api.hideWidget().catch(() => {}), []);
 
-  useTauriEvent("widget-hidden", () => {
+  useTauriEvent(WIDGET_HIDDEN, () => {
     cancelAnimationFrame(frame.current);
     setThere(false);
   });
-  useTauriEvent("widget-shown", () => {
+  useTauriEvent(WIDGET_SHOWN, () => {
     const theme = chosenTheme();
     if (theme) followTheme(theme);
     cancelAnimationFrame(frame.current);
