@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const TAG = 'b12024';
 const COMMIT = 'ddf48f85c933c1f438212a02eb21e7b001d2d37d';
+const MACOS_MINIMUM = '13.0';
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const work = join(app, 'src-tauri', 'target', 'llama-build');
@@ -44,9 +45,18 @@ const flags = [
   '-DLLAMA_USE_PREBUILT_UI=OFF',
   '-DLLAMA_OPENSSL=OFF',
   '-DLLAMA_CURL=OFF',
+  ...(process.platform === 'darwin'
+    ? [
+        `-DCMAKE_OSX_DEPLOYMENT_TARGET=${MACOS_MINIMUM}`,
+        '-DCMAKE_OSX_ARCHITECTURES=arm64',
+        '-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON',
+        '-DCMAKE_INSTALL_RPATH=@loader_path',
+      ]
+    : []),
 ];
-const LAYOUT = 2;
-const stamp = `${TAG} ${COMMIT} ${backend} ${createHash('sha256').update(flags.join(' ')).digest('hex').slice(0, 12)} layout${LAYOUT}`;
+const LAYOUT = 3;
+const signer = process.platform === 'darwin' ? process.env.APPLE_SIGNING_IDENTITY ?? '' : '';
+const stamp = `${TAG} ${COMMIT} ${backend} ${createHash('sha256').update(flags.join(' ')).digest('hex').slice(0, 12)} layout${LAYOUT}${signer ? ` signed:${createHash('sha256').update(signer).digest('hex').slice(0, 8)}` : ''}`;
 const stampFile = join(out, 'BUILD');
 const program = join(out, isWindows ? 'llama-server.exe' : 'llama-server');
 
@@ -79,7 +89,7 @@ const bin = [join(build, 'bin'), join(build, 'bin', 'Release')].find((dir) => ex
 if (!bin) fail(`nothing was built in ${build}\\bin`);
 const files = readdirSync(bin).filter(
   (f) => f === (isWindows ? 'llama-server.exe' : 'llama-server')
-    || (/\.(dll|so|dylib)(\.|$)/.test(f) && !/^llama-(?!server).*-impl\./.test(f)),
+    || (/\.(dll|so|dylib)(\.|$)/.test(f) && !/^(lib)?llama-(?!server).*-impl\./.test(f)),
 );
 if (!files.includes(isWindows ? 'llama-server.exe' : 'llama-server')) fail(`llama-server wasn't built (see the output above)`);
 files.forEach((f) => copyFileSync(join(bin, f), join(out, f)));
@@ -89,8 +99,17 @@ if (existsSync(licences)) {
   mkdirSync(join(out, 'licenses'), { recursive: true });
   readdirSync(licences).forEach((f) => copyFileSync(join(licences, f), join(out, 'licenses', f)));
 }
+if (signer) signMacBinaries(files);
 writeFileSync(stampFile, `${stamp}\n`);
 console.log(`build-llama: done, ${files.length} files in ${out}`);
+
+function signMacBinaries(names) {
+  console.log(`build-llama: signing ${names.length} files`);
+  for (const name of names) {
+    const args = ['--force', ...(signer === '-' ? [] : ['--options', 'runtime', '--timestamp']), '--sign', signer];
+    run('codesign', [...args, join(out, name)]);
+  }
+}
 
 function fail(message) {
   console.error(`\nbuild-llama: ${message}\n`);

@@ -169,7 +169,38 @@ pub fn roots() -> Vec<PathBuf> {
         .collect()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("/")];
+    roots.extend(external_volumes());
+    roots
+}
+
+#[cfg(target_os = "macos")]
+fn external_volumes() -> Vec<PathBuf> {
+    let mut volumes: Vec<PathBuf> = fs::read_dir("/Volumes")
+        .map(|volumes| volumes.flatten().map(|volume| volume.path()).collect())
+        .unwrap_or_default();
+    volumes.retain(|volume| volume.is_dir() && fs::canonicalize(volume).is_ok_and(|real| real != Path::new("/")));
+    volumes.sort();
+    volumes
+}
+
+#[cfg(target_os = "macos")]
+fn startup_disk_name() -> Option<String> {
+    fs::read_dir("/Volumes")
+        .ok()?
+        .flatten()
+        .find(|volume| fs::canonicalize(volume.path()).is_ok_and(|real| real == Path::new("/")))
+        .map(|volume| volume.file_name().to_string_lossy().into_owned())
+}
+
+#[cfg(target_os = "macos")]
+fn is_external_volume(path: &Path) -> bool {
+    path.parent() == Some(Path::new("/Volumes"))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn roots() -> Vec<PathBuf> {
     vec![PathBuf::from("/")]
 }
@@ -292,7 +323,7 @@ fn is_dir(item: &fs::DirEntry) -> Option<bool> {
     }
 }
 
-#[cfg_attr(not(windows), allow(unused_variables))]
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(unused_variables))]
 fn is_hidden_entry(name: &str, metadata: impl FnOnce() -> Option<fs::Metadata>) -> bool {
     if name.starts_with('.') {
         return true;
@@ -306,7 +337,23 @@ fn is_hidden_entry(name: &str, metadata: impl FnOnce() -> Option<fs::Metadata>) 
             return metadata.file_attributes() & (HIDDEN | SYSTEM) != 0;
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        const UF_HIDDEN: u32 = 0x8000;
+        if let Some(metadata) = metadata() {
+            return metadata.st_flags() & UF_HIDDEN != 0;
+        }
+    }
     false
+}
+
+pub fn explain(error: &io::Error) -> String {
+    #[cfg(target_os = "macos")]
+    if error.kind() == io::ErrorKind::PermissionDenied {
+        return "macOS isn't letting Mesa read it. Allow Mesa under System Settings \u{203A} Privacy & Security \u{203A} Files and Folders (or Full Disk Access), then try again.".into();
+    }
+    error.to_string()
 }
 
 fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
@@ -343,6 +390,10 @@ fn parent(path: &str) -> Option<String> {
     if path.is_empty() {
         return None;
     }
+    #[cfg(target_os = "macos")]
+    if is_external_volume(Path::new(path)) {
+        return Some(String::new());
+    }
     let parent = Path::new(path).parent();
     Some(parent.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default())
 }
@@ -357,6 +408,10 @@ fn breadcrumbs(path: &str) -> Vec<Crumb> {
             .ancestors()
             .filter(|p| !p.as_os_str().is_empty())
             .collect();
+        #[cfg(target_os = "macos")]
+        if let Some(at) = chain.iter().position(|p| is_external_volume(p)) {
+            chain.truncate(at + 1);
+        }
         chain.reverse();
         crumbs.extend(chain.into_iter().map(|p| Crumb {
             name: display_name(p),
@@ -369,6 +424,8 @@ fn breadcrumbs(path: &str) -> Vec<Crumb> {
 pub fn display_name(path: &Path) -> String {
     match path.file_name() {
         Some(name) => name.to_string_lossy().into_owned(),
+        #[cfg(target_os = "macos")]
+        None if path == Path::new("/") => startup_disk_name().unwrap_or_else(|| "/".to_owned()),
         None => {
             let full = path.to_string_lossy();
             let trimmed = full.trim_end_matches(['\\', '/']);

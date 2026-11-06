@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { isMac } from "../platform";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useTheme } from "../theme";
 import { useTurboIndexing } from "../useTurboIndexing";
@@ -18,7 +19,7 @@ export function SettingsDialog({ open, onClose }: Props) {
   const gpu = useGpuAcceleration();
   const turbo = useTurboIndexing();
   return (
-    <Modal open={open} onClose={onClose} className={styles.dialog} labelledBy={titleId}>
+    <Modal open={open} onClose={onClose} className={styles.dialog} labelledBy={titleId} focusCard={isMac}>
       {open && (
         <div className={styles.content}>
           <header className={styles.header}>
@@ -114,7 +115,7 @@ function GpuRow({ enabled, gpu, pending, error, change }: ReturnType<typeof useG
   const known = enabled !== null && gpu !== undefined;
   const disabled = !known || gpu === null || pending !== null;
 
-  const note = !known ? "\u00a0" : (gpu ? `Use your ${gpu}` : "No usable GPU found");
+  const note = !known ? "\u00a0" : (gpu ? `Use your “${gpu}” GPU` : "No usable GPU found");
 
   return (
     <>

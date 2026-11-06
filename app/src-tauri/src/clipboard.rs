@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 const HEADER_BYTES: usize = 20;
 
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn drop_files(paths: &[PathBuf]) -> Vec<u8> {
     let mut bytes = vec![0u8; HEADER_BYTES];
     bytes[0..4].copy_from_slice(&(HEADER_BYTES as u32).to_le_bytes());
@@ -18,6 +19,44 @@ fn drop_files(paths: &[PathBuf]) -> Vec<u8> {
 
 #[cfg(windows)]
 pub use windows_clipboard::copy_files;
+
+#[cfg(target_os = "macos")]
+pub use mac_clipboard::copy_files;
+
+#[cfg(target_os = "macos")]
+mod mac_clipboard {
+    use std::path::PathBuf;
+
+    use objc2::{rc::Retained, runtime::ProtocolObject};
+    use objc2_app_kit::{NSPasteboard, NSPasteboardWriting};
+    use objc2_foundation::{NSArray, NSString, NSURL};
+
+    pub fn copy_files(paths: &[PathBuf]) -> Result<(), String> {
+        write_to(&NSPasteboard::generalPasteboard(), paths)
+    }
+
+    fn write_to(pasteboard: &NSPasteboard, paths: &[PathBuf]) -> Result<(), String> {
+        let urls: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
+            .iter()
+            .filter_map(|path| path.to_str())
+            .map(|path| {
+                let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+                ProtocolObject::from_retained(url)
+            })
+            .collect();
+        if urls.is_empty() {
+            return Err("Those files can't be copied.".into());
+        }
+        let urls = NSArray::from_retained_slice(&urls);
+        pasteboard.clearContents();
+        let written = pasteboard.writeObjects(&urls);
+        if written {
+            Ok(())
+        } else {
+            Err("The clipboard didn't take the files.".into())
+        }
+    }
+}
 
 #[cfg(windows)]
 mod windows_clipboard {

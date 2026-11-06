@@ -14,6 +14,7 @@ const HIDE_AFTER: Duration = Duration::from_millis(1500);
 const LOOK_EVERY: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Action {
     Pause,
     Resume,
@@ -21,6 +22,7 @@ pub enum Action {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum Gone {
     Dismissed,
     Used,
@@ -36,6 +38,7 @@ pub trait Surface {
     fn gone(&mut self) -> Option<Gone>;
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 struct Nowhere;
 
 impl Surface for Nowhere {
@@ -220,9 +223,91 @@ fn platform(app: &AppHandle, data_dir: &Path, act: Arc<dyn Fn(Action) + Send + S
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn platform(app: &AppHandle, _: &Path, _: Arc<dyn Fn(Action) + Send + Sync>) -> Box<dyn Surface> {
+    Box::new(menu_bar::MenuBar { app: app.clone() })
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn platform(_: &AppHandle, _: &Path, _: Arc<dyn Fn(Action) + Send + Sync>) -> Box<dyn Surface> {
     Box::new(Nowhere)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn menu_bar_text(progress: &Progress) -> (String, String, &'static str) {
+    let said = lines(progress);
+    let beside_icon = match (progress.paused, said.fraction) {
+        (true, _) => "\u{23F8}".to_owned(),
+        (_, Some(fraction)) => format!("{}%", (fraction * 100.0).floor() as u32),
+        (_, None) => "\u{2026}".to_owned(),
+    };
+    let figures = if said.figures.is_empty() {
+        String::new()
+    } else {
+        format!(" \u{b7} {}", said.figures)
+    };
+    let line = format!("{}: {}{figures}", said.status, said.title);
+    (
+        beside_icon,
+        line,
+        if progress.paused {
+            "Resume Indexing"
+        } else {
+            "Pause Indexing"
+        },
+    )
+}
+
+#[cfg(target_os = "macos")]
+pub mod menu_bar {
+    use tauri::{AppHandle, Manager, Wry, menu::MenuItem};
+
+    use super::{Gone, Surface, menu_bar_text};
+    use crate::progress::Progress;
+
+    pub const TRAY_ID: &str = "mesa";
+
+    pub struct Items {
+        pub status: MenuItem<Wry>,
+        pub pause: MenuItem<Wry>,
+    }
+
+    pub struct MenuBar {
+        pub app: AppHandle,
+    }
+
+    impl MenuBar {
+        fn set(&self, title: Option<&str>, status: &str, pause: &str, can_pause: bool) {
+            if let Some(tray) = self.app.tray_by_id(TRAY_ID) {
+                let _ = tray.set_title(title);
+            }
+            if let Some(items) = self.app.try_state::<Items>() {
+                let _ = items.status.set_text(status);
+                let _ = items.pause.set_text(pause);
+                let _ = items.pause.set_enabled(can_pause);
+            }
+        }
+    }
+
+    impl Surface for MenuBar {
+        fn show(&mut self, progress: &Progress) {
+            let (title, line, pause) = menu_bar_text(progress);
+            self.set(Some(&title), &line, pause, true);
+        }
+
+        fn update(&mut self, progress: &Progress) -> bool {
+            self.show(progress);
+            true
+        }
+
+        fn hide(&mut self) {
+            self.set(None, "Not indexing", "Pause Indexing", false);
+        }
+
+        fn gone(&mut self) -> Option<Gone> {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

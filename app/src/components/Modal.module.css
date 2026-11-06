@@ -7,6 +7,10 @@
   box-shadow: var(--shadow-dialog);
 }
 
+.dialog:focus-visible {
+  outline: none;
+}
+
 .dialog[open] {
   animation: pop 140ms ease-out;
 }

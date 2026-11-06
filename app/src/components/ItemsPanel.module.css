@@ -197,6 +197,10 @@ div.toggle {
   padding: 6px;
 }
 
+.list::-webkit-scrollbar-track {
+  margin-bottom: 8px;
+}
+
 .empty {
   flex: 1;
   display: flex;

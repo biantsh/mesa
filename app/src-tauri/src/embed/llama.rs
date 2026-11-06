@@ -92,10 +92,14 @@ impl Locations {
         let list: Vec<_> = missing.iter().map(|path| path.display().to_string()).collect();
         let mut advice = Vec::new();
         if missing.contains(&self.server()) {
-            advice.push("The program is built with the app: run `npm run build:runtime` in app/ (it needs the Vulkan SDK, or --backend=cpu).");
+            advice.push(if cfg!(target_os = "macos") {
+                "The program is built with the app: run `npm run build:runtime` in app/ (it needs Xcode's command line tools and CMake)."
+            } else {
+                "The program is built with the app: run `npm run build:runtime` in app/ (it needs the Vulkan SDK, or --backend=cpu)."
+            });
         }
         if missing.iter().any(|path| path.starts_with(&self.models)) {
-            advice.push("Put the model's .gguf files in that folder.");
+            advice.push("Let Mesa download the model, or put its .gguf files in that folder.");
         }
         Some(format!(
             "The embedding model isn't set up; missing: {}. {}",
@@ -468,7 +472,7 @@ fn parse_gpu(listing: &str) -> Option<String> {
         .skip(1);
     devices.find_map(|line| {
         let (id, rest) = line.trim().split_once(": ")?;
-        if id.is_empty() || id.starts_with("CPU") || id.contains(char::is_whitespace) {
+        if id.is_empty() || id.starts_with("CPU") || id.starts_with("BLAS") || id.contains(char::is_whitespace) {
             return None;
         }
         let name = rest.rfind(" (").map_or(rest, |end| &rest[..end]).trim();
@@ -557,11 +561,24 @@ fn launch(locations: &Locations, device: Device, eco: bool) -> Result<Running, E
             CREATE_NO_WINDOW
         });
     }
+    #[cfg(unix)]
+    if eco {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: only `setpriority` is called between the fork and the exec, which is safe there.
+        unsafe {
+            command.pre_exec(|| {
+                libc::setpriority(libc::PRIO_PROCESS, 0, 5);
+                Ok(())
+            });
+        }
+    }
     let child = command
         .spawn()
         .map_err(|e| Error(format!("can't start {}: {e}", locations.server().display())))?;
     #[cfg(windows)]
     super::process_group::tie_to_app(&child);
+    #[cfg(target_os = "macos")]
+    super::watchdog::tie_to_app(&child);
 
     let mut server = Running {
         child: Some(child),

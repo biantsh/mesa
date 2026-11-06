@@ -19,6 +19,8 @@ use notify::{
 use crate::{browse, index::Chores};
 
 pub const SETTLE: Duration = Duration::from_secs(4);
+const MOST_DEFERRED: Duration = Duration::from_secs(60);
+const BULK: usize = 16;
 const TICK: Duration = Duration::from_millis(200);
 const SYNC_EVERY: Duration = Duration::from_secs(1);
 const TRY_AGAIN_AFTER: Duration = Duration::from_secs(30);
@@ -95,6 +97,7 @@ fn run(chores: Chores, settle: Duration, stop: &AtomicBool) {
 struct Heard {
     arrived: bool,
     changed: bool,
+    first: Option<Instant>,
     last: Option<Instant>,
 }
 
@@ -105,7 +108,9 @@ impl Heard {
             What::Changed => self.changed = true,
             What::Gone => {}
         }
-        self.last = Some(Instant::now());
+        let now = Instant::now();
+        self.first.get_or_insert(now);
+        self.last = Some(now);
     }
 }
 
@@ -125,6 +130,7 @@ struct State {
     failed: HashMap<PathBuf, Instant>,
     last_rescan: Option<Instant>,
     lost_watches: bool,
+    aliases: Vec<(PathBuf, PathBuf)>,
 }
 
 impl State {
@@ -139,11 +145,21 @@ impl State {
             failed: HashMap::new(),
             last_rescan: None,
             lost_watches: false,
+            aliases: Vec::new(),
         }
     }
 
+    fn as_watched(&self, path: PathBuf) -> PathBuf {
+        for (real, watched) in &self.aliases {
+            if let Ok(rest) = path.strip_prefix(real) {
+                return watched.join(rest);
+            }
+        }
+        path
+    }
+
     fn hear(&mut self, news: notify::Result<Event>) {
-        let event = match news {
+        let mut event = match news {
             Ok(event) => event,
             Err(e) => {
                 eprintln!("Mesa: the system's news of changes broke off, so everything is looked at again: {e}");
@@ -155,11 +171,18 @@ impl State {
         if event.need_rescan() {
             self.rescan();
         }
-        let to_follows = matches!(event.kind, EventKind::Modify(ModifyKind::Name(RenameMode::To)));
+        if !self.aliases.is_empty() {
+            event.paths = std::mem::take(&mut event.paths)
+                .into_iter()
+                .map(|path| self.as_watched(path))
+                .collect();
+        }
+        let kind = directed(event.kind, &event.paths);
+        let to_follows = matches!(kind, EventKind::Modify(ModifyKind::Name(RenameMode::To)));
         if !to_follows && let Some((from, _)) = self.moved_from.take() {
             self.note(from, What::Gone);
         }
-        match event.kind {
+        match kind {
             EventKind::Create(_) => event.paths.into_iter().for_each(|path| self.note(path, What::Arrived)),
             EventKind::Remove(_) => event.paths.into_iter().for_each(|path| self.note(path, What::Gone)),
             EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
@@ -245,6 +268,7 @@ impl State {
             .filter(|(_, heard)| heard.last.is_some_and(|at| now.duration_since(at) >= settle))
             .map(|(path, _)| path.clone())
             .collect();
+        let due = self.not_deferred(due, now);
         if due_moves.is_empty() && due.is_empty() {
             return;
         }
@@ -280,7 +304,40 @@ impl State {
             }
         }
         self.chores.forget(gone);
-        self.chores.check_later(look);
+        let indexed = |folder: &Path| self.chores.is_indexed(folder);
+        self.chores.check_later(by_folder(look, &indexed));
+    }
+
+    fn not_deferred(&self, due: Vec<PathBuf>, now: Instant) -> Vec<PathBuf> {
+        if due.is_empty() {
+            return due;
+        }
+        let mut busy: HashSet<&Path> = HashSet::new();
+        for (path, heard) in &self.heard {
+            if heard.last.is_some_and(|at| now.duration_since(at) >= self.settle) {
+                continue;
+            }
+            for above in path.ancestors().skip(1) {
+                if !busy.insert(above) {
+                    break;
+                }
+            }
+        }
+        if busy.is_empty() {
+            return due;
+        }
+        due.into_iter()
+            .filter(|path| {
+                let waiting =
+                    busy.contains(path.as_path()) || path.parent().is_some_and(|folder| busy.contains(folder));
+                let too_long = self
+                    .heard
+                    .get(path)
+                    .and_then(|heard| heard.first)
+                    .is_some_and(|at| now.duration_since(at) >= MOST_DEFERRED);
+                !waiting || too_long
+            })
+            .collect()
     }
 
     fn sync(&mut self, watcher: &mut impl Watcher) {
@@ -295,6 +352,19 @@ impl State {
                 self.failed.entry(root.clone()).or_insert_with(Instant::now);
             }
         }
+        self.aliases = if cfg!(unix) {
+            wanted
+                .keys()
+                .filter_map(|path| {
+                    fs::canonicalize(path)
+                        .ok()
+                        .filter(|real| real != path)
+                        .map(|real| (real, path.clone()))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let unwanted: Vec<PathBuf> = self
             .watching
             .iter()
@@ -329,6 +399,43 @@ impl State {
                 }
             }
         }
+    }
+}
+
+fn by_folder(look: Vec<PathBuf>, indexed: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
+    let mut in_folder: HashMap<&Path, usize> = HashMap::new();
+    for path in &look {
+        if let Some(folder) = path.parent() {
+            *in_folder.entry(folder).or_default() += 1;
+        }
+    }
+    let many: BTreeSet<PathBuf> = in_folder
+        .into_iter()
+        .filter(|&(folder, n)| n >= BULK && indexed(folder))
+        .map(|(folder, _)| folder.to_owned())
+        .collect();
+    if many.is_empty() {
+        return look;
+    }
+    let mut out: Vec<PathBuf> = look
+        .into_iter()
+        .filter(|path| !path.parent().is_some_and(|folder| many.contains(folder)))
+        .collect();
+    out.extend(many);
+    out
+}
+
+fn directed(kind: EventKind, paths: &[PathBuf]) -> EventKind {
+    match (cfg!(target_os = "macos"), kind, paths) {
+        (true, EventKind::Modify(ModifyKind::Name(RenameMode::Any)), [path]) => {
+            let mode = if fs::symlink_metadata(path).is_ok() {
+                RenameMode::To
+            } else {
+                RenameMode::From
+            };
+            EventKind::Modify(ModifyKind::Name(mode))
+        }
+        _ => kind,
     }
 }
 

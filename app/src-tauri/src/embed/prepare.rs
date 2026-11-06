@@ -44,7 +44,8 @@ fn kind(path: &Path) -> Option<Kind> {
 pub fn is_supported(item: &Item) -> bool {
     match kind(&item.path) {
         None => false,
-        Some(Kind::SystemPicture | Kind::Video) => cfg!(windows),
+        Some(Kind::SystemPicture) => cfg!(any(windows, target_os = "macos")),
+        Some(Kind::Video) => cfg!(any(windows, target_os = "macos")),
         Some(_) => true,
     }
 }
@@ -76,14 +77,23 @@ fn read(item: &Item, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
             let (rgb, width, height) = super::wic::decode(path)?;
             one(Prepared::Image(picture::from_rgb(rgb, width, height)?), emit)
         }
+        #[cfg(target_os = "macos")]
+        Some(Kind::SystemPicture) => {
+            let (rgb, width, height) = super::imageio::decode(path)?;
+            one(Prepared::Image(picture::from_rgb(rgb, width, height)?), emit)
+        }
         Some(Kind::Text) => documents::plain(path, emit),
         Some(Kind::Word) => documents::docx(path, emit),
         Some(Kind::Pdf) => documents::pdf(path, emit),
         Some(Kind::Sound) => audio::file(path, emit),
         #[cfg(windows)]
         Some(Kind::Video) => super::video::frames(path, emit),
-        #[cfg(not(windows))]
-        Some(Kind::SystemPicture | Kind::Video) => Err("this kind of file isn't read on this platform yet".into()),
+        #[cfg(target_os = "macos")]
+        Some(Kind::Video) => super::avfoundation::frames(path, emit),
+        #[cfg(not(any(windows, target_os = "macos")))]
+        Some(Kind::SystemPicture) => Err("this kind of file isn't read on this platform yet".into()),
+        #[cfg(not(any(windows, target_os = "macos")))]
+        Some(Kind::Video) => Err("this kind of file isn't read on this platform yet".into()),
         None => Err("this kind of file isn't read".into()),
     }
 }

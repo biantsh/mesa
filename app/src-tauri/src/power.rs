@@ -22,7 +22,14 @@ mod imp {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod imp {
+    pub fn give_way(on: bool) {
+        let _ = unsafe { libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, if on { libc::PRIO_DARWIN_BG } else { 0 }) };
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod imp {
     pub fn give_way(_: bool) {}
 }

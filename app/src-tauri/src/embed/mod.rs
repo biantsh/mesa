@@ -1,5 +1,9 @@
 mod audio;
+#[cfg(target_os = "macos")]
+mod avfoundation;
 mod documents;
+#[cfg(target_os = "macos")]
+mod imageio;
 mod llama;
 mod model;
 mod picture;
@@ -11,6 +15,8 @@ mod process_group;
 mod resample;
 #[cfg(windows)]
 mod video;
+#[cfg(target_os = "macos")]
+pub mod watchdog;
 #[cfg(windows)]
 mod wic;
 

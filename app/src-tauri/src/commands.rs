@@ -30,7 +30,7 @@ pub async fn list_dir(path: String, index: State<'_, Index>) -> Result<Listing, 
     let mut listing = tauri::async_runtime::spawn_blocking(move || browse::list(&path))
         .await
         .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| browse::explain(&e))?;
     for entry in &mut listing.entries {
         let state = index.state(Path::new(&entry.path));
         entry.index = state.status;
@@ -185,7 +185,12 @@ pub fn copy_files(paths: Vec<String>, window: tauri::WebviewWindow) -> Result<()
         let owner = window.hwnd().map_err(|e| e.to_string())?;
         crate::clipboard::copy_files(owner, &files)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window;
+        crate::clipboard::copy_files(&files)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = window;
         Err("Copying files isn't supported on this platform yet.".into())
@@ -374,6 +379,11 @@ pub fn page_painted(window: tauri::WebviewWindow) {
     if window.label() == "main" {
         crate::main_window::show_at_start(&window);
     }
+}
+
+#[tauri::command]
+pub fn reveal_main(app: AppHandle) {
+    crate::main_window::reveal(&app);
 }
 
 #[tauri::command]

@@ -2,6 +2,7 @@ import React from "react";
 import { flushSync } from "react-dom";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { markPlatform } from "./platform";
 import { ready } from "./ready";
 import { guardAgainstStaleHover } from "./staleHover";
 import Widget from "./Widget";
@@ -12,6 +13,7 @@ import "./styles/global.css";
 
 const isWidget = currentWindow()?.label === "widget";
 const Screen = isWidget ? Widget : App;
+if (!isWidget) markPlatform();
 guardAgainstStaleHover();
 
 ready().then(() => {

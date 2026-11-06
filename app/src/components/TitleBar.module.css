@@ -4,7 +4,13 @@
   align-items: center;
   height: 32px;
   padding-left: 12px;
+  -webkit-user-select: none;
   user-select: none;
+}
+
+.mac {
+  height: 35px;
+  padding-left: 84px;
 }
 
 .logo,

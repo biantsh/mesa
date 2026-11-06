@@ -148,6 +148,7 @@ export const api = {
   setGpuAcceleration: (enabled: boolean) => invoke<void>("set_gpu_acceleration", { enabled }),
   setTurboIndexing: (enabled: boolean) => invoke<void>("set_turbo_indexing", { enabled }),
   pagePainted: () => invoke<void>("page_painted"),
+  revealMain: () => invoke<void>("reveal_main"),
   hideWidget: () => invoke<void>("hide_widget"),
   openMain: (screen: "index" | "settings") => invoke<void>("open_main", { screen }),
   setWidgetBox: (left: number, top: number, right: number, bottom: number) => invoke<void>("set_widget_box", { left, top, right, bottom }),

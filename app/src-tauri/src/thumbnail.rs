@@ -71,10 +71,74 @@ pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
     {
         shell::render(path, size)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        quicklook::render(path, size)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (path, size);
         None
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod quicklook {
+    use std::{sync::mpsc, time::Duration};
+
+    use block2::RcBlock;
+    use objc2::{AnyThread, rc::autoreleasepool};
+    use objc2_core_foundation::CGSize;
+    use objc2_foundation::{NSError, NSString, NSURL};
+    use objc2_quick_look_thumbnailing::{
+        QLThumbnailGenerationRequest, QLThumbnailGenerationRequestRepresentationTypes, QLThumbnailGenerator,
+        QLThumbnailRepresentation,
+    };
+
+    use crate::cgimage;
+
+    const GIVE_UP: Duration = Duration::from_secs(20);
+
+    pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
+        let (sent, received) = mpsc::channel();
+        autoreleasepool(|_| unsafe {
+            let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+            let side = f64::from(size);
+            let request = QLThumbnailGenerationRequest::initWithFileAtURL_size_scale_representationTypes(
+                QLThumbnailGenerationRequest::alloc(),
+                &url,
+                CGSize {
+                    width: side,
+                    height: side,
+                },
+                1.0,
+                QLThumbnailGenerationRequestRepresentationTypes::Thumbnail,
+            );
+            let handler = RcBlock::new(
+                move |representation: *mut QLThumbnailRepresentation, _error: *mut NSError| {
+                    let picture = representation
+                        .as_ref()
+                        .and_then(|representation| cgimage::pixels(&representation.CGImage()));
+                    let _ = sent.send(picture);
+                },
+            );
+            QLThumbnailGenerator::sharedGenerator()
+                .generateBestRepresentationForRequest_completionHandler(&request, &handler);
+        });
+        let (rgba, width, height) = received.recv_timeout(GIVE_UP).ok().flatten()?;
+        encode_png(width, height, &rgba)
+    }
+
+    fn encode_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(rgba).ok()?;
+        writer.finish().ok()?;
+        Some(out)
     }
 }
 

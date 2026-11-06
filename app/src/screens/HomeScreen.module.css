@@ -123,6 +123,14 @@
   display: none;
 }
 
+.asWidget.indexing.engaged:not(.results) .status {
+  transform: translateY(calc(var(--tags-height) + 4px - var(--lift, 0px)));
+}
+
+.asWidget.indexing.dim:not(.results) .spot {
+  height: calc(var(--open-height) + var(--status-gap) + var(--status-height) - var(--status-below-text) - 2 * var(--inset));
+}
+
 .asWidget .spot,
 .backdrop {
   background: var(--widget-fill);
@@ -467,6 +475,7 @@
   font: inherit;
   font-size: 15px;
   line-height: 26px;
+  -webkit-user-select: text;
   user-select: text;
 }
 

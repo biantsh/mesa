@@ -3,7 +3,8 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
 import { cx } from "./cx";
-import { MAIN_HIDDEN } from "./events";
+import { MAIN_HIDDEN, MAIN_SHOWN } from "./events";
+import { isMac } from "./platform";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { IndexScreen } from "./screens/IndexScreen";
 import { api, type ModelStatus } from "./api";
@@ -75,12 +76,16 @@ export default function App() {
     setSettingsOpen(false);
   });
 
+  useTauriEvent(MAIN_SHOWN, () => {
+    requestAnimationFrame(() => requestAnimationFrame(() => void api.revealMain().catch(() => {})));
+  });
+
   useBlockContextMenu();
 
   useEffect(() => {
     if (!onIndex) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      const back = e.key === "Escape" || (e.altKey && e.key === "ArrowLeft");
+      const back = e.key === "Escape" || (e.altKey && e.key === "ArrowLeft") || (isMac && e.metaKey && e.key === "[");
       if (!back || e.defaultPrevented || document.querySelector(OPEN_ON_TOP)) return;
       e.preventDefault();
       goHome();

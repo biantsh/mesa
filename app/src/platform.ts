@@ -6,3 +6,7 @@ export function shortcut(key: string, shift = false): string {
   if (isMac) return `${shift ? "⇧" : ""}⌘${key}`;
   return `Ctrl+${shift ? "Shift+" : ""}${key}`;
 }
+
+export function markPlatform() {
+  if (isMac) document.documentElement.dataset.platform = "mac";
+}

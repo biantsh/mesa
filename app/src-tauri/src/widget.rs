@@ -92,6 +92,26 @@ fn watch_pointer(app: &AppHandle, watch: u64) {
     }
 }
 
+pub fn float_over_everything(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window(LABEL) {
+        let on_window = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+            let Ok(pointer) = on_window.ns_window() else { return };
+            let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+            ns_window.setCollectionBehavior(
+                NSWindowCollectionBehavior::CanJoinAllSpaces
+                    | NSWindowCollectionBehavior::FullScreenAuxiliary
+                    | NSWindowCollectionBehavior::IgnoresCycle,
+            );
+            ns_window.setLevel(NSStatusWindowLevel);
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
 pub fn register_hotkey(app: &AppHandle) -> Option<&'static str> {
     let keys = app.global_shortcut();
     for (modifiers, code, name) in CANDIDATES {

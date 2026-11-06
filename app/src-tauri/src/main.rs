@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod browse;
+#[cfg(target_os = "macos")]
+mod cgimage;
 mod clipboard;
 mod commands;
 mod crawl;
@@ -39,12 +41,30 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
         None::<&str>,
     )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Mesa", true, None::<&str>)?;
+    #[cfg(not(target_os = "macos"))]
     let menu = Menu::with_items(app, &[&open, &search, &quit])?;
-    let mut tray = TrayIconBuilder::new()
+    #[cfg(target_os = "macos")]
+    let menu = {
+        let status = MenuItem::with_id(app, "status", "Not indexing", false, None::<&str>)?;
+        let pause = MenuItem::with_id(app, "pause", "Pause Indexing", false, None::<&str>)?;
+        let line = tauri::menu::PredefinedMenuItem::separator(app)?;
+        let menu = Menu::with_items(app, &[&status, &pause, &line, &open, &search, &quit])?;
+        app.manage(surface::menu_bar::Items { status, pause });
+        menu
+    };
+    let tray = TrayIconBuilder::with_id("mesa");
+    let mut tray = tray
         .tooltip("Mesa")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id.as_ref() {
+            "pause" => {
+                let index = app.state::<index::Index>();
+                let paused = index.progress().is_some_and(|progress| progress.paused);
+                if let Err(e) = index.set_paused(!paused) {
+                    eprintln!("Mesa: {e}");
+                }
+            }
             "open" => main_window::show(app),
             "search" => widget::show(app),
             "quit" => {
@@ -54,11 +74,12 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
+            if !cfg!(target_os = "macos")
+                && let TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
             {
                 main_window::show(tray.app_handle());
             }
@@ -71,6 +92,10 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
 }
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    if embed::watchdog::run_if_asked() {
+        return;
+    }
     main_window::keep_hidden_at_start(startup::starts_without_window());
     let previews = thumbnail::PreviewServer::start();
 
@@ -133,6 +158,8 @@ fn main() {
             if startup::wants_search(&startup::arguments()) {
                 widget::show_soon(app.handle());
             }
+            main_window::set_up_dock(app);
+            widget::float_over_everything(app.handle());
             main_window::show_if_the_page_does_not(app);
             Ok(())
         })
@@ -169,11 +196,22 @@ fn main() {
             commands::set_gpu_acceleration,
             commands::set_turbo_indexing,
             commands::page_painted,
+            commands::reveal_main,
             commands::hide_widget,
             commands::open_main,
             commands::show_main,
             commands::set_widget_box,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => main_window::show(app),
+            tauri::RunEvent::Exit => {
+                if let Some(index) = app.try_state::<index::Index>() {
+                    index.shut_down();
+                }
+            }
+            _ => {}
+        });
 }

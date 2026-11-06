@@ -1,4 +1,5 @@
 import { useId, type ReactNode } from "react";
+import { isMac } from "../platform";
 import { Button } from "./Button";
 import { Modal } from "./Modal";
 import styles from "./ConfirmDialog.module.css";
@@ -25,7 +26,7 @@ export function ConfirmDialog({
   const titleId = useId();
 
   return (
-    <Modal open={open} onClose={onCancel} className={styles.dialog} labelledBy={titleId}>
+    <Modal open={open} onClose={onCancel} className={styles.dialog} labelledBy={titleId} focusCard={isMac}>
       <div className={styles.content}>
         <h2 id={titleId} className={styles.title}>
           {title}
