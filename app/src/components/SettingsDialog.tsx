@@ -1,5 +1,5 @@
 import { useId, type ReactNode } from "react";
-import { Info, X } from "lucide-react";
+import { X } from "lucide-react";
 import { modifierLabels, keyLabel } from "../hotkey";
 import { isMac } from "../platform";
 import { useGpuAcceleration } from "../useGpuAcceleration";
@@ -11,7 +11,6 @@ import { Keycaps } from "./Keycaps";
 import { Modal } from "./Modal";
 import { ShortcutField } from "./ShortcutField";
 import { Switch } from "./Switch";
-import { cx } from "../cx";
 import styles from "./SettingsDialog.module.css";
 
 interface Props {
@@ -103,54 +102,30 @@ function ThemeRow() {
   );
 }
 
-function HotkeyRow({ status, recording, held, refused, hint, error, saving, field, start, cancel, reset }: ReturnType<typeof useSearchHotkey>) {
-  const chosen = status?.chosen ?? null;
+function HotkeyRow({ status, recording, held, refused, error, saving, field, start, cancel }: ReturnType<typeof useSearchHotkey>) {
   const active = status?.active ?? null;
-  const displaced = chosen !== null && chosen.name !== active?.name;
-
-  let notice: ReactNode = null;
-  if (!recording && status) {
-    if (displaced && active) {
-      notice = (
-        <>
-          <b>{chosen.name}</b> is used by another program, so <b>{active.name}</b> is used instead.
-        </>
-      );
-    } else if (displaced) {
-      notice = (
-        <>
-          <b>{chosen.name}</b> is used by another program, and so is the default. Search opens from the tray menu.
-        </>
-      );
-    } else if (!active) {
-      notice = "The default shortcut is used by another program. Choose one here. Search opens from the tray menu.";
-    }
-  }
-
   const live = [...modifierLabels(held, isMac), ...(refused ? [keyLabel(refused)] : [])];
 
   return (
     <>
       <Row
         title="Open search"
-        description="Open the search widget from anywhere."
+        description="Search from anywhere on your computer."
         control={(ids) => (
-          <div className={styles.control}>
-            <ShortcutField
-              ref={field}
-              listening={recording}
-              live={live}
-              refusedLast={refused !== null}
-              prompt="Type shortcut"
-              disabled={!status || saving}
-              label={recording ? "Recording the new shortcut. Type it, or press Escape to cancel." : `Search shortcut: ${active?.name ?? "none"}. Press to change.`}
-              describedBy={ids.describedBy}
-              title={recording ? "Press Escape to cancel" : "Click to change"}
-              onClick={(e) => (recording ? cancel() : start(e.detail === 0))}
-            >
-              {status ? active ? <Keycaps keys={active.keys} /> : <span className={styles.none}>None</span> : null}
-            </ShortcutField>
-          </div>
+          <ShortcutField
+            ref={field}
+            listening={recording}
+            live={live}
+            refusedLast={refused !== null}
+            prompt="Type shortcut"
+            disabled={!status || saving}
+            label={recording ? "Recording the new shortcut. Type it, or press Escape to cancel." : `Search shortcut: ${active?.name ?? "none"}. Press to change.`}
+            describedBy={ids.describedBy}
+            tooltip={recording ? "Press Escape to cancel" : "Click to change"}
+            onClick={(e) => (recording ? cancel() : start(e.detail === 0))}
+          >
+            {status ? active ? <Keycaps keys={active.keys} /> : <span className={styles.none}>None</span> : null}
+          </ShortcutField>
         )}
       />
       <SettingError error={error} />
@@ -163,7 +138,7 @@ function TurboRow({ enabled, pending, error, change }: ReturnType<typeof useTurb
     <>
       <Row
         title="Turbo indexing"
-        description="Index at full speed. Faster, but uses more resources."
+        description="Faster, but uses more resources."
         control={(ids) =>
           enabled !== null ? (
             <Switch checked={pending ?? enabled} disabled={pending !== null} onChange={change} {...ids} />

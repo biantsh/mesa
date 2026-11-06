@@ -7,20 +7,8 @@ import { useIndexOverview } from "./useIndexOverview";
 import { useModelStatus } from "./useModelStatus";
 import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
+import { reportVisibleBox } from "./widgetBox";
 import styles from "./Widget.module.css";
-
-const BOX_MARGIN_PX = 2;
-
-type Box = [number, number, number, number];
-
-function visibleBox(): Box | null {
-  const backdrop = document.querySelector<HTMLElement>("[data-widget-backdrop]");
-  const spot = document.querySelector<HTMLElement>("[data-widget-spot]");
-  const seen = backdrop && Number(getComputedStyle(backdrop).opacity) > 0.01 ? backdrop : spot;
-  if (!seen) return null;
-  const r = seen.getBoundingClientRect();
-  return [r.left - BOX_MARGIN_PX, r.top - BOX_MARGIN_PX, r.right + BOX_MARGIN_PX, r.bottom + BOX_MARGIN_PX].map(Math.round) as Box;
-}
 
 export default function Widget() {
   const [shown, setShown] = useState(0);
@@ -64,19 +52,7 @@ export default function Widget() {
 
   useEffect(() => {
     if (!there) return;
-    let frame = 0;
-    let said = "";
-    const look = () => {
-      const box = visibleBox();
-      const text = box?.join(",") ?? "";
-      if (box && text !== said) {
-        said = text;
-        void api.setWidgetBox(...box).catch(() => {});
-      }
-      frame = requestAnimationFrame(look);
-    };
-    frame = requestAnimationFrame(look);
-    return () => cancelAnimationFrame(frame);
+    return reportVisibleBox((box) => void api.setWidgetBox(...box).catch(() => {}));
   }, [there]);
 
   useEffect(() => {

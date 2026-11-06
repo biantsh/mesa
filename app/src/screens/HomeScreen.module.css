@@ -118,11 +118,6 @@
   --results-delay: calc(var(--focus-time) * 0.7);
 }
 
-:global(:root[data-theme="light"]) .asWidget {
-  --widget-tint-color: var(--color-bg);
-  --widget-tint: 86%;
-}
-
 :global(:root[data-theme="dark"]) .asWidget {
   --widget-tint-color: color-mix(in srgb, var(--color-bg) 30%, black);
   --widget-tint: 86%;
@@ -695,6 +690,12 @@
   transition:
     opacity calc(var(--focus-time) * 0.4) ease,
     transform calc(var(--focus-time) * 0.5) ease-in;
+}
+
+.opening .actions {
+  opacity: 0;
+  visibility: hidden;
+  transition: none;
 }
 
 .home:not(.engaged) .actions {

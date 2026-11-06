@@ -103,71 +103,7 @@
   overflow-wrap: anywhere;
 }
 
-.control {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .none {
   color: var(--color-text-faint);
   font-size: 13px;
-}
-
-.hint {
-  display: block;
-  margin-top: 4px;
-}
-
-.badHint {
-  color: var(--color-danger-ink);
-  font-weight: 500;
-}
-
-.inlineKey {
-  font-family: inherit;
-  font-weight: 600;
-  color: var(--color-text-muted);
-}
-
-.notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-  color: var(--color-primary-ink);
-  font-weight: 500;
-}
-
-.notice svg {
-  flex: none;
-  margin-top: 2px;
-}
-
-.link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--color-primary-ink);
-  font: inherit;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
-.link:hover:not(:disabled) {
-  text-decoration-thickness: 2px;
-}
-
-.link:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-@media (max-width: 560px) {
-  .row .control {
-    flex-wrap: wrap;
-  }
 }

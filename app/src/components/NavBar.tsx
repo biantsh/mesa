@@ -28,7 +28,7 @@ export function NavBar({ crumbs, parent, onOpen, view, onViewChange }: Props) {
         disabled={parent === null}
         onClick={() => parent !== null && onOpen(parent)}
         aria-label="Up one level"
-        title="Up one level"
+        data-tooltip="Up one level"
       >
         <ArrowLeft size={18} aria-hidden />
       </button>

@@ -69,7 +69,7 @@ export function TopBar({
         selectingLabel="Index selected"
         onClick={selecting ? selection.onAdd : onIndexAll}
         disabled={selecting ? selection.add === 0 : everythingIndexed}
-        title={
+        data-tooltip={
           !selecting
             ? everythingIndexed
               ? progress

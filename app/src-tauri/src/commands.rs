@@ -363,8 +363,8 @@ fn apply_setting(
 }
 
 #[tauri::command]
-pub fn get_search_hotkey(settings: State<'_, SettingsStore>, hotkey: State<'_, Hotkey>) -> hotkey::Status {
-    hotkey.status(settings.get().search_hotkey.as_deref())
+pub fn get_search_hotkey(hotkey: State<'_, Hotkey>) -> hotkey::Status {
+    hotkey.status()
 }
 
 #[tauri::command(async)]
@@ -387,7 +387,7 @@ pub fn set_search_hotkey(
         hotkey.restore(&app, old);
         return Err(hotkey::Error::Failed(format!("Couldn't save the setting. {e}")));
     }
-    Ok(hotkey.status(settings.get().search_hotkey.as_deref()))
+    Ok(hotkey.status())
 }
 
 #[tauri::command(async)]

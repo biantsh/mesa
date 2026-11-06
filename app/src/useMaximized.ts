@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { FULL_SCREEN } from "./events";
+import { useTauriEvent } from "./useTauriEvent";
 import { currentWindow } from "./window";
 
 export function useMaximized(): boolean {
@@ -31,4 +33,26 @@ export function useMaximized(): boolean {
   }, [maximized]);
 
   return maximized;
+}
+
+export function useFullscreen(): boolean {
+  const [fullscreen, setFullscreen] = useState(false);
+  useTauriEvent<boolean>(FULL_SCREEN, setFullscreen);
+
+  useEffect(() => {
+    let cancelled = false;
+    currentWindow()
+      ?.isFullscreen()
+      .then((now) => !cancelled && setFullscreen(now))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-fullscreen", fullscreen);
+  }, [fullscreen]);
+
+  return fullscreen;
 }

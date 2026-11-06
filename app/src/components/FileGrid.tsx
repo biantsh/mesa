@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { previewUrl, type Entry } from "../api";
 import { cx } from "../cx";
@@ -6,7 +6,7 @@ import { nameParts } from "../format";
 import { SELECTING_FROM } from "../selection";
 import { useArrowKeys } from "../useArrowKeys";
 import { usePreview } from "../usePreview";
-import { useRevealOnMount } from "../useRevealOnMount";
+import { useVirtualRows } from "../virtual";
 import { EmptyFolder } from "./EmptyFolder";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
@@ -42,18 +42,22 @@ export const FileGrid = memo(function FileGrid({
     items: entries,
     selectable: (entry) => entry.readable,
     active,
-    columns: (grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length,
+    columns,
     onMove,
   });
 
-  const firstSelected = entries.find((entry) => selected.has(entry.path))?.path;
-  const selectedTile = useRef<HTMLButtonElement>(null);
-  useRevealOnMount(selectedTile);
+  const grid = useRef<HTMLDivElement>(null);
+  const { start, end, before, after } = useVirtualRows(grid, entries, {
+    selectable: isReadable,
+    columns,
+    reveal: entries.find((entry) => selected.has(entry.path))?.path ?? null,
+  });
 
   if (entries.length === 0 && !loading) return <EmptyFolder />;
 
   return (
     <div
+      ref={grid}
       className={cx(styles.grid, loading && styles.loading)}
       tabIndex={-1}
       data-scroller
@@ -61,13 +65,13 @@ export const FileGrid = memo(function FileGrid({
       data-selecting={selected.size >= SELECTING_FROM || undefined}
       onKeyDown={onKeyDown}
     >
-      {entries.map((entry) => (
+      {before > 0 && <div className={styles.space} style={{ height: before }} aria-hidden />}
+      {entries.slice(start, end).map((entry) => (
         <Tile
           key={entry.path}
           entry={entry}
           selected={selected.has(entry.path)}
           leader={entry.path === active}
-          buttonRef={entry.path === firstSelected ? selectedTile : undefined}
           onSelect={onSelect}
           onOpen={onOpen}
           onAdd={onAdd}
@@ -75,15 +79,18 @@ export const FileGrid = memo(function FileGrid({
           onContextMenu={onContextMenu}
         />
       ))}
+      {after > 0 && <div className={styles.space} style={{ height: after }} aria-hidden />}
     </div>
   );
 });
+
+const isReadable = (entry: Entry) => entry.readable;
+const columns = (grid: HTMLElement) => getComputedStyle(grid).gridTemplateColumns.split(" ").length;
 
 interface TileProps {
   entry: Entry;
   selected: boolean;
   leader: boolean;
-  buttonRef?: Ref<HTMLButtonElement>;
   onSelect: (path: string, toggle: boolean, range?: boolean) => void;
   onOpen: (entry: Entry) => void;
   onAdd: (entry: Entry) => void;
@@ -118,7 +125,7 @@ function StopCorner({ entry, onStop }: { entry: Entry; onStop: (entry: Entry) =>
     <span
       role="button"
       className={styles.stop}
-      title="Stop indexing"
+      data-tooltip="Stop indexing"
       aria-label={`Stop indexing ${entry.name}`}
       onClick={(e) => {
         e.stopPropagation();
@@ -187,7 +194,7 @@ function AddCorner({ entry, onAdd }: { entry: Entry; onAdd: (entry: Entry) => vo
     <span
       role="button"
       className={styles.add}
-      title="Add to index"
+      data-tooltip="Add to index"
       aria-label={`Add ${entry.name} to the index`}
       onClick={(e) => {
         e.stopPropagation();
@@ -207,7 +214,6 @@ const Tile = memo(function Tile({
   entry,
   selected,
   leader,
-  buttonRef,
   onSelect,
   onOpen,
   onAdd,
@@ -220,7 +226,6 @@ const Tile = memo(function Tile({
 
   return (
     <button
-      ref={buttonRef}
       type="button"
       className={cx(styles.tile, selected && styles.selected, selected && leader && styles.leader, !usable && styles.unreadable)}
       {...entryProps(entry, { selected, onSelect, onOpen, onContextMenu })}

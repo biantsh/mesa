@@ -161,7 +161,7 @@ function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: Ba
   const copyButton = (what: "files" | "paths", noun: string, shortcut: string) => {
     const result = copy?.what === what ? copy : null;
     return (
-      <button type="button" className={styles.barButton} title={`Copy ${noun}${one ? "" : "s"} (${shortcut})`} onClick={() => copying(what)}>
+      <button type="button" className={styles.barButton} data-tooltip={`Copy ${noun}${one ? "" : "s"} (${shortcut})`} onClick={() => copying(what)}>
         <span className={styles.swap}>
           <span className={cx(result && styles.hidden)}>
             Copy {noun}
@@ -192,7 +192,7 @@ function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: Ba
         </span>
         <span className={styles.rule} aria-hidden />
         <Foldable shown={one}>
-          <button type="button" className={styles.barButton} title="Open" onClick={() => actions.open(shown[0])}>
+          <button type="button" className={styles.barButton} data-tooltip="Open" onClick={() => actions.open(shown[0])}>
             Open
           </button>
         </Foldable>
@@ -200,7 +200,7 @@ function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: Ba
           <button
             type="button"
             className={styles.barButton}
-            title={`Show in ${fileManager}`}
+            data-tooltip={`Show in ${fileManager}`}
             onClick={() => actions.showInFolder(shown[0])}
           >
             Show in {fileManager}
@@ -209,7 +209,7 @@ function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: Ba
         {copyButton("files", "file", shortcut("C"))}
         {copyButton("paths", "path", shortcut("C", true))}
         <span className={styles.rule} aria-hidden />
-        <button type="button" className={cx(styles.barButton, styles.clear)} onClick={onClear} aria-label="Clear selection" title={`Clear selection (${shortcut("A", true)})`}>
+        <button type="button" className={cx(styles.barButton, styles.clear)} onClick={onClear} aria-label="Clear selection" data-tooltip={`Clear selection (${shortcut("A", true)})`}>
           <X size={14} aria-hidden />
         </button>
       </div>
@@ -228,7 +228,7 @@ interface ResultProps {
 
 function Result({ hit, index, selected, onSelect, onOpen, onContextMenu }: ResultProps) {
   const Icon = CATEGORY_ICONS[hit.category];
-  const { wanted, loaded, onLoad, onError } = usePreview({ kind: "file", readable: true, category: hit.category });
+  const { wanted, loaded, onLoad, onError } = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
   return (
     <button
       type="button"

@@ -1,6 +1,7 @@
 import type { KeyboardEvent } from "react";
 import { NAV_KEYS, navigate, type NavKey } from "./navigation";
 import { scrollByKey } from "./scrollKeys";
+import { virtualViews } from "./virtual";
 
 interface Options<T> {
   items: readonly T[];
@@ -11,8 +12,19 @@ interface Options<T> {
 }
 
 export function focusItem(container: HTMLElement, path: string) {
-  const items = Array.from(container.querySelectorAll<HTMLElement>("[data-path]"));
-  items.find((item) => item.dataset.path === path)?.focus();
+  const find = () => Array.from(container.querySelectorAll<HTMLElement>("[data-path]")).find((item) => item.dataset.path === path);
+  const item = find();
+  if (item) return item.focus();
+  const virtual = virtualViews.get(container);
+  if (!virtual) return;
+  virtual.reveal(path);
+  let tries = 3;
+  const again = () => {
+    const made = find();
+    if (made) made.focus();
+    else if (--tries > 0) requestAnimationFrame(again);
+  };
+  requestAnimationFrame(again);
 }
 
 export function useArrowKeys<T extends { path: string }>({ items, selectable, active, columns, onMove }: Options<T>) {

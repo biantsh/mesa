@@ -34,9 +34,9 @@ export function isWheelTurn(deltaMode: number, wheelDeltaY: number | undefined, 
 
 function scrollingViewFrom(from: EventTarget | null, deltaY: number): HTMLElement | null {
   for (let el = from instanceof Element ? from : null; el; el = el.parentElement) {
-    if (!(el instanceof HTMLElement)) continue;
+    if (!(el instanceof HTMLElement) || el.scrollHeight <= el.clientHeight) continue;
     const overflow = getComputedStyle(el).overflowY;
-    if ((overflow !== "auto" && overflow !== "scroll") || el.scrollHeight <= el.clientHeight) continue;
+    if (overflow !== "auto" && overflow !== "scroll") continue;
     const atTop = el.scrollTop <= 0;
     const atBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - 1;
     if (deltaY < 0 ? !atTop : !atBottom) return el;

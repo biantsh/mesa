@@ -21,7 +21,6 @@ pub struct Parts {
 #[derive(Serialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    pub chosen: Option<Parts>,
     pub active: Option<Parts>,
 }
 
@@ -83,11 +82,8 @@ impl Hotkey {
         }
     }
 
-    pub fn status(&self, chosen: Option<&str>) -> Status {
+    pub fn status(&self) -> Status {
         Status {
-            chosen: chosen
-                .and_then(|text| parse(text).ok())
-                .map(|shortcut| parts(&shortcut)),
             active: lock(&self.inner).active.as_ref().map(parts),
         }
     }

@@ -81,12 +81,12 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
             }
         });
     #[cfg(target_os = "macos")]
-    if let Some(icon) = menu_bar_icon() {
+    let template = menu_bar_icon();
+    #[cfg(not(target_os = "macos"))]
+    let template: Option<tauri::image::Image<'static>> = None;
+    if let Some(icon) = template {
         tray = tray.icon(icon).icon_as_template(true);
-        tray.build(app)?;
-        return Ok(());
-    }
-    if let Some(icon) = app.default_window_icon() {
+    } else if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
@@ -145,6 +145,7 @@ fn main() {
                 widget::hide(window.app_handle());
             }
             (widget::LABEL, WindowEvent::Focused(false)) => widget::lost_focus(window.app_handle()),
+            (widget::LABEL, WindowEvent::Focused(true)) => widget::got_focus(),
             (_, WindowEvent::CloseRequested { api, .. }) => {
                 api.prevent_close();
                 main_window::closed(window);
@@ -178,6 +179,7 @@ fn main() {
                 widget::show_soon(app.handle());
             }
             main_window::set_up_dock(app);
+            main_window::watch_full_screen(app);
             widget::float_over_everything(app.handle());
             main_window::show_if_the_page_does_not(app);
             Ok(())

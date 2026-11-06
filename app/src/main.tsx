@@ -6,6 +6,7 @@ import { markPlatform } from "./platform";
 import { ready } from "./ready";
 import { smoothMouseWheel } from "./smoothWheel";
 import { guardAgainstStaleHover } from "./staleHover";
+import { installTooltips } from "./tooltip";
 import Widget from "./Widget";
 import { currentWindow, showWhenPainted } from "./window";
 import "@fontsource-variable/inter";
@@ -16,6 +17,7 @@ const isWidget = currentWindow()?.label === "widget";
 const Screen = isWidget ? Widget : App;
 if (!isWidget) markPlatform();
 guardAgainstStaleHover();
+installTooltips();
 smoothMouseWheel();
 
 ready().then(() => {

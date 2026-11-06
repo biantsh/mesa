@@ -1,4 +1,4 @@
-import { memo, useRef, type Ref } from "react";
+import { memo, useRef } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { previewUrl, type Entry } from "../api";
 import { cx } from "../cx";
@@ -6,7 +6,7 @@ import { formatModified, formatSize, typeLabel } from "../format";
 import type { Sort, SortColumn } from "../sort";
 import { useArrowKeys } from "../useArrowKeys";
 import { usePreview } from "../usePreview";
-import { useRevealOnMount } from "../useRevealOnMount";
+import { useVirtualRows } from "../virtual";
 import { EmptyFolder } from "./EmptyFolder";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
@@ -42,18 +42,22 @@ export const FileList = memo(function FileList({
     items: entries,
     selectable: (entry) => entry.readable,
     active,
-    columns: () => 1,
+    columns: oneColumn,
     onMove,
   });
 
-  const firstSelected = entries.find((entry) => selected.has(entry.path))?.path;
-  const selectedRow = useRef<HTMLButtonElement>(null);
-  useRevealOnMount(selectedRow);
+  const list = useRef<HTMLDivElement>(null);
+  const { start, end, before, after } = useVirtualRows(list, entries, {
+    selectable: isReadable,
+    columns: oneColumn,
+    reveal: entries.find((entry) => selected.has(entry.path))?.path ?? null,
+  });
 
   if (entries.length === 0 && !loading) return <EmptyFolder />;
 
   return (
     <div
+      ref={list}
       className={cx(styles.list, loading && styles.loading)}
       tabIndex={-1}
       data-scroller
@@ -67,21 +71,25 @@ export const FileList = memo(function FileList({
         <SortHeader column="size" label="Size" sort={sort} onSort={onSort} className={styles.size} />
         <SortHeader column="modified" label="Modified" sort={sort} onSort={onSort} />
       </div>
-      {entries.map((entry) => (
+      {before > 0 && <div style={{ height: before }} aria-hidden />}
+      {entries.slice(start, end).map((entry) => (
         <Row
           key={entry.path}
           entry={entry}
           selected={selected.has(entry.path)}
           leader={entry.path === active}
-          rowRef={entry.path === firstSelected ? selectedRow : undefined}
           onSelect={onSelect}
           onOpen={onOpen}
           onContextMenu={onContextMenu}
         />
       ))}
+      {after > 0 && <div style={{ height: after }} aria-hidden />}
     </div>
   );
 });
+
+const isReadable = (entry: Entry) => entry.readable;
+const oneColumn = () => 1;
 
 interface SortHeaderProps {
   column: SortColumn;
@@ -100,7 +108,7 @@ function SortHeader({ column, label, sort, onSort, className }: SortHeaderProps)
       type="button"
       className={cx(styles.sortButton, active && styles.sorted, className)}
       aria-pressed={active}
-      title={active ? `Sorted by ${label.toLowerCase()}, ${sort.direction === "asc" ? "ascending" : "descending"}` : `Sort by ${label.toLowerCase()}`}
+      data-tooltip={active ? `Sorted by ${label.toLowerCase()}, ${sort.direction === "asc" ? "ascending" : "descending"}` : `Sort by ${label.toLowerCase()}`}
       onClick={() => onSort(column)}
     >
       {column === "size" && arrow}
@@ -114,17 +122,15 @@ interface RowProps {
   entry: Entry;
   selected: boolean;
   leader: boolean;
-  rowRef?: Ref<HTMLButtonElement>;
   onSelect: (path: string, toggle: boolean, range?: boolean) => void;
   onOpen: (entry: Entry) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
 }
 
-const Row = memo(function Row({ entry, selected, leader, rowRef, onSelect, onOpen, onContextMenu }: RowProps) {
+const Row = memo(function Row({ entry, selected, leader, onSelect, onOpen, onContextMenu }: RowProps) {
   const { wanted, loaded, onLoad, onError } = usePreview(entry);
   return (
     <button
-      ref={rowRef}
       type="button"
       className={cx(styles.row, selected && styles.selected, selected && leader && styles.leader, !entry.readable && styles.unreadable)}
       {...entryProps(entry, { selected, onSelect, onOpen, onContextMenu })}

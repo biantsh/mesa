@@ -42,7 +42,7 @@ export function ViewToggle({ view, onChange }: Props) {
         className={cx(styles.button, view === "grid" && styles.selected)}
         aria-pressed={view === "grid"}
         aria-label="Grid view"
-        title="Grid view"
+        data-tooltip="Grid view"
         onClick={() => onChange("grid")}
       >
         <LayoutGrid size={16} strokeWidth={STROKE} aria-hidden />
@@ -52,7 +52,7 @@ export function ViewToggle({ view, onChange }: Props) {
         className={cx(styles.button, view === "list" && styles.selected)}
         aria-pressed={view === "list"}
         aria-label="List view"
-        title="List view"
+        data-tooltip="List view"
         onClick={() => onChange("list")}
       >
         <ListRows size={16} />

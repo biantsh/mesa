@@ -7,7 +7,6 @@ export function useSearchHotkey(open: boolean) {
   const [recording, setRecording] = useState(false);
   const [held, setHeld] = useState<Held>(NONE_HELD);
   const [refused, setRefused] = useState<string | null>(null);
-  const [hint, setHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const recordingRef = useRef(false);
@@ -43,7 +42,6 @@ export function useSearchHotkey(open: boolean) {
     setRecording(false);
     setHeld(NONE_HELD);
     setRefused(null);
-    setHint(null);
     if (was && !taken) api.endHotkeyRecording().catch(() => {});
     if (was) {
       justEnded.current = true;
@@ -59,7 +57,6 @@ export function useSearchHotkey(open: boolean) {
     setError(null);
     setHeld(NONE_HELD);
     setRefused(null);
-    setHint(null);
     setRecording(true);
     api.beginHotkeyRecording().catch(() => {});
   }, []);
@@ -84,7 +81,6 @@ export function useSearchHotkey(open: boolean) {
           const failure = hotkeyFailure(e);
           if (failure.kind === "invalid" && recordingRef.current) {
             setRefused(code);
-            setHint(failure.message);
           } else {
             finish(true);
             setError(failure.message);
@@ -111,7 +107,6 @@ export function useSearchHotkey(open: boolean) {
       if (isModifierCode(event.code)) {
         setHeld(now);
         setRefused(null);
-        setHint(null);
         return;
       }
       if (!anyHeld(now) && event.code === "Escape") return cancel();
@@ -150,13 +145,11 @@ export function useSearchHotkey(open: boolean) {
     recording,
     held,
     refused,
-    hint,
     error,
     saving,
     field,
     start,
     cancel,
-    reset,
     isRecording: () => recordingRef.current || justEnded.current,
   };
 }

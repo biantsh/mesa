@@ -1,7 +1,9 @@
 use std::{
-    panic,
-    sync::{Arc, Mutex, mpsc},
+    collections::{BTreeMap, HashMap},
+    fs, panic,
+    sync::{Arc, Condvar, Mutex, PoisonError},
     thread,
+    time::SystemTime,
 };
 
 use tauri::{
@@ -10,38 +12,141 @@ use tauri::{
 };
 
 const PREVIEW_SIZE: u32 = 256;
-
-type Job = (String, UriSchemeResponder);
+const CACHE_BYTES: usize = 128 * 1024 * 1024;
+type Job = (Key, UriSchemeResponder);
 
 pub struct PreviewServer {
-    jobs: mpsc::Sender<Job>,
+    jobs: Arc<Stack<Job>>,
+    cache: Arc<Mutex<Cache>>,
 }
 
 impl PreviewServer {
     pub fn start() -> Self {
-        let (jobs, queue) = mpsc::channel::<Job>();
-        let queue = Arc::new(Mutex::new(queue));
+        let jobs = Arc::new(Stack::<Job>::default());
+        let cache = Arc::new(Mutex::new(Cache::new(CACHE_BYTES)));
         let workers = thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
         for _ in 0..workers {
-            let queue = Arc::clone(&queue);
+            let jobs = Arc::clone(&jobs);
+            let cache = Arc::clone(&cache);
             thread::spawn(move || {
                 loop {
-                    let job = queue.lock().unwrap_or_else(|e| e.into_inner()).recv();
-                    let Ok((path, responder)) = job else { break };
-                    let preview = panic::catch_unwind(|| render(&path, PREVIEW_SIZE)).ok().flatten();
+                    let (key, responder) = jobs.pop();
+                    let preview = panic::catch_unwind(|| render(&key.0, PREVIEW_SIZE)).ok().flatten();
+                    if let Some(png) = &preview {
+                        cache
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .put(key, png.clone());
+                    }
                     responder.respond(response(preview));
                 }
             });
         }
-        Self { jobs }
+        Self { jobs, cache }
     }
 
     pub fn handle(&self, request: Request<Vec<u8>>, responder: UriSchemeResponder) {
-        match path_from_uri(request.uri().path()) {
-            Some(path) => {
-                let _ = self.jobs.send((path, responder));
+        let Some(path) = path_from_uri(request.uri().path()) else {
+            return responder.respond(response(None));
+        };
+        let changed = modified(&path);
+        let key = (path, changed);
+        let kept = self.cache.lock().unwrap_or_else(PoisonError::into_inner).get(&key);
+        match kept {
+            Some(png) => responder.respond(response(Some(png))),
+            None => self.jobs.push((key, responder)),
+        }
+    }
+}
+
+fn modified(path: &str) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+struct Stack<T> {
+    items: Mutex<Vec<T>>,
+    ready: Condvar,
+}
+
+impl<T> Default for Stack<T> {
+    fn default() -> Self {
+        Self {
+            items: Mutex::new(Vec::new()),
+            ready: Condvar::new(),
+        }
+    }
+}
+
+impl<T> Stack<T> {
+    fn push(&self, item: T) {
+        self.items.lock().unwrap_or_else(PoisonError::into_inner).push(item);
+        self.ready.notify_one();
+    }
+
+    fn pop(&self) -> T {
+        let mut items = self.items.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(item) = items.pop() {
+                return item;
             }
-            None => responder.respond(response(None)),
+            items = self.ready.wait(items).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+type Key = (String, Option<SystemTime>);
+
+struct Cache {
+    limit: usize,
+    bytes: usize,
+    entries: HashMap<Key, (Vec<u8>, u64)>,
+    order: BTreeMap<u64, Key>,
+    clock: u64,
+}
+
+impl Cache {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            bytes: 0,
+            entries: HashMap::new(),
+            order: BTreeMap::new(),
+            clock: 0,
+        }
+    }
+
+    fn tick(&mut self) -> u64 {
+        self.clock += 1;
+        self.clock
+    }
+
+    fn get(&mut self, key: &Key) -> Option<Vec<u8>> {
+        let now = self.tick();
+        let (png, asked) = self.entries.get_mut(key)?;
+        self.order.remove(asked);
+        *asked = now;
+        self.order.insert(now, key.clone());
+        Some(png.clone())
+    }
+
+    fn put(&mut self, key: Key, png: Vec<u8>) {
+        if png.len() > self.limit {
+            return;
+        }
+        let now = self.tick();
+        self.bytes += png.len();
+        if let Some((old, asked)) = self.entries.insert(key.clone(), (png, now)) {
+            self.bytes -= old.len();
+            self.order.remove(&asked);
+        }
+        self.order.insert(now, key);
+        while self.bytes > self.limit {
+            let Some((_, oldest)) = self.order.pop_first() else {
+                break;
+            };
+            if let Some((png, _)) = self.entries.remove(&oldest) {
+                self.bytes -= png.len();
+            }
         }
     }
 }
@@ -271,5 +376,22 @@ mod tests {
             path_from_uri("/%2Fhome%2Fme%2Fa.png").as_deref(),
             Some("/home/me/a.png")
         );
+    }
+
+    fn key(name: &str) -> Key {
+        (name.to_owned(), None)
+    }
+
+    #[test]
+    fn cache_evicts_least_recently_used() {
+        let mut cache = Cache::new(10);
+        cache.put(key("a"), vec![0; 4]);
+        cache.put(key("b"), vec![0; 4]);
+        assert!(cache.get(&key("a")).is_some());
+        cache.put(key("c"), vec![0; 4]);
+        assert!(cache.get(&key("b")).is_none());
+        assert!(cache.get(&key("a")).is_some());
+        assert!(cache.get(&key("c")).is_some());
+        assert_eq!(cache.bytes, 8);
     }
 }

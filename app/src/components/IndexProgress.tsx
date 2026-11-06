@@ -79,7 +79,7 @@ export function Label({ progress: { name, queued, updating } }: { progress: Prog
   return (
     <span
       className={styles.label}
-      title={`${updating ? "Updating" : "Indexing"} ${quoted(name)}${queued > 0 ? ` + ${queued}` : ""}`}
+      data-tooltip={`${updating ? "Updating" : "Indexing"} ${quoted(name)}${queued > 0 ? ` + ${queued}` : ""}`}
     >
       <span className={styles.name}>{name}</span>
       {queued > 0 && <span className={styles.fixed}>{`\u00a0+\u00a0${queued}`}</span>}
@@ -149,7 +149,7 @@ export function Bar({ progress }: { progress: Progress }) {
       aria-valuemax={determinate ? total : undefined}
       aria-valuenow={determinate ? done : undefined}
       aria-valuetext={determinate ? `${percent}%, ${done} of ${total} files` : "Finding files"}
-      title={determinate ? `${percent}% \u00b7 ${number.format(done)} of ${number.format(total)} files` : undefined}
+      data-tooltip={determinate ? `${percent}% \u00b7 ${number.format(done)} of ${number.format(total)} files` : undefined}
     >
       <div className={styles.fill} style={{ width: determinate ? `${percent}%` : paused ? "100%" : "0%" }} />
       <div className={cx(styles.searching, (determinate || paused) && styles.searchingGone)} />

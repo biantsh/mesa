@@ -10,7 +10,7 @@ import { IndexScreen } from "./screens/IndexScreen";
 import { api, type ModelStatus } from "./api";
 import { startup } from "./ready";
 import { useIndexOverview } from "./useIndexOverview";
-import { useMaximized } from "./useMaximized";
+import { useFullscreen, useMaximized } from "./useMaximized";
 import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
 import { useModelStatus } from "./useModelStatus";
@@ -33,6 +33,7 @@ export default function App() {
   const onIndex = screen === "index";
   const dimmed = querying && !onIndex;
   const maximized = useMaximized();
+  useFullscreen();
   const overview = useIndexOverview(!onIndex);
   const model = useModelStatus();
   const [setup, setSetup] = useState<"off" | "on" | "leaving">(needsSetup(startup.modelStatus) ? "on" : "off");

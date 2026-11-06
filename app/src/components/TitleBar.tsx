@@ -57,19 +57,19 @@ export function TitleBar({ maximized }: { maximized: boolean }) {
         {version && <span className={styles.version}>v{version}</span>}
       </span>
       {!isMac && <div className={styles.controls}>
-        <button type="button" className={styles.control} aria-label="Minimize" title="Minimize" onClick={windowControls.minimize}>
+        <button type="button" className={styles.control} aria-label="Minimize" data-tooltip="Minimize" onClick={windowControls.minimize}>
           <Minus size={15} aria-hidden />
         </button>
         <button
           type="button"
           className={styles.control}
           aria-label={maximized ? "Restore" : "Maximize"}
-          title={maximized ? "Restore" : "Maximize"}
+          data-tooltip={maximized ? "Restore" : "Maximize"}
           onClick={windowControls.toggleMaximize}
         >
           {maximized ? <Copy size={13} aria-hidden /> : <Square size={12} aria-hidden />}
         </button>
-        <button type="button" className={cx(styles.control, styles.close)} aria-label="Close" title="Close" onClick={windowControls.close}>
+        <button type="button" className={cx(styles.control, styles.close)} aria-label="Close" data-tooltip="Close" onClick={windowControls.close}>
           <X size={16} aria-hidden />
         </button>
       </div>}

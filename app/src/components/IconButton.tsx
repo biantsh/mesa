@@ -13,7 +13,7 @@ export function IconButton({ label, tone = "neutral", className, type = "button"
     <button
       type={type}
       className={cx(styles.button, tone === "danger" && styles.danger, className)}
-      title={label}
+      data-tooltip={label}
       aria-label={label}
       {...rest}
     >

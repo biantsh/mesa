@@ -85,3 +85,60 @@ button {
     transition-duration: 0.001ms !important;
   }
 }
+
+.mesa-tooltip {
+  --tip-from: -4px;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  max-width: min(420px, calc(100vw - 16px));
+  padding: 5px 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  box-shadow: var(--shadow-menu);
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(var(--tip-from)) scale(0.97);
+  transform-origin: var(--tip-origin, 50%) top;
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.mesa-tooltip[data-side="above"] {
+  --tip-from: 4px;
+  transform-origin: var(--tip-origin, 50%) bottom;
+}
+
+.mesa-tooltip[data-shown] {
+  opacity: 1;
+  transform: none;
+}
+
+.mesa-tooltip[data-instant] {
+  transition: none;
+}
+
+.mesa-tooltip[data-leaving] {
+  opacity: 0;
+  transform: none;
+  transition: opacity 80ms ease-in;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mesa-tooltip {
+    transform: none;
+    transition: none;
+  }
+}

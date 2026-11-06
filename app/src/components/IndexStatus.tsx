@@ -39,7 +39,7 @@ export function IndexStatus({ overview, onOpenIndex, attention, raised = false }
     content = (
       <button key="progress" type="button" className={cx(styles.progress, raised && styles.raised)}
         onMouseDown={raised ? (e) => e.preventDefault() : undefined}
-        onClick={onOpenIndex} title="Show the index">
+        onClick={onOpenIndex} data-tooltip="Show the index">
         <Label progress={progress} />
         <Bar progress={progress} />
         {text && <span className={styles.count}>{text}</span>}

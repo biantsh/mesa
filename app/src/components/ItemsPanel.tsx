@@ -216,7 +216,7 @@ export const ItemsPanel = memo(function ItemsPanel({
             type="button"
             className={styles.toggle}
             aria-expanded={false}
-            title={`Show ${title.toLowerCase()}`}
+            data-tooltip={`Show ${title.toLowerCase()}`}
             onClick={() => {
               onExpand();
               card.current?.focus({ preventScroll: true });

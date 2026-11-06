@@ -181,7 +181,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || e.nativeEvent.isComposing) return;
     if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "PageUp" && e.key !== "PageDown") return;
     const pane = resultsPane.current;
-    if (query.trim() !== "" && pane && scrollByKey(pane, e.key, e.repeat)) e.preventDefault();
+    if (results && pane && scrollByKey(pane, e.key, e.repeat)) e.preventDefault();
   };
   const actions = useRef<HTMLDivElement>(null);
   const row = useRef<HTMLDivElement>(null);
@@ -195,6 +195,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const results = query.trim() !== "";
   const dim = focused && !results;
   const engaged = focused || results;
+  const [fieldHasBeenFocused, setFieldHasBeenFocused] = useState(false);
+  if (focused && !fieldHasBeenFocused) setFieldHasBeenFocused(true);
+  const opening = asWidget && !blocked && !fieldHasBeenFocused;
   const refuse = useCallback(() => setAttention((count) => count + 1), []);
   const text = understood.text.trim();
   const fileType = understood.fileType;
@@ -405,7 +408,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   return (
     <main
       ref={home}
-      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed, blocked && styles.blocked, asWidget && styles.asWidget, overview?.progress != null && styles.indexing)}
+      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed, blocked && styles.blocked, asWidget && styles.asWidget, opening && styles.opening, overview?.progress != null && styles.indexing)}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         if (!target.closest(`button, input, label, [role='menu'], [data-selection-bar], .${styles.tagsBox}`)) clearSelection();
@@ -471,7 +474,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               className={styles.input}
               type="text"
               placeholder={placeholder(model, blocked)}
-              title={model?.state === "failed" ? model.reason : undefined}
+              data-tooltip={model?.state === "failed" ? model.reason : undefined}
               aria-label="Search"
               readOnly={blocked}
               aria-disabled={blocked || undefined}
@@ -485,7 +488,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               autoComplete="off"
             />
             {query !== "" && (
-              <button type="button" className={styles.clear} aria-label="Clear search" title="Clear (Esc)" onClick={leave}>
+              <button type="button" className={styles.clear} aria-label="Clear search" data-tooltip="Clear (Esc)" onClick={leave}>
                 <X size={16} aria-hidden />
               </button>
             )}
@@ -509,7 +512,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               variant="neutral"
               className={styles.iconOnly}
               onClick={onOpenSettings}
-              title="Settings"
+              data-tooltip="Settings"
               aria-label="Settings"
             >
               <Settings size={18} aria-hidden />

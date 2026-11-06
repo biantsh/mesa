@@ -16,14 +16,14 @@ interface Props {
   refusedLast: boolean;
   prompt: string;
   label: string;
-  title: string;
+  tooltip: string;
   describedBy?: string;
   disabled?: boolean;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   ref?: Ref<HTMLButtonElement>;
 }
 
-export function ShortcutField({ listening, children, live, refusedLast, prompt, label, title, describedBy, disabled, onClick, ref }: Props) {
+export function ShortcutField({ listening, children, live, refusedLast, prompt, label, tooltip, describedBy, disabled, onClick, ref }: Props) {
   const view: View = !listening ? "idle" : live.length > 0 ? "live" : "prompt";
   const idle = useRef<HTMLSpanElement>(null);
   const asking = useRef<HTMLSpanElement>(null);
@@ -74,9 +74,9 @@ export function ShortcutField({ listening, children, live, refusedLast, prompt, 
   if (size) {
     const width = size.width + 2 * pad;
     const height = size.height + 2 * pad;
-    const gap = row ? (row.height - height) / 2 : null;
-    const right = listening && row && gap !== null ? gap - row.paddingRight : 0;
-    style = { width, height, margin: `${(ROW_HEIGHT - height) / 2}px ${right}px ${(ROW_HEIGHT - height) / 2}px 0` };
+    const vertical = (ROW_HEIGHT - height) / 2;
+    const right = listening && row ? (row.height - height) / 2 - row.paddingRight : 0;
+    style = { width, height, margin: `${vertical}px ${right}px ${vertical}px 0` };
   }
 
   return (
@@ -89,7 +89,7 @@ export function ShortcutField({ listening, children, live, refusedLast, prompt, 
       aria-label={label}
       aria-describedby={describedBy}
       aria-pressed={listening}
-      title={title}
+      data-tooltip={tooltip}
       onClick={onClick}
     >
       <span className={styles.clip}>

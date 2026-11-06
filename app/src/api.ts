@@ -92,7 +92,6 @@ export interface HotkeyParts {
 }
 
 export interface HotkeyStatus {
-  chosen: HotkeyParts | null;
   active: HotkeyParts | null;
 }
 

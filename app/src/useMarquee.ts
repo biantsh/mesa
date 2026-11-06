@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent 
 import { areaOf, boxBetween, intersect, touching, type Box, type Placed } from "./marquee";
 import { scrollSmoothly } from "./scrollKeys";
 import { useLatest } from "./useLatest";
+import { virtualViews } from "./virtual";
 
 export interface MarqueeHandlers {
   begin: (additive: boolean) => void;
@@ -80,6 +81,8 @@ export function useMarquee({ regions, onBackground }: Options) {
     };
 
     const place = (view: HTMLElement): Placed[] => {
+      const virtual = virtualViews.get(view);
+      if (virtual) return virtual.place();
       const origin = originOf(view);
       return Array.from(view.querySelectorAll<HTMLElement>("[data-path]"))
         .filter((el) => el.getAttribute("aria-disabled") !== "true")

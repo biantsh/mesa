@@ -1,9 +1,9 @@
 use std::{
     sync::{
         Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(not(target_os = "macos"))]
@@ -16,9 +16,9 @@ pub const LABEL: &str = "widget";
 const SHOWN_EVENT: &str = "widget-shown";
 const HIDDEN_EVENT: &str = "widget-hidden";
 const FOCUS_SEARCH_EVENT: &str = "focus-search";
-const BLUR_GRACE: Duration = Duration::from_millis(400);
+static HAS_HAD_FOCUS: AtomicBool = AtomicBool::new(false);
 const TOP_AT: f64 = 0.14;
-static SHOWN_AT: Mutex<Option<Instant>> = Mutex::new(None);
+static SHOWN: AtomicBool = AtomicBool::new(false);
 static VISIBLE: Mutex<Option<[f64; 4]>> = Mutex::new(None);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 const WATCH_EVERY: Duration = Duration::from_millis(16);
@@ -79,7 +79,7 @@ pub fn float_over_everything(app: &AppHandle) {
 }
 
 pub fn toggle(app: &AppHandle) {
-    if lock(&SHOWN_AT).is_some() {
+    if SHOWN.load(Ordering::SeqCst) {
         hide(app);
     } else if main_window_is_in_front(app) {
         let _ = app.emit_to("main", FOCUS_SEARCH_EVENT, ());
@@ -101,7 +101,8 @@ pub fn show(app: &AppHandle) {
         return;
     };
     place(app, &window);
-    *lock(&SHOWN_AT) = Some(Instant::now());
+    SHOWN.store(true, Ordering::SeqCst);
+    HAS_HAD_FOCUS.store(false, Ordering::SeqCst);
     *lock(&VISIBLE) = None;
     let _ = window.set_ignore_cursor_events(false);
     let _ = window.show();
@@ -113,7 +114,7 @@ pub fn show(app: &AppHandle) {
 }
 
 pub fn hide(app: &AppHandle) {
-    *lock(&SHOWN_AT) = None;
+    SHOWN.store(false, Ordering::SeqCst);
     WATCH.fetch_add(1, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.set_ignore_cursor_events(false);
@@ -122,9 +123,12 @@ pub fn hide(app: &AppHandle) {
     let _ = app.emit_to(LABEL, HIDDEN_EVENT, ());
 }
 
+pub fn got_focus() {
+    HAS_HAD_FOCUS.store(true, Ordering::SeqCst);
+}
+
 pub fn lost_focus(app: &AppHandle) {
-    let settled = lock(&SHOWN_AT).is_some_and(|at| at.elapsed() >= BLUR_GRACE);
-    if settled {
+    if SHOWN.load(Ordering::SeqCst) && HAS_HAD_FOCUS.load(Ordering::SeqCst) {
         hide(app);
     }
 }

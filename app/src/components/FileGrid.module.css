@@ -19,6 +19,10 @@
   opacity: 0.55;
 }
 
+.space {
+  grid-column: 1 / -1;
+}
+
 .tile {
   scroll-margin: 12px;
   display: flex;

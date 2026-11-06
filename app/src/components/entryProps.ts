@@ -17,10 +17,10 @@ export function pressProps<T extends { path: string }>(item: T, usable: boolean,
     "data-path": item.path,
     onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
       const clips = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("[data-clip]"));
-      if (clips.length === 0 || clips.some(isCut)) e.currentTarget.setAttribute("title", title);
-      else e.currentTarget.removeAttribute("title");
+      if (clips.length === 0 || clips.some(isCut)) e.currentTarget.dataset.tooltip = title;
+      else delete e.currentTarget.dataset.tooltip;
     },
-    onMouseLeave: (e: React.MouseEvent<HTMLElement>) => e.currentTarget.removeAttribute("title"),
+    onMouseLeave: (e: React.MouseEvent<HTMLElement>) => delete e.currentTarget.dataset.tooltip,
     "aria-pressed": usable ? selected : undefined,
     "aria-disabled": usable ? undefined : true,
     onClick: (e: React.MouseEvent) => usable && onSelect(item.path, e.ctrlKey || e.metaKey, e.shiftKey),

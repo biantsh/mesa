@@ -38,6 +38,47 @@ fn dock_icon(app: &AppHandle, shown: bool) {
     let _ = (app, shown);
 }
 
+const FULL_SCREEN_EVENT: &str = "full-screen";
+
+pub fn watch_full_screen(app: &tauri::App) {
+    #[cfg(target_os = "macos")]
+    if let Some(window) = app.get_webview_window("main") {
+        let on_window = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            use objc2_app_kit::{
+                NSWindow, NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification,
+                NSWindowWillEnterFullScreenNotification, NSWindowWillExitFullScreenNotification,
+            };
+            use objc2_foundation::{NSNotification, NSNotificationCenter};
+            use std::ptr::NonNull;
+
+            let Ok(pointer) = on_window.ns_window() else { return };
+            let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+            let center = NSNotificationCenter::defaultCenter();
+            let names = unsafe {
+                [
+                    (NSWindowWillEnterFullScreenNotification, true),
+                    (NSWindowWillExitFullScreenNotification, false),
+                    (NSWindowDidEnterFullScreenNotification, true),
+                    (NSWindowDidExitFullScreenNotification, false),
+                ]
+            };
+            for (name, full_screen) in names {
+                let app = on_window.app_handle().clone();
+                let told = block2::RcBlock::new(move |_: NonNull<NSNotification>| {
+                    let _ = app.emit_to("main", FULL_SCREEN_EVENT, full_screen);
+                });
+                let observer = unsafe {
+                    center.addObserverForName_object_queue_usingBlock(Some(name), Some(ns_window), None, &told)
+                };
+                std::mem::forget(observer);
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
 pub fn set_up_dock(app: &mut tauri::App) {
     #[cfg(target_os = "macos")]
     if KEEP_HIDDEN.load(Ordering::SeqCst) {
