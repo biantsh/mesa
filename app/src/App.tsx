@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
@@ -15,6 +16,7 @@ import { useModelStatus } from "./useModelStatus";
 import styles from "./App.module.css";
 
 type Screen = "home" | "index";
+const FROM_WIDGET_MS = 450;
 const SETUP_FADE_MS = 300;
 
 function needsSetup(status: ModelStatus | null): boolean {
@@ -62,12 +64,33 @@ export default function App() {
     (onIndex ? index : home).current?.focus({ preventScroll: true });
   }, [onIndex]);
 
+  const [fromWidget, setFromWidget] = useState(false);
+  const fromWidgetTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(fromWidgetTimer.current), []);
   useTauriEvent<string>("navigate", (screen) => {
-    if (screen === "index") setScreen("index");
-    else if (screen === "settings") {
-      setScreen("home");
-      setSettingsOpen(true);
-    }
+    flushSync(() => {
+      if (screen === "index") {
+        setFromWidget(true);
+        setScreen("index");
+      } else if (screen === "settings") {
+        setScreen("home");
+        setSettingsOpen(true);
+      }
+    });
+    window.clearTimeout(fromWidgetTimer.current);
+    fromWidgetTimer.current = window.setTimeout(() => setFromWidget(false), FROM_WIDGET_MS);
+    void api.showMain().catch(() => {});
+  });
+
+  useTauriEvent("focus-search", () => {
+    setScreen("home");
+    setSettingsOpen(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => homeScreen.current?.focusField()));
+  });
+
+  useTauriEvent("main-hidden", () => {
+    setScreen("home");
+    setSettingsOpen(false);
   });
 
   useBlockContextMenu();
@@ -99,7 +122,7 @@ export default function App() {
         <TitleBar maximized={maximized} />
         <div className={cx(styles.titleDim, dimmed && styles.dimmed)} aria-hidden />
       </div>
-      <div className={styles.screens}>
+      <div className={cx(styles.screens, fromWidget && styles.fromWidget)}>
         <div
           ref={home}
           className={cx(styles.pane, onIndex && styles.before)}
@@ -118,7 +141,7 @@ export default function App() {
         </div>
         <div
           ref={index}
-          className={cx(styles.pane, !onIndex && styles.after)}
+          className={cx(styles.pane, !onIndex && styles.after, onIndex && fromWidget && styles.arrive)}
           tabIndex={-1}
           inert={!onIndex || covered}
         >

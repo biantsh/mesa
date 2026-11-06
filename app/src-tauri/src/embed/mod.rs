@@ -92,30 +92,12 @@ pub trait Embedder: Send + Sync {
 }
 
 pub fn for_this_platform(data_dir: &Path, resource_dir: Option<&Path>, device: Device) -> Arc<dyn Embedder> {
-    #[cfg(windows)]
-    {
-        let mut server = llama::LlamaServer::new(Locations::new(data_dir, resource_dir));
-        if std::env::var_os("MESA_MODELS_DIR").is_none_or(|dir| dir.is_empty()) {
-            server = server.download_from(model::SOURCE);
-        }
-        server.choose_device(device);
-        Arc::new(Pipeline::new(server))
+    let mut server = llama::LlamaServer::new(Locations::new(data_dir, resource_dir));
+    if std::env::var_os("MESA_MODELS_DIR").is_none_or(|dir| dir.is_empty()) {
+        server = server.download_from(model::SOURCE);
     }
-    #[cfg(not(windows))]
-    {
-        let _ = (data_dir, resource_dir, device);
-        Arc::new(Unavailable)
-    }
-}
-
-#[cfg(not(windows))]
-struct Unavailable;
-
-#[cfg(not(windows))]
-impl Embedder for Unavailable {
-    fn embed(&self, _: &[Item], _: &(dyn Fn() -> bool + Sync), _: &mut dyn FnMut(usize, Outcome)) -> Result<(), Error> {
-        Err(Error("Embedding isn't available on this platform yet.".into()))
-    }
+    server.choose_device(device);
+    Arc::new(Pipeline::new(server))
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 import type { SearchHit } from "./api";
 import type { MenuItem } from "./components/ContextMenu";
+import { fileManager } from "./platform";
 
 export interface ResultActions {
   open: (hit: SearchHit) => void;
@@ -17,7 +18,7 @@ export function resultMenuGroups(hits: SearchHit[], actions: ResultActions): Men
       : [
           [
             { label: "Open", onSelect: () => actions.open(only) },
-            { label: "Show in File Explorer", onSelect: () => actions.showInFolder(only) },
+            { label: `Show in ${fileManager}`, onSelect: () => actions.showInFolder(only) },
           ],
         ]),
     [

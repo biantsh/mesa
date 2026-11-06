@@ -8,6 +8,7 @@ import { useForwardedWheel } from "../useForwardedWheel";
 import { usePreview } from "../usePreview";
 import { pressProps } from "./entryProps";
 import styles from "./ResultGrid.module.css";
+import { fileManager, shortcut } from "../platform";
 
 export const CATEGORY_ICONS: Record<Category, ComponentType<LucideProps>> = {
   image: ImageIcon,
@@ -199,16 +200,16 @@ function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: Ba
           <button
             type="button"
             className={styles.barButton}
-            title="Show in File Explorer"
+            title={`Show in ${fileManager}`}
             onClick={() => actions.showInFolder(shown[0])}
           >
-            Show in File Explorer
+            Show in {fileManager}
           </button>
         </Foldable>
-        {copyButton("files", "file", "Ctrl+C")}
-        {copyButton("paths", "path", "Ctrl+Shift+C")}
+        {copyButton("files", "file", shortcut("C"))}
+        {copyButton("paths", "path", shortcut("C", true))}
         <span className={styles.rule} aria-hidden />
-        <button type="button" className={cx(styles.barButton, styles.clear)} onClick={onClear} aria-label="Clear selection" title="Clear selection (Ctrl+Shift+A)">
+        <button type="button" className={cx(styles.barButton, styles.clear)} onClick={onClear} aria-label="Clear selection" title={`Clear selection (${shortcut("A", true)})`}>
           <X size={14} aria-hidden />
         </button>
       </div>

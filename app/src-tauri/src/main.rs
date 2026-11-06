@@ -25,24 +25,53 @@ mod widget;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 
+const HIDDEN_EVENT: &str = "main-hidden";
 pub static KEEP_HIDDEN: AtomicBool = AtomicBool::new(false);
 
 pub fn bring_up(window: &tauri::WebviewWindow) {
+    if RESET_ON_SHOW.swap(false, Ordering::SeqCst) {
+        reset_window(window);
+    }
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
 }
 
+static SHOWN_ONCE: AtomicBool = AtomicBool::new(false);
+
+pub fn show_at_start(window: &tauri::WebviewWindow) {
+    if !KEEP_HIDDEN.load(Ordering::SeqCst) && !SHOWN_ONCE.swap(true, Ordering::SeqCst) {
+        bring_up(window);
+    }
+}
+
 fn show_window(app: &tauri::AppHandle) {
     KEEP_HIDDEN.store(false, Ordering::SeqCst);
+    SHOWN_ONCE.store(true, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window("main") {
         bring_up(&window);
     }
+}
+
+static RESET_ON_SHOW: AtomicBool = AtomicBool::new(false);
+
+fn reset_window(window: &tauri::WebviewWindow) {
+    let _ = window.unmaximize();
+    let config = window.app_handle().config();
+    if let Some(first) = config
+        .app
+        .windows
+        .iter()
+        .find(|configured| configured.label == window.label())
+    {
+        let _ = window.set_size(tauri::LogicalSize::new(first.width, first.height));
+    }
+    let _ = window.center();
 }
 
 fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()> {
@@ -93,9 +122,7 @@ fn show_window_if_the_page_does_not(app: &tauri::App) {
     };
     std::thread::spawn(move || {
         std::thread::sleep(GIVE_UP);
-        if !KEEP_HIDDEN.load(Ordering::SeqCst) {
-            bring_up(&window);
-        }
+        show_at_start(&window);
     });
 }
 
@@ -135,6 +162,8 @@ fn main() {
                 api.prevent_close();
                 KEEP_HIDDEN.store(true, Ordering::SeqCst);
                 let _ = window.hide();
+                RESET_ON_SHOW.store(true, Ordering::SeqCst);
+                let _ = window.emit_to(window.label(), HIDDEN_EVENT, ());
             }
             _ => {}
         })
@@ -201,6 +230,8 @@ fn main() {
             commands::page_painted,
             commands::hide_widget,
             commands::open_main,
+            commands::show_main,
+            commands::set_widget_box,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

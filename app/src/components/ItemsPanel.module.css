@@ -126,6 +126,21 @@ div.toggle {
   animation-delay: 290ms;
 }
 
+.arriving > span {
+  animation-delay: max(0ms, calc(var(--slide-time, 400ms) * 0.7 - var(--arrival-late, 0ms)));
+}
+
+.arriving > span + span {
+  animation-delay: calc(max(0ms, calc(var(--slide-time, 400ms) * 0.7 - var(--arrival-late, 0ms))) + 70ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arriving > span,
+  .arriving > span + span {
+    animation-delay: 0s;
+  }
+}
+
 .collapsed > .empty {
   opacity: 0;
   transition: visibility 0s linear 280ms, opacity 100ms ease;

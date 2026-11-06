@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { X } from "lucide-react";
 import type { Listed } from "../api";
 import { cx } from "../cx";
@@ -10,6 +10,11 @@ import { useArrowKeys } from "../useArrowKeys";
 import { IconButton } from "./IconButton";
 import { StatusBadge } from "./StatusBadge";
 import styles from "./ItemsPanel.module.css";
+
+export interface Arrival {
+  playing: boolean;
+  late: number;
+}
 
 interface Props {
   title: string;
@@ -30,6 +35,7 @@ interface Props {
   collapsed: boolean;
   onExpand?: () => void;
   animate: boolean;
+  arrival: Arrival | null;
   region: string;
 }
 
@@ -137,6 +143,7 @@ export const ItemsPanel = memo(function ItemsPanel({
   collapsed,
   onExpand,
   animate,
+  arrival,
   region,
 }: Props) {
   const chosen = items.filter((item) => selected.has(item.path));
@@ -195,9 +202,9 @@ export const ItemsPanel = memo(function ItemsPanel({
       tabIndex={-1}
       className={cx(styles.panel, collapsed && styles.collapsed, animate && styles.animate)}
       aria-label={title}
-      data-own-keys
+      data-own-keys={items.length > 0 ? "" : undefined}
       onKeyDown={(e) => {
-        if (collapsed) return;
+        if (collapsed || items.length === 0) return;
         if (e.key === "Delete" && !e.ctrlKey && !e.metaKey && chosen.length > 0) {
           e.preventDefault();
           onRemove(chosen);
@@ -239,8 +246,9 @@ export const ItemsPanel = memo(function ItemsPanel({
 
       {shown.length === 0 ? (
         <div
-          key={justOpened ? "opened" : "there"}
-          className={cx(styles.empty, justOpened && styles.afterRows)}
+          key={justOpened ? "opened" : arrival ? "arrived" : "there"}
+          className={cx(styles.empty, justOpened ? styles.afterRows : arrival?.playing && styles.arriving)}
+          style={arrival?.playing ? ({ "--arrival-late": `${arrival.late}ms` } as CSSProperties) : undefined}
           inert={collapsed}
         >
           <span>{empty}</span>

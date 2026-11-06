@@ -389,10 +389,16 @@ fn free_space(dir: &Path) -> Option<u64> {
         unsafe { GetDiskFreeSpaceExW(&path, Some(&mut free), None, None) }.ok()?;
         Some(free)
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        let _ = dir;
-        None
+        use std::{ffi::CString, mem::MaybeUninit, os::unix::ffi::OsStrExt};
+        let path = CString::new(dir.as_os_str().as_bytes()).ok()?;
+        let mut stats = MaybeUninit::<libc::statvfs>::uninit();
+        if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        let stats = unsafe { stats.assume_init() };
+        Some(u64::from(stats.f_bavail).saturating_mul(u64::from(stats.f_frsize)))
     }
 }
 

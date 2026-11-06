@@ -13,6 +13,7 @@ export function currentWindow(): Window | null {
 export const windowControls = {
   minimize: () => void currentWindow()?.minimize().catch(() => {}),
   toggleMaximize: () => void currentWindow()?.toggleMaximize().catch(() => {}),
+  startDragging: () => void currentWindow()?.startDragging().catch(() => {}),
   close: () => void currentWindow()?.close().catch(() => {}),
 };
 

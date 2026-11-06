@@ -68,6 +68,23 @@
   transform: translateX(100%);
 }
 
+.fromWidget .pane,
+.fromWidget .before,
+.fromWidget .after {
+  transition: none;
+}
+
+.arrive {
+  animation: arrive 260ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+@keyframes arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .window,
   .titleDim {

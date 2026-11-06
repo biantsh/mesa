@@ -132,6 +132,11 @@
   transition: var(--widget-box-moves), opacity 0s linear var(--focus-time);
 }
 
+.asWidget.blocked .spot {
+  right: var(--inset);
+  height: calc(var(--field-height) + 6px + 36px - 8px - 2 * var(--inset));
+}
+
 .asWidget.results .spot {
   left: var(--inset);
   right: var(--inset);

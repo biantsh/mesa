@@ -2,6 +2,7 @@ import type { Entry } from "./api";
 import type { MenuItem } from "./components/ContextMenu";
 import { counted } from "./menuTargets";
 import type { IndexActions } from "./useIndexActions";
+import { fileManager } from "./platform";
 
 export function menuGroups(
   targets: Entry[],
@@ -17,7 +18,7 @@ export function menuGroups(
       : [
           [
             { label: "Open", onSelect: () => open(only) },
-            ...(only.kind === "drive" ? [] : [{ label: "Show in File Explorer", onSelect: () => showInFolder(only) }]),
+            ...(only.kind === "drive" ? [] : [{ label: `Show in ${fileManager}`, onSelect: () => showInFolder(only) }]),
           ],
         ]),
     [

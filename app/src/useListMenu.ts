@@ -5,6 +5,7 @@ import { counted } from "./menuTargets";
 import type { ListSelection } from "./usePageSelection";
 import type { ListName } from "./usePanelLayout";
 import { useLatest } from "./useLatest";
+import { fileManager } from "./platform";
 
 interface ListMenuState {
   list: ListName;
@@ -52,7 +53,7 @@ export function useListMenu({ indexed, excluded, listSelection, selectInList, op
         : [
             [
               { label: "Open", onSelect: () => openListed(only) },
-              ...(only.kind === "drive" ? [] : [{ label: "Show in File Explorer", disabled: only.missing, onSelect: () => showInFolder(only) }]),
+              ...(only.kind === "drive" ? [] : [{ label: `Show in ${fileManager}`, disabled: only.missing, onSelect: () => showInFolder(only) }]),
             ],
           ]),
       [

@@ -371,8 +371,8 @@ pub fn set_turbo_indexing(
 
 #[tauri::command]
 pub fn page_painted(window: tauri::WebviewWindow) {
-    if window.label() == "main" && !crate::KEEP_HIDDEN.load(std::sync::atomic::Ordering::SeqCst) {
-        crate::bring_up(&window);
+    if window.label() == "main" {
+        crate::show_at_start(&window);
     }
 }
 
@@ -381,9 +381,32 @@ pub fn hide_widget(app: AppHandle) {
     crate::widget::hide(&app);
 }
 
+static OPENING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const OPENING_GIVE_UP: std::time::Duration = std::time::Duration::from_millis(600);
+
 #[tauri::command]
 pub fn open_main(app: AppHandle, screen: String) {
     crate::widget::hide(&app);
-    crate::show_window(&app);
+    OPENING.store(true, std::sync::atomic::Ordering::SeqCst);
     let _ = app.emit_to("main", "navigate", screen);
+    std::thread::spawn(move || {
+        std::thread::sleep(OPENING_GIVE_UP);
+        if OPENING.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            crate::show_window(&app);
+        }
+    });
+}
+
+#[tauri::command]
+pub fn set_widget_box(window: tauri::WebviewWindow, left: f64, top: f64, right: f64, bottom: f64) {
+    if window.label() == crate::widget::LABEL {
+        crate::widget::set_visible_box([left, top, right, bottom]);
+    }
+}
+
+#[tauri::command]
+pub fn show_main(app: AppHandle) {
+    if OPENING.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        crate::show_window(&app);
+    }
 }

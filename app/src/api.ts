@@ -150,6 +150,8 @@ export const api = {
   pagePainted: () => invoke<void>("page_painted"),
   hideWidget: () => invoke<void>("hide_widget"),
   openMain: (screen: "index" | "settings") => invoke<void>("open_main", { screen }),
+  setWidgetBox: (left: number, top: number, right: number, bottom: number) => invoke<void>("set_widget_box", { left, top, right, bottom }),
+  showMain: () => invoke<void>("show_main"),
 };
 
 export function previewUrl(path: string): string {

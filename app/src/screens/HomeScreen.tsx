@@ -11,9 +11,11 @@ import { cx } from "../cx";
 import logo from "../logo";
 import { resultMenuGroups, type ResultActions } from "../resultMenu";
 import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chosen, type Month, type Understood } from "../understand";
+import { BACKGROUND_PRESS } from "../background";
 import { isForSomethingElse } from "../useSelection";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { useResultSelection } from "../useResultSelection";
+import { useTauriEvent } from "../useTauriEvent";
 import styles from "./HomeScreen.module.css";
 
 const LICENSE = "MIT License";
@@ -50,7 +52,8 @@ interface Props {
 
 const snapToLayout = (px: number) => Math.round(px * 64) / 64;
 
-function placeholder(model: ModelStatus | null): string {
+function placeholder(model: ModelStatus | null, nothingIndexed: boolean): string {
+  if (model?.state !== "failed" && nothingIndexed) return "Nothing to search yet";
   switch (model?.state) {
     case "verifying":
     case "starting":
@@ -303,7 +306,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     away.current = false;
     setQuery("");
     setChosen({});
-    if (asWidget) {
+    if (asWidget && !blocked) {
       onFocusChange?.(true);
       setFocused(true);
       input.current?.focus({ preventScroll: true });
@@ -312,7 +315,18 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     onFocusChange?.(false);
     setFocused(false);
     input.current?.blur();
-  }, [onFocusChange, asWidget]);
+  }, [onFocusChange, asWidget, blocked]);
+  useEffect(() => {
+    const onPress = () => {
+      if (!home.current?.closest("[inert]")) clearSelection();
+    };
+    window.addEventListener(BACKGROUND_PRESS, onPress);
+    return () => window.removeEventListener(BACKGROUND_PRESS, onPress);
+  }, [clearSelection]);
+  useTauriEvent("main-hidden", () => {
+    leave();
+    closeMenu();
+  });
   const away = useRef(false);
   useImperativeHandle(ref, () => ({
     restoreFocus() {
@@ -382,13 +396,21 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   return (
     <main
       ref={home}
-      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed, asWidget && styles.asWidget)}
+      className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed, blocked && styles.blocked, asWidget && styles.asWidget)}
       onClick={(e) => {
         const target = e.target as HTMLElement;
         if (!target.closest(`button, input, label, [role='menu'], [data-selection-bar], .${styles.tagsBox}`)) clearSelection();
       }}
+      onPointerDown={
+        asWidget && onDismiss
+          ? (e) => {
+              const box = home.current?.querySelector(`.${styles.spot}`)?.getBoundingClientRect();
+              if (!results && box && (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom)) onDismiss();
+            }
+          : undefined
+      }
     >
-      {asWidget && <div className={styles.backdrop} aria-hidden />}
+      {asWidget && <div className={styles.backdrop} data-widget-backdrop aria-hidden />}
       <div className={styles.scrim} aria-hidden />
       <ResultGrid
         paneRef={resultsPane}
@@ -420,7 +442,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         }}
       >
         <div ref={row} className={styles.row}>
-          <div className={styles.spot} aria-hidden />
+          <div className={styles.spot} data-widget-spot aria-hidden />
           <div className={styles.halo} aria-hidden />
           <div className={styles.separator} aria-hidden />
           <label
@@ -439,14 +461,14 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               ref={input}
               className={styles.input}
               type="text"
-              placeholder={placeholder(model)}
+              placeholder={placeholder(model, blocked)}
               title={model?.state === "failed" ? model.reason : undefined}
               aria-label="Search"
               readOnly={blocked}
               aria-disabled={blocked || undefined}
               tabIndex={blocked ? -1 : undefined}
               onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : () => setFocus(true)}
-              onBlur={() => { if (document.hasFocus() && !away.current) setFocus(false); }}
+              onBlur={() => { if (!blocked && document.hasFocus() && !away.current) setFocus(false); }}
               value={query}
               onChange={(e) => change(e.target.value)}
               spellCheck={false}

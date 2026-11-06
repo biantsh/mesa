@@ -5,10 +5,11 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ContextMenu } from "../components/ContextMenu";
 import { FileGrid } from "../components/FileGrid";
 import { FileList } from "../components/FileList";
-import { ItemsPanel } from "../components/ItemsPanel";
+import { ItemsPanel, type Arrival } from "../components/ItemsPanel";
 import { NavBar } from "../components/NavBar";
 import { StatusBar } from "../components/StatusBar";
 import { TopBar } from "../components/TopBar";
+import { BACKGROUND_PRESS } from "../background";
 import { describeIndexTotals } from "../format";
 import { menuGroups } from "../menuGroups";
 import { parentOf } from "../paths";
@@ -26,11 +27,13 @@ import { useLiveIndexStatus } from "../useLiveIndexStatus";
 import { usePageSelection } from "../usePageSelection";
 import { usePanelLayout, type ListName } from "../usePanelLayout";
 import { useSortedEntries } from "../useSortedEntries";
+import { useTauriEvent } from "../useTauriEvent";
 import { useViewMode } from "../useViewMode";
 import styles from "./IndexScreen.module.css";
 
 const NO_ENTRIES: Entry[] = [];
 const KEEPS_SELECTION = "button, a, input, select, textarea, label, dialog, [role='menu']";
+const ARRIVING_MS = 1000;
 
 const INDEXED_HINT = (
   <>
@@ -93,6 +96,11 @@ export function IndexScreen({ onBack, active }: Props) {
     activeIn,
     marqueeRegions,
   } = usePageSelection({ folder: listing?.path ?? "", displayed, enabled: active, indexed, excluded });
+  useEffect(() => {
+    if (!active) return;
+    window.addEventListener(BACKGROUND_PRESS, clear);
+    return () => window.removeEventListener(BACKGROUND_PRESS, clear);
+  }, [active, clear]);
   const {
     root: page,
     box: marqueeBox,
@@ -122,6 +130,18 @@ export function IndexScreen({ onBack, active }: Props) {
     const frame = requestAnimationFrame(() => setAnimate(true));
     return () => cancelAnimationFrame(frame);
   }, [loaded]);
+  const [cameAt, setCameAt] = useState<number | null>(null);
+  const came = cameAt ?? (active ? performance.now() : null);
+  if (came !== cameAt) setCameAt(came);
+  const [arrival, setArrival] = useState<Arrival | null>(null);
+  if (arrival === null && came !== null && active && loaded) {
+    setArrival({ playing: true, late: Math.round(performance.now() - came) });
+  }
+  useEffect(() => {
+    if (!arrival?.playing) return;
+    const timer = setTimeout(() => setArrival({ ...arrival, playing: false }), ARRIVING_MS);
+    return () => clearTimeout(timer);
+  }, [arrival]);
   useEffect(() => {
     if (listSelection.list !== null && open !== listSelection.list) clearListSelection();
   }, [open, listSelection.list, clearListSelection]);
@@ -215,6 +235,12 @@ export function IndexScreen({ onBack, active }: Props) {
 
   const selectionNow = useLatest({ selected, selectedEntries });
   const closeListMenu = listMenu.close;
+  useTauriEvent("main-hidden", () => {
+    clear();
+    closeMenu();
+    closeListMenu();
+    dismiss();
+  });
   const openMenu = useCallback(
     (entry: Entry, x: number, y: number) => {
       const { selected, selectedEntries } = selectionNow.current;
@@ -335,6 +361,7 @@ export function IndexScreen({ onBack, active }: Props) {
             collapsed={open !== "indexed"}
             onExpand={open === "indexed" ? undefined : expandIndexed}
             animate={animate}
+            arrival={arrival}
             region="indexed"
           />
           <ItemsPanel
@@ -353,6 +380,7 @@ export function IndexScreen({ onBack, active }: Props) {
             collapsed={open !== "excluded"}
             onExpand={open === "excluded" ? undefined : expandExcluded}
             animate={animate}
+            arrival={arrival}
             region="excluded"
           />
         </aside>
