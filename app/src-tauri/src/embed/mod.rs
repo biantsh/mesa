@@ -45,6 +45,13 @@ pub struct Item {
     pub path: PathBuf,
 }
 
+fn display_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Outcome {
     Vectors(Vec<Located>),
@@ -72,6 +79,22 @@ pub trait Embedder: Send + Sync {
 
     fn embed_query(&self, _text: &str) -> Result<Record, Error> {
         Err(Error("Searching isn't available.".into()))
+    }
+
+    fn embed_example(&self, path: &Path, max_pieces: usize) -> Result<Vec<Record>, Error> {
+        let mut outcome = None;
+        self.embed(&[Item { path: path.to_owned() }], &|| false, &mut |_, made| {
+            outcome = Some(made)
+        })?;
+        match outcome {
+            Some(Outcome::Vectors(vectors)) => Ok(vectors
+                .into_iter()
+                .take(max_pieces)
+                .map(|located| located.record)
+                .collect()),
+            Some(Outcome::NoVector(why)) => Err(Error(format!("{} can't be searched with: {why}", display_name(path)))),
+            None => Err(Error(format!("the model gave no answer for {}", display_name(path)))),
+        }
     }
 
     fn warm_up(&self) {}

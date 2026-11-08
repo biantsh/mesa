@@ -82,8 +82,19 @@
 }
 
 .pausedTag {
-  display: block;
-  margin-right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: 12px;
+}
+
+.bullet {
+  flex: none;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 1;
 }
 
 .smooth {
@@ -93,26 +104,18 @@
   transition: width 260ms ease;
 }
 
+.smoothQuick {
+  transition-duration: 180ms;
+  justify-content: flex-start;
+}
+
 .smoothInner {
   flex: none;
   display: inline-block;
 }
 
-.figures {
-  display: grid;
-}
-
-.sizer,
 .text {
-  grid-area: 1 / 1;
-}
-
-.sizer {
-  visibility: hidden;
-}
-
-.text {
-  justify-self: end;
+  display: block;
   animation: textIn 220ms ease-out backwards;
 }
 

@@ -38,6 +38,7 @@ fn dock_icon(app: &AppHandle, shown: bool) {
     let _ = (app, shown);
 }
 
+#[cfg(target_os = "macos")]
 const FULL_SCREEN_EVENT: &str = "full-screen";
 
 pub fn watch_full_screen(app: &tauri::App) {

@@ -1,0 +1,26 @@
+.box {
+  position: relative;
+  display: block;
+  overflow: hidden;
+}
+
+.icon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.icon[data-lane="current"] {
+  transform: translateY(0);
+  transition: transform 380ms cubic-bezier(0.5, 0, 0.2, 1);
+}
+
+.icon[data-lane="gone"] {
+  transform: translateY(-110%);
+  transition: transform 380ms cubic-bezier(0.5, 0, 0.2, 1);
+}
+
+.icon[data-lane="waiting"] {
+  transform: translateY(110%);
+}

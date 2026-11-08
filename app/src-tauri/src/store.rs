@@ -355,6 +355,30 @@ impl Store {
         Ok(lost)
     }
 
+    pub fn files_under(&self, root: &Path) -> Result<u64> {
+        if let Some(dir) = find_dir(&self.conn, root)? {
+            return Ok(self.conn.query_row(
+                "WITH RECURSIVE tree(id) AS (
+                     SELECT ?1 UNION ALL SELECT d.id FROM dirs d JOIN tree t ON d.parent_id = t.id WHERE d.id != 0
+                 )
+                 SELECT COUNT(*) FROM files WHERE embedded_with = ?2 AND dir_id IN (SELECT id FROM tree)",
+                params![dir, CONFIG_ID],
+                |r| r.get(0),
+            )?);
+        }
+        let (Some(parent), Some(name)) = (root.parent(), root.file_name()) else {
+            return Ok(0);
+        };
+        let Some(dir) = find_dir(&self.conn, parent)? else {
+            return Ok(0);
+        };
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM files WHERE dir_id = ?1 AND name = ?2 AND embedded_with = ?3",
+            params![dir, name.to_string_lossy(), CONFIG_ID],
+            |r| r.get(0),
+        )?)
+    }
+
     pub fn has_stale_files(&self) -> Result<bool> {
         Ok(self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM files WHERE embedded_with != ?1)",

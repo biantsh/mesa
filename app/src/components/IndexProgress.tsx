@@ -1,7 +1,8 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Pause, Play } from "lucide-react";
 import { api, errorText, type Progress } from "../api";
 import { cx } from "../cx";
+import { addSample, formatEta, speedOf, type Sample } from "../eta";
 import { IconButton } from "./IconButton";
 import { Reveal } from "./Reveal";
 import styles from "./IndexProgress.module.css";
@@ -89,27 +90,50 @@ export function Label({ progress: { name, queued, updating } }: { progress: Prog
 
 function Count({ progress }: { progress: Progress }) {
   const text = figures(progress);
-  const longest = figures({ ...progress, done: progress.total });
+  const eta = useEta(progress);
+  const tag = progress.paused ? "Paused" : eta;
+  const [shown, setShown] = useState(tag);
+  if (tag && tag !== shown) setShown(tag);
   return (
     <span className={styles.count}>
-      <Reveal show={progress.paused}>
-        <span className={styles.pausedTag}>{text ? "Paused \u00b7" : "Paused"}</span>
+      <Reveal show={tag !== null}>
+        <span className={styles.pausedTag}>
+          <SmoothWidth quick>{shown}</SmoothWidth>
+          {text && <span className={styles.bullet} aria-hidden />}
+        </span>
       </Reveal>
       <SmoothWidth>
-        <span className={styles.figures}>
-          <span className={styles.sizer} aria-hidden>
-            {longest}
-          </span>
-          <span key={progress.counting ? "finding" : "counted"} className={styles.text}>
-            {text}
-          </span>
+        <span key={progress.counting ? "finding" : "counted"} className={styles.text}>
+          {text}
         </span>
       </SmoothWidth>
     </span>
   );
 }
 
-function SmoothWidth({ children }: { children: ReactNode }) {
+function useEta({ done, total, paused, counting }: Progress): string | null {
+  const samples = useRef<Sample[]>([]);
+  const lastDone = useRef(done);
+  const [speed, setSpeed] = useState<number | null>(null);
+  useEffect(() => {
+    const another = done < lastDone.current;
+    lastDone.current = done;
+    if (total === 0 || done >= total) {
+      samples.current = [];
+      setSpeed(null);
+    } else if (paused || counting) {
+      samples.current = [];
+      if (another) setSpeed(null);
+    } else {
+      samples.current = addSample(samples.current, { t: Date.now(), done });
+      setSpeed((current) => speedOf(samples.current) ?? (another ? null : current));
+    }
+  }, [done, total, paused, counting]);
+  if (paused || counting || speed === null || total === 0 || done >= total) return null;
+  return formatEta((total - done) / speed);
+}
+
+function SmoothWidth({ children, quick = false }: { children: ReactNode; quick?: boolean }) {
   const inner = useRef<HTMLSpanElement>(null);
   const [width, setWidth] = useState<number | null>(null);
   useLayoutEffect(() => {
@@ -122,7 +146,7 @@ function SmoothWidth({ children }: { children: ReactNode }) {
     return () => observer.disconnect();
   }, []);
   return (
-    <span className={styles.smooth} style={width === null ? undefined : { width }}>
+    <span className={cx(styles.smooth, quick && styles.smoothQuick)} style={width === null ? undefined : { width }}>
       <span ref={inner} className={styles.smoothInner}>
         {children}
       </span>

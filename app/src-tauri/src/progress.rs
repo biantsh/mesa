@@ -27,6 +27,7 @@ struct ActiveJob {
     found: u64,
     total: Option<u64>,
     done: u64,
+    already: u64,
 }
 
 impl ActiveJob {
@@ -41,6 +42,7 @@ impl ActiveJob {
             found: 0,
             total: quiet.then_some(0),
             done: 0,
+            already: 0,
         }
     }
 }
@@ -54,13 +56,20 @@ pub struct ProgressState {
 }
 
 impl ProgressState {
+    #[cfg(test)]
     pub fn add_job(&mut self, id: i64, root: PathBuf) -> (u64, bool) {
+        self.add_job_having_done(id, root, 0)
+    }
+
+    pub fn add_job_having_done(&mut self, id: i64, root: PathBuf, already: u64) -> (u64, bool) {
         let first = self.jobs.is_empty();
         if first {
             self.new_run();
         }
         self.next_ticket += 1;
-        self.jobs.push(ActiveJob::new(self.next_ticket, id, root, false));
+        let mut job = ActiveJob::new(self.next_ticket, id, root, false);
+        job.already = already;
+        self.jobs.push(job);
         (self.next_ticket, first)
     }
 
@@ -208,7 +217,11 @@ impl ProgressState {
         let current = self.jobs.first()?;
         let counted: u64 = self.jobs.iter().filter_map(|job| job.total).sum();
         let counting = current.total.is_none() || (!self.released && self.jobs.iter().any(|job| job.total.is_none()));
-        let done: u64 = self.jobs.iter().map(|job| job.done.min(job.total.unwrap_or(0))).sum();
+        let done: u64 = self
+            .jobs
+            .iter()
+            .map(|job| job.done.max(job.already).min(job.total.unwrap_or(0)))
+            .sum();
         Some(Progress {
             name: browse::display_name(&current.root),
             queued: self.jobs.len() as u64 - 1,

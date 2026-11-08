@@ -7,6 +7,7 @@ mod clipboard;
 mod commands;
 mod crawl;
 mod embed;
+mod examples;
 mod hotkey;
 mod index;
 mod indexer;
@@ -140,6 +141,7 @@ fn main() {
             Some(vec![startup::BACKGROUND_ARG]),
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| match (window.label(), event) {
             (widget::LABEL, WindowEvent::CloseRequested { api, .. }) => {
                 api.prevent_close();
@@ -226,6 +228,9 @@ fn main() {
             commands::page_painted,
             commands::reveal_main,
             commands::hide_widget,
+            commands::set_picking,
+            commands::folders_among,
+            commands::prepare_example,
             commands::open_main,
             commands::show_main,
             commands::set_widget_box,

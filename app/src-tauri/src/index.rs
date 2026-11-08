@@ -17,6 +17,7 @@ use serde::Serialize;
 use crate::{
     browse, crawl,
     embed::{Device, Embedder, ModelStatus},
+    examples::path_key,
     indexer,
     progress::{Progress, ProgressState},
     rules::{self, Rules, effective, gaps_of, inclusions_of},
@@ -29,6 +30,7 @@ pub const SEARCH_RESULTS: usize = 24;
 struct Ranking {
     id: u64,
     ranked: Vec<(i64, f32)>,
+    excluded: Vec<String>,
     next: Mutex<usize>,
 }
 
@@ -99,6 +101,8 @@ impl Quiet {
         Some(path)
     }
 }
+
+pub const QUERY_PIECES: usize = 64;
 
 pub struct Shared {
     pub store: Mutex<Store>,
@@ -181,11 +185,41 @@ impl Control {
             state = self.changed.wait(state).unwrap_or_else(|e| e.into_inner());
         }
     }
+
+    pub fn wait_while_paused_unless(&self, gone: impl Fn() -> bool) {
+        loop {
+            let epoch = {
+                let state = lock(&self.state);
+                if !state.paused {
+                    return;
+                }
+                state.epoch
+            };
+            if gone() {
+                return;
+            }
+            let state = lock(&self.state);
+            drop(
+                self.changed
+                    .wait_while(state, |state| state.paused && state.epoch == epoch)
+                    .unwrap_or_else(|e| e.into_inner()),
+            );
+        }
+    }
 }
 
 impl Shared {
     pub fn is_gentle(&self) -> bool {
         !self.control.is_turbo()
+    }
+
+    pub fn wait_while_paused_for(&self, ticket: Option<u64>) {
+        match ticket {
+            Some(ticket) => self
+                .control
+                .wait_while_paused_unless(|| !lock(&self.progress).has(ticket)),
+            None => self.control.wait_while_paused(),
+        }
     }
 
     pub fn crawl_threads(&self) -> usize {
@@ -236,6 +270,7 @@ pub struct Index {
     latest_search: Mutex<Option<Arc<Ranking>>>,
     search_ids: AtomicU64,
     watching: Mutex<Option<crate::watch::Watching>>,
+    examples: crate::examples::Examples,
 }
 
 #[derive(Clone, Copy)]
@@ -276,6 +311,10 @@ impl Index {
                 }
             }
         }
+        let already: Vec<u64> = unfinished
+            .iter()
+            .map(|(_, root)| store.files_under(root).unwrap_or(0))
+            .collect();
         let paused = store.is_paused()?;
         if paused && unfinished.is_empty() {
             store.set_paused(false)?;
@@ -318,9 +357,10 @@ impl Index {
             latest_search: Mutex::new(None),
             search_ids: AtomicU64::new(0),
             watching: Mutex::new(None),
+            examples: Default::default(),
         };
-        for (id, root) in unfinished {
-            index.queue_job(id, root);
+        for ((id, root), already) in unfinished.into_iter().zip(already) {
+            index.queue_job_having_done(id, root, already);
         }
         Ok(index)
     }
@@ -575,13 +615,52 @@ impl Index {
         paths
     }
 
-    pub fn search(&self, text: &str, filter: Filter) -> Result<Page, String> {
-        self.search_where(text, filter, |path| path.is_file())
+    pub fn search_like(&self, text: &str, files: &[PathBuf], filter: Filter) -> Result<Page, String> {
+        self.search_where(text, files, filter, |path| path.is_file())
     }
 
-    fn search_where(&self, text: &str, filter: Filter, exists: impl Fn(&Path) -> bool) -> Result<Page, String> {
-        let ranked = if !text.trim().is_empty() {
-            let query = self.shared.embedder.embed_query(text).map_err(|e| e.to_string())?;
+    pub fn prepare_example(&self, path: &Path) -> Result<(), String> {
+        self.examples
+            .vectors(&*self.shared.embedder, path, crate::examples::EAGER_PIECES)
+            .map(|_| ())
+    }
+
+    fn query_vector(&self, text: &str, files: &[PathBuf]) -> Result<Option<crate::vectors::Record>, String> {
+        let mut parts = Vec::new();
+        if !text.trim().is_empty() {
+            parts.push((self.shared.embedder.embed_query(text).map_err(|e| e.to_string())?, 1.0));
+        }
+        if files.len() > QUERY_PIECES {
+            return Err(format!("At most {QUERY_PIECES} files can be searched with at once."));
+        }
+        let mut made = Vec::new();
+        let mut left = QUERY_PIECES;
+        for (n, file) in files.iter().enumerate() {
+            let share = (left / (files.len() - n)).max(1);
+            let vectors = self.examples.vectors(&*self.shared.embedder, file, share)?;
+            left = left.saturating_sub(vectors.len());
+            let weighted: Vec<_> = vectors.into_iter().map(|record| (record, 1.0)).collect();
+            made.extend(crate::vectors::blend(&weighted).map(|record| (record, 1.0)));
+        }
+        if let Some(files) = crate::vectors::blend(&made) {
+            parts.push((files, 1.0));
+        }
+        Ok(match parts.as_slice() {
+            [] => None,
+            [(only, _)] => Some(*only),
+            _ => crate::vectors::blend(&parts),
+        })
+    }
+
+    fn search_where(
+        &self,
+        text: &str,
+        files: &[PathBuf],
+        filter: Filter,
+        exists: impl Fn(&Path) -> bool,
+    ) -> Result<Page, String> {
+        let query = self.query_vector(text, files)?;
+        let ranked = if let Some(query) = query {
             lock(&self.shared.store).rank(&query, filter)?
         } else if filter != Filter::default() {
             lock(&self.shared.store).newest(filter)?
@@ -596,6 +675,7 @@ impl Index {
         let ranking = Arc::new(Ranking {
             id,
             ranked,
+            excluded: files.iter().map(|file| path_key(file)).collect(),
             next: Mutex::new(0),
         });
         *lock(&self.latest_search) = Some(ranking.clone());
@@ -617,7 +697,9 @@ impl Index {
             let hits = lock(&self.shared.store).hits(batch)?;
             let mut used = batch.len();
             for hit in hits {
-                if !exists(&hit.path) {
+                if !exists(&hit.path)
+                    || (!ranking.excluded.is_empty() && ranking.excluded.contains(&path_key(&hit.path)))
+                {
                     continue;
                 }
                 let file = hit.file;
@@ -796,13 +878,14 @@ impl Index {
             self.shared.set_paused(store, false)?;
         }
         for (id, root) in ids.into_iter().zip(roots) {
-            self.queue_job(id, root.clone());
+            let already = store.files_under(root).unwrap_or(0);
+            self.queue_job_having_done(id, root.clone(), already);
         }
         Ok(())
     }
 
-    fn queue_job(&self, id: i64, root: PathBuf) {
-        let (ticket, first) = lock(&self.shared.progress).add_job(id, root.clone());
+    fn queue_job_having_done(&self, id: i64, root: PathBuf, already: u64) {
+        let (ticket, first) = lock(&self.shared.progress).add_job_having_done(id, root.clone(), already);
         if first {
             lock(&self.shared.pending).add(root.clone());
         }

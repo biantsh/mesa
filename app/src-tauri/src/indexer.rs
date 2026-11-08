@@ -63,9 +63,10 @@ pub fn work(shared: &Shared, jobs: Receiver<Message>) {
         }
         if !lock(&shared.progress).begin(job.ticket) {
             lock(&shared.pending).release(&job.root);
+            end_pause_if_idle(shared);
             continue;
         }
-        shared.control.wait_while_paused();
+        shared.wait_while_paused_for(Some(job.ticket));
         await_counts(shared, job.ticket);
         let stored = walk(shared, job.ticket, &job.root);
         let wanted = lock(&shared.progress).finish_job(job.ticket);
@@ -78,11 +79,17 @@ pub fn work(shared: &Shared, jobs: Receiver<Message>) {
             eprintln!("Mesa: couldn't mark indexing of {} as done: {e}", job.root.display());
         }
 
-        let active = lock(&shared.progress).is_active();
-        if shared.control.is_paused() && !active {
+        if shared.control.is_paused() && !lock(&shared.progress).is_active() {
             let _ = shared.set_paused(&store, false);
         }
         drop(store);
+    }
+}
+
+fn end_pause_if_idle(shared: &Shared) {
+    if shared.control.is_paused() && !lock(&shared.progress).is_active() {
+        let store = lock(&shared.store);
+        let _ = shared.set_paused(&store, false);
     }
 }
 
@@ -129,7 +136,7 @@ fn await_counts(shared: &Shared, ticket: u64) {
                 match next {
                     Some((ticket, root)) => count_files(shared, ticket, &root),
                     None => {
-                        shared.control.wait_while_paused();
+                        shared.wait_while_paused_for(Some(ticket));
                         thread::sleep(COUNT_POLL);
                     }
                 }
@@ -191,9 +198,11 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
         thread::scope(|scope| {
             scope.spawn(move || {
                 crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
-                    shared.control.wait_while_paused();
+                    shared.wait_while_paused_for(tracking.ticket());
+                    let dropped = matches!(tracking, Tracking::Job(ticket) if !lock(&shared.progress).has(ticket));
 
-                    let found = if shared.is_indexed(&dir)
+                    let found = if !dropped
+                        && shared.is_indexed(&dir)
                         && !abandoned.load(Ordering::Relaxed)
                         && !(!in_progress && shared.urgent.load(Ordering::SeqCst) > 0)
                     {
@@ -528,7 +537,7 @@ impl Batch {
             return true;
         }
         let stored = self.store(shared);
-        shared.control.wait_while_paused();
+        shared.wait_while_paused_for(self.tracking.ticket());
         stored
     }
 

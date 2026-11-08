@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Listed } from "./api";
+import { usePoll } from "./usePoll";
 
 const NOTHING: Listed[] = [];
 
@@ -33,7 +34,28 @@ export function useIndexLists(trigger: string, active: boolean) {
     if (active) void refresh();
   }, [active, trigger, refresh]);
 
+  const unfinished = useMemo(() => lists.indexed.filter(isUnfinished).map((item) => item.path), [lists.indexed]);
+  usePoll(
+    async () => {
+      const states = await api.indexStatuses(unfinished);
+      setLists((current) => {
+        const byPath = new Map(unfinished.map((path, i) => [path, states[i]]));
+        let changed = false;
+        const indexed = current.indexed.map((item) => {
+          const state = byPath.get(item.path);
+          if (!state || (item.index === state.status && item.droppable === state.droppable)) return item;
+          changed = true;
+          return { ...item, index: state.status, droppable: state.droppable };
+        });
+        return changed ? { ...current, indexed } : current;
+      });
+    },
+    { active: active && unfinished.length > 0 },
+  );
+
   return { ...lists, loaded, refresh };
 }
+
+const isUnfinished = (item: Listed) => item.index === "indexing" || item.index === "paused" || item.droppable;
 
 const same = (a: Listed[], b: Listed[]) => JSON.stringify(a) === JSON.stringify(b);

@@ -145,8 +145,22 @@ export function installTooltips() {
   document.addEventListener("visibilitychange", () => gone(false));
 }
 
-function place(tip: HTMLElement, target: HTMLElement, pointer: { x: number; y: number }): "below" | "above" {
+function seenBox(target: HTMLElement): { left: number; right: number; top: number; bottom: number; width: number; height: number } {
   const box = target.getBoundingClientRect();
+  const style = getComputedStyle(target);
+  const unseen = (side: "Top" | "Right" | "Bottom" | "Left") =>
+    style.getPropertyValue(`border-${side.toLowerCase()}-color`) === "rgba(0, 0, 0, 0)"
+      ? parseFloat(style.getPropertyValue(`border-${side.toLowerCase()}-width`)) || 0
+      : 0;
+  const left = box.left + unseen("Left");
+  const right = box.right - unseen("Right");
+  const top = box.top + unseen("Top");
+  const bottom = box.bottom - unseen("Bottom");
+  return { left, right, top, bottom, width: right - left, height: bottom - top };
+}
+
+function place(tip: HTMLElement, target: HTMLElement, pointer: { x: number; y: number }): "below" | "above" {
+  const box = seenBox(target);
   const width = tip.offsetWidth;
   const height = tip.offsetHeight;
   const x = box.width < NARROW_PX ? box.left + box.width / 2 : Math.min(Math.max(pointer.x, box.left), box.right);

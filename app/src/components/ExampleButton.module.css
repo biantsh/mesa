@@ -1,0 +1,23 @@
+.button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  color: var(--color-text-faint);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, opacity 150ms ease, visibility 0s;
+}
+
+.button.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: background-color 120ms ease, color 120ms ease, opacity 150ms ease, visibility 0s linear 150ms;
+}
+
+.button:hover,
+.button.open {
+  background-color: var(--color-hover-bg);
+  color: var(--color-text);
+}

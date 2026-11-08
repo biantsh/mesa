@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { ArrowRight, ArrowUpRight, Database, Search, Settings, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Ban, Database, Files, Search, Settings, X } from "lucide-react";
 import { api, errorText, type Category, type ModelStatus, type Overview, type SearchHit, type SearchPage } from "../api";
 import { CATEGORY_LABELS, describeIndexTotals } from "../format";
 import { Button } from "../components/Button";
 import { ContextMenu } from "../components/ContextMenu";
+import { ExampleButton } from "../components/ExampleButton";
 import { MonthPicker, TypePicker } from "../components/FilterPickers";
 import { IndexStatus } from "../components/IndexStatus";
+import { SlidingIcon } from "../components/SlidingIcon";
 import { CATEGORY_ICONS, ResultGrid } from "../components/ResultGrid";
 import { cx } from "../cx";
+import { fitQuoted } from "../fitText";
+import { addExamples, countByKind, categoryOfPath, distinctNames, dropHint, dropIcon, shortName } from "../examples";
 import logo from "../logo";
 import { resultMenuGroups, type ResultActions } from "../resultMenu";
 import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chosen, type Month, type Understood } from "../understand";
@@ -15,6 +19,7 @@ import { BACKGROUND_PRESS } from "../background";
 import { MAIN_HIDDEN } from "../events";
 import { scrollByKey } from "../scrollKeys";
 import { useDefaultScroll } from "../useDefaultScroll";
+import { useFileDrop } from "../useFileDrop";
 import { isForSomethingElse } from "../useSelection";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { useResultSelection } from "../useResultSelection";
@@ -53,9 +58,12 @@ interface Props {
   onDismiss?: () => void;
 }
 
+const FIELD_ICONS = { search: Search, ...CATEGORY_ICONS, files: Files, refuse: Ban };
+
 const snapToLayout = (px: number) => Math.round(px * 64) / 64;
 
-function placeholder(model: ModelStatus | null, nothingIndexed: boolean): string {
+function placeholder(model: ModelStatus | null, nothingIndexed: boolean, dropping: string | null): string {
+  if (dropping) return dropping;
   if (model?.state !== "failed" && nothingIndexed) return "Nothing to search yet";
   switch (model?.state) {
     case "verifying":
@@ -75,11 +83,12 @@ interface Open {
   pill: HTMLElement;
 }
 
-function Token({ icon, ghost, open, label, onPress, children }: { icon?: ReactNode; ghost?: boolean; open: boolean; label: string; onPress: (pill: HTMLElement) => void; children: ReactNode }) {
+function Token({ icon, ghost, open, label, className, tooltip, onPress, children }: { icon?: ReactNode; ghost?: boolean; open: boolean; label: string; className?: string; tooltip?: string; onPress: (pill: HTMLElement) => void; children: ReactNode }) {
   return (
     <button
       type="button"
-      className={cx(styles.token, ghost && styles.ghost, open && styles.tokenOpen)}
+      className={cx(styles.token, ghost && styles.ghost, open && styles.tokenOpen, className)}
+      data-tooltip={tooltip}
       tabIndex={-1}
       aria-label={label}
       aria-haspopup="true"
@@ -96,7 +105,110 @@ function Token({ icon, ghost, open, label, onPress, children }: { icon?: ReactNo
   );
 }
 
-function Understanding({ understood, query, onChooseType, onChooseDate }: { understood: Understood; query: string; onChooseType: (value: Category | null) => void; onChooseDate: (end: "from" | "to", month: Month | null) => void }) {
+let measuring: CanvasRenderingContext2D | null | undefined;
+const measuringContext = () => (measuring === undefined ? (measuring = document.createElement("canvas").getContext("2d")) : measuring);
+
+function QuotedText({ text }: { text: string }) {
+  const box = useRef<HTMLSpanElement>(null);
+  const [shown, setShown] = useState(`“${text}”`);
+  useLayoutEffect(() => {
+    const node = box.current;
+    if (!node) return;
+    const canvas = measuringContext();
+    const fit = () => {
+      if (!canvas) return setShown(`“${text}”`);
+      canvas.font = getComputedStyle(node).font;
+      setShown(fitQuoted(text, node.clientWidth - 1, (piece) => canvas.measureText(piece).width));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [text]);
+  return (
+    <span ref={box} className={styles.quoted}>
+      {shown}
+    </span>
+  );
+}
+
+const MAX_NAMES_IN_TIP = 8;
+
+function examplesTooltip(names: string[]): string {
+  if (names.length === 1) return `Searching with ${names[0]}`;
+  const lines = names.slice(0, MAX_NAMES_IN_TIP).map((name) => `• ${name}`);
+  if (names.length > MAX_NAMES_IN_TIP) lines.push(`and ${names.length - MAX_NAMES_IN_TIP} more`);
+  return ["Searching with:", ...lines].join("\n");
+}
+
+interface ExamplesPillProps {
+  examples: string[];
+  fieldFocused: boolean;
+  onFocusField: () => void;
+  onRemove: (path: string) => void;
+  onClear: () => void;
+}
+
+function ExamplesPill({ examples, fieldFocused, onFocusField, onRemove, onClear }: ExamplesPillProps) {
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const fieldHadFocus = useRef(false);
+  const closeMenu = () => {
+    setMenu(null);
+    if (fieldHadFocus.current) onFocusField();
+  };
+  const names = useMemo(() => distinctNames(examples), [examples]);
+  const tooltip = useMemo(() => examplesTooltip(names), [names]);
+  const kinds = useMemo(() => countByKind(examples), [examples]);
+  return (
+    <>
+      <Token
+        className={styles.examples}
+        open={menu !== null}
+        label={`Searching with ${examples.length} ${examples.length === 1 ? "file" : "files"}. Press to change.`}
+        tooltip={tooltip}
+        onPress={(pill) => {
+          if (menu) return closeMenu();
+          const box = pill.getBoundingClientRect();
+          fieldHadFocus.current = fieldFocused;
+          setMenu({ x: box.left, y: box.bottom + 6 });
+        }}
+      >
+        {kinds.map(({ category, count }) => {
+          const Icon = CATEGORY_ICONS[category];
+          return (
+            <span key={category} className={styles.exampleKind}>
+              {count}
+              <Icon size={12} aria-hidden />
+            </span>
+          );
+        })}
+      </Token>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={closeMenu}
+          groups={[
+            names.map((name, i) => {
+              const category = categoryOfPath(examples[i]);
+              const Icon = category && CATEGORY_ICONS[category];
+              return {
+                label: shortName(name, 32),
+                ariaLabel: `Remove ${name}`,
+                icon: Icon ? <Icon size={16} aria-hidden /> : undefined,
+                trailing: <X size={14} aria-hidden />,
+                onSelect: () => onRemove(examples[i]),
+              };
+            }),
+            ...(examples.length > 1 ? [[{ label: "Remove all", onSelect: onClear }]] : []),
+          ]}
+        />
+      )}
+    </>
+  );
+}
+
+function Understanding({ understood, query, examples, fieldFocused, onFocusField, onChooseType, onChooseDate, onRemoveExample, onClearExamples }: { understood: Understood; query: string; examples: string[]; fieldFocused: boolean; onFocusField: () => void; onChooseType: (value: Category | null) => void; onChooseDate: (end: "from" | "to", month: Month | null) => void; onRemoveExample: (path: string) => void; onClearExamples: () => void }) {
   const [open, setOpen] = useState<Open | null>(null);
   const close = useCallback(() => setOpen(null), []);
   const press = (what: Open["what"]) => (pill: HTMLElement) => setOpen((now) => (now?.pill === pill ? null : { what, pill }));
@@ -117,7 +229,7 @@ function Understanding({ understood, query, onChooseType, onChooseDate }: { unde
     );
   };
   return (
-    <div className={styles.parsed}>
+    <div className={cx(styles.parsed, examples.length > 0 && styles.parsedWithFiles)}>
       <div>
         <div className={styles.parsedLabel}>File type</div>
         <div className={styles.parsedValue}>
@@ -149,9 +261,14 @@ function Understanding({ understood, query, onChooseType, onChooseDate }: { unde
       <div>
         <div className={styles.parsedLabel}>Query</div>
         <div className={cx(styles.parsedValue, styles.parsedText, !understood.text && styles.parsedNone)}>
-          {understood.text ? `“${understood.text}”` : "Anything"}
+          {understood.text ? <QuotedText text={understood.text} /> : "Anything"}
         </div>
       </div>
+      {examples.length > 0 && (
+        <div>
+          <ExamplesPill examples={examples} fieldFocused={fieldFocused} onFocusField={onFocusField} onRemove={onRemoveExample} onClear={onClearExamples} />
+        </div>
+      )}
       {open?.what === "type" && <TypePicker anchor={open.pill} value={understood.fileType} onChoose={onChooseType} onClose={close} />}
       {(open?.what === "from" || open?.what === "to") && (
         <MonthPicker
@@ -172,6 +289,8 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const blocked = overview?.empty === true;
   const modelFailed = model?.state === "failed";
   const input = useRef<HTMLInputElement>(null);
+  const field = useRef<HTMLLabelElement>(null);
+  const tagsBox = useRef<HTMLDivElement>(null);
   const home = useRef<HTMLElement>(null);
   const search = useRef<HTMLDivElement>(null);
   const resultsPane = useRef<HTMLDivElement>(null);
@@ -188,11 +307,34 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const [attention, setAttention] = useState(0);
   const [focused, setFocused] = useState(false);
   const [query, setQuery] = useState("");
+  const [examples, setExamples] = useState<string[]>([]);
+  const [exampleNotice, setExampleNotice] = useState<string | null>(null);
+  const addExample = useCallback((paths: string[]) => {
+    setExamples((now) => addExamples(now, paths));
+    setExampleNotice(null);
+    for (const path of paths) {
+      api.prepareExample(path).catch((error) => {
+        setExamples((now) => now.filter((one) => one !== path));
+        setExampleNotice(errorText(error));
+      });
+    }
+  }, []);
+  const removeExample = useCallback((path: string) => setExamples((now) => now.filter((one) => one !== path)), []);
+  const clearExamples = useCallback(() => setExamples([]), []);
+  const dragging = useFileDrop({
+    enabled: !blocked && !modelFailed,
+    isActive: () => !home.current?.closest("[inert]"),
+    targets: () => [field.current, focused ? tagsBox.current : null],
+    onDrop: addExample,
+  });
+  const dropping = dragging?.files ?? null;
+  const focusField = useCallback(() => input.current?.focus({ preventScroll: true }), []);
   const [chosen, setChosen] = useState<Chosen>({});
   const understood = useMemo(() => understandChosen(query, new Date(), chosen), [query, chosen]);
   const chooseType = useCallback((value: Category | null) => setChosen((now) => chooseFileType(now, query, new Date(), value)), [query]);
   const chooseDate = useCallback((end: "from" | "to", month: Month | null) => setChosen((now) => chooseDateEnd(now, query, new Date(), end, month)), [query]);
-  const results = query.trim() !== "";
+  const results = query.trim() !== "" || examples.length > 0 || exampleNotice !== null;
+  const filled = query !== "" || examples.length > 0 || exampleNotice !== null;
   const dim = focused && !results;
   const engaged = focused || results;
   const [fieldHasBeenFocused, setFieldHasBeenFocused] = useState(false);
@@ -218,7 +360,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     setSearching(true);
     const timer = setTimeout(() => {
       api
-        .search(text, { category: fileType, from: fromMs, to: toMs })
+        .search(text, { category: fileType, from: fromMs, to: toMs }, examples)
         .then(
           (page: SearchPage) => current && setFound({ id: page.id, batches: [page.hits], more: page.more }),
           (error) => current && setFound({ error: errorText(error) }),
@@ -229,7 +371,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       current = false;
       clearTimeout(timer);
     };
-  }, [results, searchable, text, fileType, fromMs, toMs]);
+  }, [results, searchable, text, fileType, fromMs, toMs, examples]);
   const batches = found && "batches" in found ? found.batches : NO_BATCHES;
   const hits = useMemo(() => (batches.length === 0 ? NO_HITS : batches.flat()), [batches]);
   const viewMore = useCallback(() => {
@@ -298,25 +440,30 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [results, selectedHits, selectAll, clearSelection, resultActions]);
   let message: string | null = null;
-  if (!searchable) message = model?.state === "failed" ? "Search isn’t available." : "Waiting for the search model to load…";
+  if (exampleNotice) message = exampleNotice;
+  else if (!searchable) message = model?.state === "failed" ? "Search isn’t available." : "Waiting for the search model to load…";
   else if (found && "error" in found) message = `The search failed: ${found.error}`;
   else if (found && !searching && hits.length === 0) message = "Nothing found.";
   const setFocus = useCallback((next: boolean) => {
     setFocused(next);
-    onFocusChange?.(next && query.trim() === "");
-    if (!next && query.trim() === "") {
+    const empty = query.trim() === "" && examples.length === 0;
+    onFocusChange?.(next && empty);
+    if (!next && empty) {
       setChosen({});
       onDismiss?.();
     }
-  }, [query, onFocusChange, onDismiss]);
+  }, [query, examples, onFocusChange, onDismiss]);
   const change = (text: string) => {
     setQuery(text);
+    setExampleNotice(null);
     setChosen((now) => keepChosen(now, text));
-    onFocusChange?.(focused && text.trim() === "");
+    onFocusChange?.(focused && text.trim() === "" && examples.length === 0);
   };
   const leave = useCallback(() => {
     away.current = false;
     setQuery("");
+    setExamples([]);
+    setExampleNotice(null);
     setChosen({});
     if (asWidget && !blocked) {
       onFocusChange?.(true);
@@ -364,7 +511,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       if (home.current?.closest("[inert]") || document.querySelector("dialog[open], [role='menu']")) return;
-      if (query !== "") {
+      if (filled) {
         e.preventDefault();
         leave();
       } else if (document.activeElement === input.current) {
@@ -375,7 +522,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [query, leave, asWidget, onDismiss]);
+  }, [filled, leave, asWidget, onDismiss]);
 
   useLayoutEffect(() => {
     const root = home.current;
@@ -453,11 +600,15 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           if (results) forwardWheel(e);
         }}
       >
-        <div ref={row} className={styles.row}>
+        <div
+          ref={row}
+          className={cx(styles.row, dropping && (dropping.supported.length > 0 ? styles.dropping : styles.refusing), dragging?.over && styles.hot)}
+        >
           <div className={styles.spot} data-widget-spot aria-hidden />
           <div className={styles.halo} aria-hidden />
           <div className={styles.separator} aria-hidden />
           <label
+            ref={field}
             className={styles.field}
             onMouseDown={
               modelFailed
@@ -468,12 +619,14 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
             }
             onClick={blocked || modelFailed ? (e) => e.preventDefault() : undefined}
           >
-            <Search className={styles.searchIcon} size={18} aria-hidden />
+            <span className={styles.searchIcon}>
+              <SlidingIcon icons={FIELD_ICONS} current={dropIcon(dropping)} />
+            </span>
             <input
               ref={input}
               className={styles.input}
               type="text"
-              placeholder={placeholder(model, blocked)}
+              placeholder={placeholder(model, blocked, dropping && dropHint(dropping.supported, dropping.unsupported, dropping.folders))}
               data-tooltip={model?.state === "failed" ? model.reason : undefined}
               aria-label="Search"
               readOnly={blocked}
@@ -487,13 +640,15 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               spellCheck={false}
               autoComplete="off"
             />
-            {query !== "" && (
-              <button type="button" className={styles.clear} aria-label="Clear search" data-tooltip="Clear (Esc)" onClick={leave}>
-                <X size={16} aria-hidden />
+            {filled && (
+              <button type="button" className={cx(styles.clear, dragging && styles.away)} aria-label="Clear search" data-tooltip="Clear (Esc)" onClick={leave}>
+                <X size={18} aria-hidden />
               </button>
             )}
+            {!blocked && !modelFailed && <ExampleButton className={styles.attach} onPick={addExample} hidden={dragging !== null} calmFor={`${focused}|${results}|${engaged}`} />}
           </label>
           <div
+            ref={tagsBox}
             className={styles.tagsBox}
             aria-hidden={!engaged}
             onMouseDown={(e) => {
@@ -501,7 +656,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               if (!blocked && !modelFailed) input.current?.focus();
             }}
           >
-            <Understanding understood={understood} query={query} onChooseType={chooseType} onChooseDate={chooseDate} />
+            <Understanding understood={understood} query={query} examples={examples} fieldFocused={focused} onFocusField={focusField} onChooseType={chooseType} onChooseDate={chooseDate} onRemoveExample={removeExample} onClearExamples={clearExamples} />
           </div>
           <div ref={actions} className={styles.actions}>
             <Button variant="primary" className={styles.indexButton} onClick={onOpenIndex}>

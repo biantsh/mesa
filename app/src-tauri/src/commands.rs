@@ -139,6 +139,7 @@ pub fn search(
     category: Option<Category>,
     from: Option<i64>,
     to: Option<i64>,
+    files: Option<Vec<String>>,
     index: State<'_, Index>,
 ) -> Result<SearchPage, String> {
     let filter = Filter {
@@ -146,7 +147,9 @@ pub fn search(
         from_ms: from,
         to_ms: to,
     };
-    Ok(index.search(&query, filter)?.into())
+    Ok(index
+        .search_like(&query, &to_paths(files.unwrap_or_default()), filter)?
+        .into())
 }
 
 #[tauri::command(async)]
@@ -441,6 +444,23 @@ pub fn reveal_main(app: AppHandle) {
 #[tauri::command]
 pub fn hide_widget(app: AppHandle) {
     crate::widget::hide(&app);
+}
+
+#[tauri::command(async)]
+pub fn prepare_example(path: String, index: State<'_, Index>) -> Result<(), String> {
+    index.prepare_example(Path::new(&path))
+}
+
+#[tauri::command]
+pub fn folders_among(paths: Vec<String>) -> Vec<bool> {
+    paths.iter().map(|path| Path::new(path).is_dir()).collect()
+}
+
+#[tauri::command]
+pub fn set_picking(app: AppHandle, window: tauri::WebviewWindow, picking: bool) {
+    if window.label() == crate::widget::LABEL {
+        crate::widget::set_picking(&app, picking);
+    }
 }
 
 #[tauri::command]

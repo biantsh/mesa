@@ -19,6 +19,7 @@ const FOCUS_SEARCH_EVENT: &str = "focus-search";
 static HAS_HAD_FOCUS: AtomicBool = AtomicBool::new(false);
 const TOP_AT: f64 = 0.14;
 static SHOWN: AtomicBool = AtomicBool::new(false);
+static PICKING: AtomicBool = AtomicBool::new(false);
 static VISIBLE: Mutex<Option<[f64; 4]>> = Mutex::new(None);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 const WATCH_EVERY: Duration = Duration::from_millis(16);
@@ -115,6 +116,7 @@ pub fn show(app: &AppHandle) {
 
 pub fn hide(app: &AppHandle) {
     SHOWN.store(false, Ordering::SeqCst);
+    PICKING.store(false, Ordering::SeqCst);
     WATCH.fetch_add(1, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.set_ignore_cursor_events(false);
@@ -123,12 +125,22 @@ pub fn hide(app: &AppHandle) {
     let _ = app.emit_to(LABEL, HIDDEN_EVENT, ());
 }
 
+pub fn set_picking(app: &AppHandle, picking: bool) {
+    PICKING.store(picking, Ordering::SeqCst);
+    if !picking
+        && SHOWN.load(Ordering::SeqCst)
+        && let Some(window) = app.get_webview_window(LABEL)
+    {
+        let _ = window.set_focus();
+    }
+}
+
 pub fn got_focus() {
     HAS_HAD_FOCUS.store(true, Ordering::SeqCst);
 }
 
 pub fn lost_focus(app: &AppHandle) {
-    if SHOWN.load(Ordering::SeqCst) && HAS_HAD_FOCUS.load(Ordering::SeqCst) {
+    if SHOWN.load(Ordering::SeqCst) && HAS_HAD_FOCUS.load(Ordering::SeqCst) && !PICKING.load(Ordering::SeqCst) {
         hide(app);
     }
 }

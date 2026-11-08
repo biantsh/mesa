@@ -318,7 +318,7 @@
     right var(--focus-time) var(--focus-ease),
     bottom var(--merge-time) var(--merge-ease) var(--merge-delay),
     border-radius var(--merge-time) var(--focus-ease) var(--merge-delay),
-    background-color 120ms ease;
+    background-color var(--edge-fade, 120ms) ease;
 }
 
 .field::before,
@@ -411,9 +411,9 @@
   z-index: 3;
   left: 15px;
   right: 15px;
-  top: var(--field-height);
-  height: 1px;
-  background: var(--color-border-strong);
+  top: calc(var(--field-height) - 2px);
+  height: 0;
+  border-top: 2px solid var(--color-border-strong);
   opacity: 0;
   pointer-events: none;
   transition: opacity calc(var(--focus-time) * 0.12) ease-out;
@@ -446,6 +446,48 @@
   margin-right: calc(-1 * var(--actions-width, 0px));
 }
 
+.row.dropping {
+  --drop-color: var(--color-primary);
+  --drop-ink: var(--color-primary-ink);
+}
+
+.row.refusing {
+  --drop-color: var(--color-danger-ink);
+  --drop-ink: var(--color-danger-ink);
+}
+
+.row.dropping,
+.row.refusing {
+  --edge-fade: 220ms;
+  --drop-strength: 55%;
+  --drop-tint: 3%;
+}
+
+.row.dropping.hot,
+.row.refusing.hot {
+  --drop-strength: 100%;
+  --drop-tint: 8%;
+}
+
+.row.dropping .field,
+.row.refusing .field,
+.wide .row.dropping .tagsBox,
+.wide .row.refusing .tagsBox {
+  --slab-edge: color-mix(in srgb, var(--drop-color) var(--drop-strength), var(--color-border-strong));
+}
+
+.row.dropping .field::after,
+.row.refusing .field::after,
+.wide .row.dropping .tagsBox::after,
+.wide .row.refusing .tagsBox::after {
+  background-color: color-mix(in srgb, var(--drop-color) var(--drop-tint), var(--color-surface));
+}
+
+.row.dropping .searchIcon,
+.row.refusing .searchIcon {
+  color: color-mix(in srgb, var(--drop-ink) var(--drop-strength), var(--color-text-faint));
+}
+
 .field:hover {
   --slab-edge: var(--color-text-disabled);
   box-shadow: var(--shadow-field-hover);
@@ -465,6 +507,8 @@
   transform: translateY(-50%);
   color: var(--color-text-faint);
   pointer-events: none;
+  line-height: 0;
+  transition: color 150ms ease;
 }
 
 .input {
@@ -473,7 +517,7 @@
   z-index: 3;
   min-width: 0;
   height: calc(var(--field-height) - 4px);
-  padding: 0 40px 0 42px;
+  padding: 0 72px 0 42px;
   border: 0;
   outline: none;
   background: transparent;
@@ -527,7 +571,7 @@
   position: relative;
   z-index: 3;
   display: grid;
-  grid-template-columns: auto 256px minmax(0, 1fr);
+  grid-template-columns: auto 253px minmax(0, 1fr);
   column-gap: 20px;
   margin: 0 13px;
   padding: 9px 0;
@@ -544,6 +588,10 @@
   transition:
     opacity calc(var(--focus-time) * 0.6) ease calc(var(--focus-time) * 0.15),
     clip-path var(--merge-time) var(--focus-ease) var(--merge-delay);
+}
+
+.parsedWithFiles {
+  grid-template-columns: auto 253px minmax(0, 1fr) auto;
 }
 
 .parsed > div {
@@ -578,6 +626,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: pre;
+}
+
+.quoted {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .token {
@@ -628,6 +682,16 @@
   padding-left: 8px;
 }
 
+.token.examples {
+  gap: 8px;
+}
+
+.exampleKind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .range {
   flex: none;
   color: var(--color-text-faint);
@@ -640,28 +704,50 @@
   }
 }
 
+.row {
+  --attach-edge: 10px;
+  --attach-size: 26px;
+  --attach-gap: 4px;
+}
+
+.attach {
+  position: absolute;
+  z-index: 3;
+  top: calc((var(--field-height) - var(--attach-size)) / 2);
+  right: var(--attach-edge);
+  width: var(--attach-size);
+  height: var(--attach-size);
+  border-radius: var(--radius-sm);
+}
+
 .clear {
   position: absolute;
   z-index: 3;
-  right: 10px;
-  top: calc(var(--field-height) / 2);
-  transform: translateY(-50%);
+  top: calc((var(--field-height) - var(--attach-size)) / 2);
+  right: calc(var(--attach-edge) + var(--attach-size) + var(--attach-gap));
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: var(--attach-size);
+  height: var(--attach-size);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
-  background: transparent;
+  background-color: transparent;
   color: var(--color-text-faint);
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color 120ms ease, color 120ms ease, opacity 150ms ease, visibility 0s;
   animation: clear-in 160ms ease-out backwards;
 }
 
+.clear.away {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: background-color 120ms ease, color 120ms ease, opacity 150ms ease, visibility 0s linear 150ms;
+}
+
 .clear:hover {
-  background: var(--color-hover-bg);
+  background-color: var(--color-hover-bg);
   color: var(--color-text);
 }
 

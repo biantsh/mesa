@@ -170,6 +170,16 @@ pub fn to_floats(record: &Record) -> [f32; DIMS] {
     values
 }
 
+pub fn blend(parts: &[(Record, f32)]) -> Option<Record> {
+    let mut sum = [0f32; DIMS];
+    for (record, weight) in parts {
+        for (total, value) in sum.iter_mut().zip(to_floats(record)) {
+            *total += value * weight;
+        }
+    }
+    record_from(&sum)
+}
+
 pub fn similarity(query: &[f32; DIMS], record: &Record) -> f32 {
     query
         .iter()

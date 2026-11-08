@@ -1,10 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "../cx";
 import styles from "./ContextMenu.module.css";
 
 export interface MenuItem {
   label: string;
+  icon?: ReactNode;
+  trailing?: ReactNode;
+  ariaLabel?: string;
   onSelect: () => void;
   disabled?: boolean;
   danger?: boolean;
@@ -80,9 +83,10 @@ export function ContextMenu({ x, y, groups, onClose }: Props) {
       {groups.map((group, i) => (
         <div key={i} role="group">
           {i > 0 && <div className={styles.separator} role="separator" />}
-          {group.map((item) => (
+          {group.map((item, n) => (
             <button
-              key={item.label}
+              key={`${n} ${item.label}`}
+              aria-label={item.ariaLabel}
               type="button"
               role="menuitem"
               className={cx(styles.item, item.danger && styles.danger)}
@@ -92,7 +96,9 @@ export function ContextMenu({ x, y, groups, onClose }: Props) {
                 item.onSelect();
               }}
             >
-              {item.label}
+              {item.icon}
+              <span className={styles.label}>{item.label}</span>
+              {item.trailing}
             </button>
           ))}
         </div>

@@ -1,4 +1,5 @@
 use std::{
+    path::Path,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -161,6 +162,31 @@ impl Partial {
     }
 }
 
+impl<B: Backend> Pipeline<B> {
+    fn embed_units(
+        &self,
+        units: &std::sync::mpsc::Receiver<Unit>,
+        batch_size: usize,
+    ) -> Result<(Vec<Record>, Option<String>, usize), Error> {
+        let (mut records, mut failure, mut pieces) = (Vec::new(), None, 0);
+        while let Ok(first) = units.recv() {
+            let mut batch = vec![first];
+            batch.extend(units.try_iter().take(batch_size - 1));
+            pieces += batch.len();
+            let inputs: Vec<&Prepared> = batch.iter().map(|unit| &unit.input).collect();
+            for output in self.backend.embed_batch(&inputs)? {
+                match output {
+                    Ok(numbers) => records.extend(vectors::record_from(&numbers)),
+                    Err(why) => {
+                        failure.get_or_insert(why);
+                    }
+                }
+            }
+        }
+        Ok((records, failure, pieces))
+    }
+}
+
 impl<B: Backend> Embedder for Pipeline<B> {
     fn embed(
         &self,
@@ -282,6 +308,44 @@ impl<B: Backend> Embedder for Pipeline<B> {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    fn embed_example(&self, path: &Path, max_pieces: usize) -> Result<Vec<Record>, Error> {
+        let max = max_pieces.max(1);
+        let batch_size = self.backend.max_batch().max(1);
+        let (send, receive) = std::sync::mpsc::sync_channel::<Unit>(batch_size * 2);
+        let (made, read) = std::thread::scope(|scope| {
+            let reader = scope.spawn(move || {
+                let mut sent = 0;
+                prepare::prepare(&Item { path: path.to_owned() }, &mut |unit| {
+                    sent += 1;
+                    send.send(unit).is_ok() && sent < max
+                })
+            });
+            let made = self.embed_units(&receive, batch_size);
+            drop(receive);
+            (
+                made,
+                reader
+                    .join()
+                    .unwrap_or_else(|_| Err("reading it went wrong inside Mesa".into())),
+            )
+        });
+        let (records, failure, pieces) = made?;
+        let named = |why: &str| Error(format!("{} can't be searched with: {why}", super::display_name(path)));
+        if pieces == 0 {
+            return Err(named(
+                &read
+                    .err()
+                    .unwrap_or_else(|| "there is nothing in it for the model to read".into()),
+            ));
+        }
+        if records.is_empty() {
+            return Err(named(
+                &failure.unwrap_or_else(|| "the model gave no usable vector".into()),
+            ));
+        }
+        Ok(records)
     }
 
     fn embed_query(&self, text: &str) -> Result<Record, Error> {
