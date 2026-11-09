@@ -35,7 +35,7 @@
 }
 
 .stage {
-  --nudge: -8px;
+  --nudge: -22px;
   flex: 1 0 auto;
   display: flex;
   flex-direction: column;
@@ -99,7 +99,7 @@
 
 .card,
 .otherCard {
-  min-height: 360px;
+  min-height: 330px;
 }
 
 .other {
@@ -215,8 +215,87 @@
 }
 
 .actions {
+  position: relative;
   display: flex;
+  align-items: center;
+  gap: 14px;
   margin-top: auto;
+}
+
+.total {
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.swap {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.fadeIn {
+  animation: swap-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+.slideIn {
+  animation: slide-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+.swap.leaving {
+  opacity: 0;
+  transition: opacity 200ms cubic-bezier(0.3, 0, 1, 1);
+}
+
+@keyframes swap-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .swap {
+    animation: none;
+    transition: none;
+  }
+}
+
+.total[data-counting],
+.total [data-counting] {
+  opacity: 0.7;
+}
+
+.accessNote {
+  --access-gap: 18px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  margin: 0 0 var(--access-gap);
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.cardsAndNote {
+  position: relative;
+}
+
+.deniedNote {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 20px 0 0;
+  text-align: center;
+  color: var(--color-text-faint);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .middle {
@@ -249,9 +328,9 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
+  padding: 9px 13px;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  border: 1px solid var(--color-border);
   color: var(--color-text-muted);
   font-size: 14px;
   animation: hint-in 320ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;

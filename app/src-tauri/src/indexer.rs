@@ -13,7 +13,7 @@ use std::{
 use crossbeam_channel::bounded;
 
 use crate::{
-    browse::{self, Categories, Shown},
+    browse::{self, Categories, Category, Shown},
     crawl::crawl,
     embed::{Item, Outcome},
     index::{Message, Shared, lock},
@@ -590,11 +590,15 @@ struct Found {
 
 fn each_entry(dir: &Path, types: Categories, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -> Option<bool> {
     let mut complete = true;
+    let photos_library = unindexable::is_photos_library(dir);
     for item in fs::read_dir(dir).ok()? {
         let Ok(item) = item else {
             complete = false;
             continue;
         };
+        if photos_library && !unindexable::is_photos_originals(&item.file_name().to_string_lossy()) {
+            continue;
+        }
         let Some((name, shown)) = browse::classify(&item) else {
             continue;
         };
@@ -610,6 +614,15 @@ fn each_entry(dir: &Path, types: Categories, mut visit: impl FnMut(&fs::DirEntry
         visit(&item, name, shown);
     }
     Some(complete)
+}
+
+pub fn survey_folder(dir: &Path, mut file: impl FnMut(Category, PathBuf, u64)) -> Option<Vec<PathBuf>> {
+    let mut subdirs = Vec::new();
+    each_entry(dir, Categories::ALL, |item, _, shown| match shown {
+        Shown::Folder => subdirs.push(item.path()),
+        Shown::File(category) => file(category, item.path(), item.metadata().map_or(0, |meta| meta.len())),
+    })?;
+    Some(subdirs)
 }
 
 fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {

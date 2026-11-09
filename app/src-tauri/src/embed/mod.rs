@@ -13,6 +13,7 @@ mod prime;
 #[cfg(windows)]
 mod process_group;
 mod resample;
+pub mod standin;
 #[cfg(windows)]
 mod video;
 #[cfg(target_os = "macos")]
@@ -28,8 +29,8 @@ use std::{
 use crate::vectors::{Located, Record};
 
 pub use llama::Locations;
-pub use model::ModelStatus;
-pub use pipeline::Pipeline;
+pub use model::{ModelState, ModelStatus};
+pub use pipeline::{GENTLE_SLOWDOWN, Pipeline};
 
 pub const MODEL_NAME: &str = "google/embeddinggemma-2, Q8_0, llama.cpp, 140 image tokens, 256 dimensions; pictures, video frames, 30 s of sound, passages of text";
 pub const IMAGE_TOKENS: u32 = 140;

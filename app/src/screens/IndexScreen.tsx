@@ -23,7 +23,6 @@ import { useMarquee } from "../useMarquee";
 import { useIndexActions } from "../useIndexActions";
 import { useIndexKeys } from "../useIndexKeys";
 import { useIndexLists } from "../useIndexLists";
-import { useIndexProgress } from "../useIndexProgress";
 import { useLatest } from "../useLatest";
 import { useListMenu } from "../useListMenu";
 import { useLiveIndexStatus } from "../useLiveIndexStatus";
@@ -42,8 +41,9 @@ const INDEXED_HINT = (
   <>
     Hover a file or folder and click{" "}
     <span className={styles.hintPlus} role="img" aria-label="plus">
-      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" aria-hidden>
-        <path d="M3.2 6h5.6M6 3.2v5.6" />
+      <svg viewBox="0 0 12 12" aria-hidden>
+        <circle cx="6" cy="6" r="6" className={styles.hintDisc} />
+        <path d="M3.2 6h5.6M6 3.2v5.6" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" />
       </svg>
     </span>{" "}
     to start indexing it.
@@ -65,12 +65,13 @@ interface Props {
   onBack: () => void;
   onSimple: () => void;
   overview: Overview | null;
+  onRefreshProgress: () => Promise<void>;
   secondsLeft: number | null;
   arrivalDelay: number;
   active: boolean;
 }
 
-export function IndexScreen({ onBack, onSimple, overview, secondsLeft, arrivalDelay, active }: Props) {
+export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: refreshProgress, secondsLeft, arrivalDelay, active }: Props) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(true);
   const [openingAnother, setOpeningAnother] = useState(true);
@@ -83,8 +84,7 @@ export function IndexScreen({ onBack, onSimple, overview, secondsLeft, arrivalDe
   const [view, setView] = useViewMode();
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const changeSort = useCallback((column: SortColumn) => setSort((current) => nextSort(current, column)), []);
-
-  const { progress, refresh: refreshProgress } = useIndexProgress(active);
+  const progress = overview?.progress ?? null;
 
   const { indexed, excluded, loaded, refresh: refreshLists } = useIndexLists(
     `${progress?.name ?? ""}|${progress?.queued ?? 0}|${progress?.paused ? 1 : 0}`,
@@ -126,7 +126,7 @@ export function IndexScreen({ onBack, onSimple, overview, secondsLeft, arrivalDe
   const explorer = useRef<HTMLElement>(null);
   useDefaultScroll(active, () => explorer.current?.querySelector<HTMLElement>("[data-scroller]") ?? null);
 
-  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress, progress !== null);
+  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress, active && progress !== null);
   const refreshAll = async () => {
     await refreshStatuses();
     await refreshProgress();
@@ -192,6 +192,14 @@ export function IndexScreen({ onBack, onSimple, overview, secondsLeft, arrivalDe
   }, [shownListing]);
   useFolderChanges(listing?.path ?? null, active, refreshFolder);
 
+  const hasPrivacyLocked = listing?.entries.some((entry) => entry.privacy) ?? false;
+  useEffect(() => {
+    if (!active || !hasPrivacyLocked) return;
+    const onFocus = () => void refreshFolder();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [active, hasPrivacyLocked, refreshFolder]);
+
   useEffect(() => {
     let cancelled = false;
     api
@@ -224,7 +232,12 @@ export function IndexScreen({ onBack, onSimple, overview, secondsLeft, arrivalDe
 
   const openEntry = useCallback(
     (entry: Entry) => {
-      if (!entry.readable) return;
+      if (!entry.readable) {
+        if (entry.privacy) {
+          api.openPrivacySettings(entry.privacy).catch((e) => setError(`Couldn't open System Settings. ${errorText(e)}`));
+        }
+        return;
+      }
       if (entry.kind === "file") {
         api.openFile(entry.path).catch((e) => setError(`Couldn't open ${entry.name}. ${errorText(e)}`));
       } else {

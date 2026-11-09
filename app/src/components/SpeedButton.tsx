@@ -7,11 +7,7 @@ import { worthATip } from "../speedTip";
 import { useLatest } from "../useLatest";
 import { useSpeedTip } from "../useSpeedTip";
 import { IconButton } from "./IconButton";
-import { MoonStars } from "./MoonStarsIcon";
-import { SlidingIcon } from "./SlidingIcon";
 import styles from "./SpeedButton.module.css";
-
-const ICONS = { faster: Zap, gentler: MoonStars };
 
 const MARGIN_PX = 24;
 const GAP_PX = 10;
@@ -44,10 +40,12 @@ export function SpeedButton({ progress, secondsLeft, onScreen, onToggle }: Props
       onPointerLeave={() => setHovered(false)}
     >
       <IconButton
-        label={progress.turbo ? "Index gently (uses less resources)" : "Index faster (uses more resources)"}
+        label={progress.turbo ? "Turn off fast indexing" : "Turn on fast indexing (uses more resources)"}
         onClick={onToggle}
+        className={styles.speed}
+        data-on={progress.turbo ? "" : undefined}
       >
-        <SlidingIcon icons={ICONS} current={progress.turbo ? "gentler" : "faster"} />
+        <Zap size={18} className={styles.bolt} aria-hidden />
       </IconButton>
       {present && anchor && (
         <Tip anchor={anchor} hidden={hovered} leaving={!showTip} onGone={() => setPresent(false)} />

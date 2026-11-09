@@ -208,6 +208,14 @@ impl ProgressState {
         }
     }
 
+    pub fn counted_already(&mut self, ticket: u64, total: u64) {
+        if let Some(job) = self.job_mut(ticket) {
+            job.count_taken = true;
+            job.found = total;
+            job.total = Some(total);
+        }
+    }
+
     pub fn finish_counting(&mut self, ticket: u64) {
         if let Some(job) = self.job_mut(ticket) {
             job.total = Some(job.found);

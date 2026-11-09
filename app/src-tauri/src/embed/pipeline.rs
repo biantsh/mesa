@@ -1,7 +1,7 @@
 use std::{
     path::Path,
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
@@ -52,12 +52,47 @@ pub trait Backend: Send + Sync + 'static {
 }
 
 const REST_AFTER_A_BATCH: f64 = 3.0;
-const PACE_POLL: Duration = Duration::from_millis(20);
+pub const GENTLE_SLOWDOWN: f64 = 1.0 + REST_AFTER_A_BATCH;
+const PARK_FALLBACK: Duration = Duration::from_millis(200);
+
+#[derive(Default)]
+struct Parking {
+    lock: Mutex<()>,
+    changed: Condvar,
+}
+
+impl Parking {
+    fn wake(&self) {
+        let _held = lock(&self.lock);
+        self.changed.notify_all();
+    }
+
+    fn wait_unless(&self, go_on: impl Fn() -> bool) {
+        let held = lock(&self.lock);
+        if go_on() {
+            return;
+        }
+        drop(self.changed.wait_timeout(held, PARK_FALLBACK));
+    }
+
+    fn waker(&self) -> Waker<'_> {
+        Waker(self)
+    }
+}
+
+struct Waker<'a>(&'a Parking);
+
+impl Drop for Waker<'_> {
+    fn drop(&mut self) {
+        self.0.wake();
+    }
+}
 
 pub struct Pipeline<B: Backend> {
     backend: Arc<B>,
     preparers: usize,
     eco: AtomicBool,
+    parking: Parking,
 }
 
 impl<B: Backend> Pipeline<B> {
@@ -67,6 +102,7 @@ impl<B: Backend> Pipeline<B> {
             backend: Arc::new(backend),
             preparers: (cores / 2).clamp(2, 8),
             eco: AtomicBool::new(false),
+            parking: Parking::default(),
         }
     }
 
@@ -213,12 +249,16 @@ impl<B: Backend> Embedder for Pipeline<B> {
                 let (ready_in, event_in) = (ready_in.clone(), event_in.clone());
                 let (next, cancel, preparing) = (&next, &cancel, &preparing);
                 scope.spawn(move || {
+                    let _leaving = self.parking.waker();
                     while !cancel.load(Ordering::Relaxed) {
                         if number >= self.preparers() {
-                            if next.load(Ordering::Relaxed) >= items.len() {
+                            let all_taken = || next.load(Ordering::Relaxed) >= items.len();
+                            if all_taken() {
                                 break;
                             }
-                            thread::sleep(PACE_POLL);
+                            self.parking.wait_unless(|| {
+                                cancel.load(Ordering::Relaxed) || number < self.preparers() || all_taken()
+                            });
                             continue;
                         }
                         let item = next.fetch_add(1, Ordering::Relaxed);
@@ -252,12 +292,16 @@ impl<B: Backend> Embedder for Pipeline<B> {
                 let (ready_out, event_in) = (ready_out.clone(), event_in.clone());
                 let (cancel, failure, preparing) = (&cancel, &failure, &preparing);
                 scope.spawn(move || {
+                    let _leaving = self.parking.waker();
                     while !cancel.load(Ordering::Relaxed) {
                         if number >= self.in_flight() {
-                            if preparing.load(Ordering::Relaxed) == 0 && ready_out.is_empty() {
+                            let nothing_more = || preparing.load(Ordering::Relaxed) == 0 && ready_out.is_empty();
+                            if nothing_more() {
                                 break;
                             }
-                            thread::sleep(PACE_POLL);
+                            self.parking.wait_unless(|| {
+                                cancel.load(Ordering::Relaxed) || number < self.in_flight() || nothing_more()
+                            });
                             continue;
                         }
                         let Ok(first) = ready_out.recv() else { break };
@@ -311,6 +355,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
                 }
                 if stop() {
                     cancel.store(true, Ordering::Relaxed);
+                    self.parking.wake();
                     drop(event_out);
                     break;
                 }
@@ -391,6 +436,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
 
     fn set_eco(&self, eco: bool) {
         self.eco.store(eco, Ordering::Relaxed);
+        self.parking.wake();
     }
 
     fn gpu(&self) -> Option<String> {

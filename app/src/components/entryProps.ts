@@ -1,4 +1,5 @@
 import type { Entry } from "../api";
+import { PRIVACY_TIP } from "./StatusBadge";
 
 interface Handlers<T> {
   selected: boolean;
@@ -43,5 +44,17 @@ export function pressProps<T extends { path: string }>(item: T, usable: boolean,
 }
 
 export function entryProps(entry: Entry, handlers: Handlers<Entry>) {
-  return pressProps(entry, entry.readable, entry.name, handlers);
+  const props = pressProps(entry, entry.readable, entry.name, handlers);
+  if (entry.readable || !entry.privacy) return props;
+  return {
+    ...props,
+    "data-privacy": "",
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+      e.currentTarget.dataset.tooltip = PRIVACY_TIP;
+    },
+    onDoubleClick: () => handlers.onOpen(entry),
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" && !(e.ctrlKey || e.metaKey)) handlers.onOpen(entry);
+    },
+  };
 }

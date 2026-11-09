@@ -142,3 +142,56 @@
   font-size: 12px;
   color: var(--color-text-faint);
 }
+
+.access {
+  --access-gap: 12px;
+  margin: var(--access-gap) 0 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  animation: access-in 320ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+.accessLeaving {
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 240ms ease,
+    transform 240ms ease;
+}
+
+.accessLink {
+  line-height: 1.2;
+  padding: 0 4px;
+  margin: 0 -4px 0 -3px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.accessLink:hover {
+  background: var(--color-hover-bg);
+}
+
+.accessLink:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@keyframes access-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .access {
+    animation: none;
+  }
+}

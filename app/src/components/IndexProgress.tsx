@@ -164,16 +164,11 @@ export function Bar({ progress }: { progress: Progress }) {
   const determinate = !counting && total > 0;
   const percent = determinate ? Math.floor((done / total) * 100) : 0;
   const sweeping = !determinate && !paused;
-  const [swept, setSwept] = useState(sweeping);
-  const [settled, setSettled] = useState(false);
-  if (sweeping && (!swept || settled)) {
-    setSwept(true);
-    setSettled(false);
-  }
-  const waiting = swept && !settled;
+  const [waiting, setWaiting] = useState(sweeping);
+  if (sweeping && !waiting) setWaiting(true);
   useEffect(() => {
     if (!waiting || !determinate) return;
-    const timer = window.setTimeout(() => setSettled(true), AFTER_SWEEP_MS);
+    const timer = window.setTimeout(() => setWaiting(false), AFTER_SWEEP_MS);
     return () => window.clearTimeout(timer);
   }, [waiting, determinate]);
 

@@ -104,6 +104,7 @@ pub struct Entry {
     pub removable: bool,
     pub size: Option<u64>,
     pub modified: Option<i64>,
+    pub privacy: Option<crate::folder_access::Pane>,
 }
 
 impl Entry {
@@ -121,6 +122,7 @@ impl Entry {
             removable: false,
             size: None,
             modified: None,
+            privacy: None,
         }
     }
 
@@ -132,7 +134,11 @@ impl Entry {
     }
 
     fn folder(name: String, path: &Path) -> Self {
-        let (readable, has_contents) = probe(path);
+        let (readable, has_contents) = if crate::folder_access::may_open(path) {
+            probe(path)
+        } else {
+            (true, true)
+        };
         Self {
             readable,
             has_contents,

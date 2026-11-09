@@ -63,8 +63,12 @@ const BADGES: Partial<Record<IndexStatus, Badge>> = {
 
 const LOCKED: Badge = { label: "Can't be opened", ...LOCK, className: styles.lock };
 
+export const PRIVACY_TIP = "Double-click to allow access in System Settings";
+const NOT_ALLOWED: Badge = { label: PRIVACY_TIP, columnText: "Not allowed", ...LOCK, className: styles.lock };
+
 function badgeOf(entry: Entry): Badge | null {
-  return entry.readable ? (BADGES[entry.index] ?? null) : LOCKED;
+  if (!entry.readable) return entry.privacy ? NOT_ALLOWED : LOCKED;
+  return BADGES[entry.index] ?? null;
 }
 
 export function statusText(entry: Entry): string | null {

@@ -191,8 +191,15 @@ impl LlamaServer {
         if let ModelStatus::Failed { reason, setup: true } = self.model.get() {
             return Err(Error(reason));
         }
+        let getting = matches!(
+            self.model.get(),
+            ModelStatus::Downloading { .. } | ModelStatus::Verifying
+        );
         match model::ensure(&self.locations.models, &self.files, source, &self.model) {
             Ok(()) => {
+                if getting {
+                    crate::estimate::before_model_starts(&self.model);
+                }
                 self.files_ok.store(true, Ordering::Release);
                 self.model.set(ModelStatus::Starting);
                 Ok(())

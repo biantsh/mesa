@@ -7,6 +7,29 @@
   color: var(--color-primary-ink);
 }
 
+.speed {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+.bolt {
+  fill: transparent;
+  transition: fill 200ms ease;
+}
+
+.speed[data-on] {
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  color: var(--color-primary-ink);
+}
+
+.speed[data-on]:hover {
+  background: color-mix(in srgb, var(--color-primary) 24%, transparent);
+  color: var(--color-primary-ink);
+}
+
+.speed[data-on] .bolt {
+  fill: color-mix(in srgb, currentColor 22%, transparent);
+}
+
 .tip {
   --edge: color-mix(in srgb, var(--color-primary) 60%, var(--color-border-strong));
   position: fixed;

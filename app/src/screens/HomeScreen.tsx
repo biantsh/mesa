@@ -76,6 +76,7 @@ function placeholder(model: ModelStatus | null, nothingIndexed: boolean, droppin
   if (model?.state !== "failed" && nothingIndexed) return "Nothing to search yet";
   switch (model?.state) {
     case "verifying":
+    case "finalizing":
     case "starting":
       return "Loading model…";
     case "preparing":

@@ -41,12 +41,12 @@
 }
 
 .app {
-  --side-default: clamp(260px, 18vw, 340px);
+  --side-default: clamp(284px, 18vw, 340px);
 }
 
 @supports (width: round(1px, 1px)) {
   .app {
-    --side-default: round(clamp(260px, 18vw, 340px), 4px);
+    --side-default: round(clamp(284px, 18vw, 340px), 4px);
   }
 }
 
@@ -125,17 +125,18 @@
 .hintPlus {
   --disc: 12px;
   display: inline-grid;
-  place-items: center;
   width: var(--disc);
   height: var(--disc);
-  vertical-align: calc(0.37em - var(--disc) * 0.5);
+  vertical-align: calc(0.32em - var(--disc) * 0.5);
   margin: 0 1px;
-  border-radius: 50%;
-  background: var(--color-primary);
   color: var(--color-on-primary);
 }
 
 .hintPlus > svg {
   width: var(--disc);
   height: var(--disc);
+}
+
+.hintDisc {
+  fill: var(--color-primary);
 }

@@ -41,6 +41,14 @@
   background: var(--color-hover-bg);
 }
 
+.tile.unreadable[data-privacy]:hover {
+  background: var(--color-hover-bg);
+}
+
+.tile.unreadable[data-privacy]:active {
+  background: var(--color-selected-bg);
+}
+
 .tile.selected {
   background: var(--color-selected-bg);
   border-color: var(--color-selected-border);

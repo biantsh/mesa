@@ -12,12 +12,13 @@ interface Props {
   onSearch: () => void;
   overview: Overview | null;
   onRefreshOverview: () => Promise<void>;
+  onRefreshProgress: () => Promise<void>;
   active: boolean;
 }
 
 const ARRIVAL_DELAY_MS = 100;
 
-export function IndexPage({ onBack, onSearch, overview, onRefreshOverview, active }: Props) {
+export function IndexPage({ onBack, onSearch, overview, onRefreshOverview, onRefreshProgress, active }: Props) {
   const secondsLeft = useSecondsLeft(overview?.progress ?? null);
   const [view, setView] = useIndexView();
   const simple = view === "simple";
@@ -49,6 +50,7 @@ export function IndexPage({ onBack, onSearch, overview, onRefreshOverview, activ
           overview={overview}
           secondsLeft={secondsLeft}
           onRefreshOverview={onRefreshOverview}
+          onRefreshProgress={onRefreshProgress}
           active={active && simple}
         />
       </div>
@@ -57,6 +59,7 @@ export function IndexPage({ onBack, onSearch, overview, onRefreshOverview, activ
           onBack={onBack}
           onSimple={showSimple}
           overview={overview}
+          onRefreshProgress={onRefreshProgress}
           secondsLeft={secondsLeft}
           arrivalDelay={arrivalDelay}
           active={active && !simple}

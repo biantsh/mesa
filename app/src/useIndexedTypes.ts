@@ -12,6 +12,9 @@ export function useIndexedTypes(active: boolean) {
   }, []);
 
   useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  useEffect(() => {
     if (active) void refresh();
   }, [active, refresh]);
 

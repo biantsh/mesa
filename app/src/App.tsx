@@ -30,7 +30,6 @@ function needsSetup(status: ModelStatus | null): boolean {
 
 const OPEN_ON_TOP = "dialog[open], [role='menu']";
 const Home = memo(HomeScreen);
-const FOCUS_DELAY_MS = 0;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -40,7 +39,7 @@ export default function App() {
   const dimmed = (querying && !onIndex) || settingsOpen;
   const maximized = useMaximized();
   useFullscreen();
-  const { overview, refresh: refreshOverview } = useIndexOverviewNow(true);
+  const { overview, refresh: refreshOverview, refreshProgress } = useIndexOverviewNow(true);
   const homeOverview = useFrozenWhile(onIndex, overview);
   const [pillWidth, setPillWidth] = useState<number | null>(null);
   const screensBox = useRef<HTMLDivElement>(null);
@@ -67,10 +66,9 @@ export default function App() {
   const index = useRef<HTMLDivElement>(null);
   const goHome = useCallback(() => setScreen("home"), []);
   const goToIndex = useCallback(() => setScreen("index"), []);
-  const focusOnArrival = useRef(false);
+  const fieldOnArrival = useRef<"animated" | "atOnce" | null>(null);
   const searchFromIndex = useCallback(() => {
-    if (homeScreen.current?.hasText()) focusOnArrival.current = true;
-    else window.setTimeout(() => homeScreen.current?.focusField(), FOCUS_DELAY_MS);
+    fieldOnArrival.current = homeScreen.current?.hasText() ? "atOnce" : "animated";
     setScreen("home");
   }, []);
   const beforeSettings = useRef<Element | null>(null);
@@ -96,13 +94,14 @@ export default function App() {
       first.current = false;
       return;
     }
-    if (!onIndex && focusOnArrival.current) {
-      focusOnArrival.current = false;
+    const field = onIndex ? null : fieldOnArrival.current;
+    fieldOnArrival.current = null;
+    if (field === "atOnce") {
       homeScreen.current?.focusFieldAtOnce();
       return;
     }
-    if (!onIndex && homeScreen.current?.restoreFocus()) return;
-    (onIndex ? index : home).current?.focus({ preventScroll: true });
+    if (onIndex || !homeScreen.current?.restoreFocus()) (onIndex ? index : home).current?.focus({ preventScroll: true });
+    if (field === "animated") homeScreen.current?.focusField();
   }, [onIndex]);
 
   const fromWidget = useWidgetRequests({
@@ -175,7 +174,7 @@ export default function App() {
           tabIndex={-1}
           inert={!onIndex || behind}
         >
-          <IndexPage onBack={goHome} onSearch={searchFromIndex} overview={overview} onRefreshOverview={refreshOverview} active={onIndex} />
+          <IndexPage onBack={goHome} onSearch={searchFromIndex} overview={overview} onRefreshOverview={refreshOverview} onRefreshProgress={refreshProgress} active={onIndex} />
         </div>
         <footer ref={totalsLine} className={cx(styles.totals, cornersAway && styles.cornerAway)}>
           {overview && describeIndexTotals(overview.files, overview.bytes)}

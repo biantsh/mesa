@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
-import { api, sameProgress, type Overview } from "./api";
+import { useCallback, useRef, useState } from "react";
+import { api, type Overview } from "./api";
+import { IndexSnapshot } from "./indexSnapshot";
 import { usePoll } from "./usePoll";
 
 export function useIndexOverview(active: boolean): Overview | null {
@@ -7,20 +8,27 @@ export function useIndexOverview(active: boolean): Overview | null {
 }
 
 export function useIndexOverviewNow(active: boolean) {
+  const snapshot = useRef<IndexSnapshot | null>(null);
+  snapshot.current ??= new IndexSnapshot();
   const [overview, setOverview] = useState<Overview | null>(null);
+
   const refresh = useCallback(async () => {
+    const store = snapshot.current!;
+    const asking = store.ask();
     const next = await api.indexOverview();
-    setOverview((current) =>
-      current &&
-      current.empty === next.empty &&
-      current.everythingIndexed === next.everythingIndexed &&
-      current.files === next.files &&
-      current.bytes === next.bytes &&
-      sameProgress(current.progress, next.progress)
-        ? current
-        : next,
-    );
+    if (store.takeOverview(asking, next)) setOverview(store.overview);
   }, []);
+
+  const refreshProgress = useCallback(async () => {
+    const store = snapshot.current!;
+    const asking = store.ask();
+    try {
+      const next = await api.indexProgress();
+      if (store.takeProgress(asking, next)) setOverview(store.overview);
+    } catch {
+    }
+  }, []);
+
   usePoll(refresh, { active, immediately: true });
-  return { overview, refresh };
+  return { overview, refresh, refreshProgress };
 }

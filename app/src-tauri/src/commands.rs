@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -11,6 +11,8 @@ use tauri_plugin_opener::OpenerExt;
 use crate::{
     browse::{self, Categories, Category, Listing},
     embed::ModelStatus,
+    estimate::{Estimate, Estimator},
+    folder_access::{FolderAccess, Pane},
     hotkey::{self, Hotkey},
     index::{Index, IndexState, Page, Stats},
     main_window,
@@ -18,6 +20,7 @@ use crate::{
     settings::{Settings, SettingsStore},
     shown_folder::{self, ShownFolder},
     store::{Filter, Hit},
+    survey::{self, Survey},
 };
 
 #[tauri::command]
@@ -29,7 +32,12 @@ pub fn home_dir(app: AppHandle) -> String {
 }
 
 #[tauri::command]
-pub async fn list_dir(path: String, index: State<'_, Index>) -> Result<Listing, String> {
+pub async fn list_dir(
+    path: String,
+    index: State<'_, Index>,
+    access: State<'_, FolderAccess>,
+) -> Result<Listing, String> {
+    access.reading(Path::new(&path));
     let mut listing = tauri::async_runtime::spawn_blocking(move || browse::list(&path))
         .await
         .map_err(|e| e.to_string())?
@@ -40,6 +48,9 @@ pub async fn list_dir(path: String, index: State<'_, Index>) -> Result<Listing, 
         entry.droppable = state.droppable;
         entry.excluded_here = state.excluded_here;
         entry.removable = state.removable;
+        if !entry.readable {
+            entry.privacy = access.pane_for(Path::new(&entry.path));
+        }
     }
     Ok(listing)
 }
@@ -169,10 +180,17 @@ pub fn set_indexing_turbo(enabled: bool, index: State<'_, Index>) {
 }
 
 #[tauri::command(async)]
-pub fn add_to_index(paths: Vec<String>, completing: Option<String>, index: State<'_, Index>) -> Result<(), String> {
+pub fn add_to_index(
+    paths: Vec<String>,
+    completing: Option<String>,
+    index: State<'_, Index>,
+    access: State<'_, FolderAccess>,
+) -> Result<(), String> {
+    let paths = to_paths(paths);
+    access.indexing(paths.iter().map(PathBuf::as_path));
     match completing {
-        Some(folder) => index.add_completing(&to_paths(paths), Path::new(&folder)),
-        None => index.set_many(&to_paths(paths), true),
+        Some(folder) => index.add_completing(&paths, Path::new(&folder)),
+        None => index.set_many(&paths, true),
     }
 }
 
@@ -226,6 +244,13 @@ const PROJECT_URL: &str = "https://github.com/biantsh/mesa";
 pub fn open_project_page(app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_url(PROJECT_URL, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_privacy_settings(pane: Pane, app: AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url(pane.settings_url(), None::<&str>)
         .map_err(|e| e.to_string())
 }
 
@@ -321,12 +346,61 @@ fn everything_roots(app: &AppHandle) -> Vec<PathBuf> {
 }
 
 #[tauri::command(async)]
-pub fn index_everything(app: AppHandle, index: State<'_, Index>) -> Result<(), String> {
+pub fn index_everything(
+    app: AppHandle,
+    index: State<'_, Index>,
+    access: State<'_, FolderAccess>,
+    estimator: State<'_, Arc<Estimator>>,
+) -> Result<(), String> {
     let roots = everything_roots(&app);
     if roots.is_empty() {
         return Err("Couldn't find your folders.".into());
     }
-    index.set_everything(&roots)
+    let counted = estimator.counted(index.indexed_types());
+    access.indexing(roots.iter().map(PathBuf::as_path));
+    index.set_everything_counted(&roots, |root| {
+        counted
+            .as_ref()?
+            .iter()
+            .find(|(counted_root, _)| counted_root == root)
+            .map(|&(_, files)| files)
+    })
+}
+
+#[tauri::command(async)]
+pub fn survey_user_files(
+    include_protected: bool,
+    app: AppHandle,
+    index: State<'_, Index>,
+    access: State<'_, FolderAccess>,
+    settings: State<'_, SettingsStore>,
+    estimator: State<'_, Arc<Estimator>>,
+) -> Survey {
+    if include_protected {
+        access.asking_all();
+    }
+    let _turn = estimator.one_survey_at_a_time();
+    let folders = access.folders();
+    let not_asked: Vec<String> = folders
+        .iter()
+        .filter(|folder| !folder.asked)
+        .map(|folder| folder.name.clone())
+        .collect();
+    let survey = match estimator.recent_survey(&not_asked) {
+        Some(survey) => survey,
+        None => {
+            let survey = survey::survey(&everything_roots(&app), &folders, |path| index.is_excluded(path));
+            estimator.keep(survey.clone(), not_asked);
+            survey
+        }
+    };
+    estimator.measure_missing(settings.get().device());
+    survey
+}
+
+#[tauri::command]
+pub fn index_estimate(settings: State<'_, SettingsStore>, estimator: State<'_, Arc<Estimator>>) -> Estimate {
+    estimator.estimate(settings.get().device())
 }
 
 #[tauri::command]

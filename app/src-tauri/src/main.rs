@@ -8,7 +8,9 @@ mod commands;
 mod crawl;
 mod document_preview;
 mod embed;
+mod estimate;
 mod examples;
+mod folder_access;
 mod hotkey;
 mod index;
 mod indexer;
@@ -22,6 +24,7 @@ mod shown_folder;
 mod startup;
 mod store;
 mod surface;
+mod survey;
 mod system_menu;
 mod thumbnail;
 #[cfg(windows)]
@@ -169,6 +172,10 @@ fn main() {
             embedder.warm_up();
             let index = index::Index::open_with(&dir, embedder, false, settings.get().indexed())
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
+            let access = folder_access::FolderAccess::open(&dir, app.path().home_dir().ok().as_deref());
+            access.indexing(index.indexed_roots().iter().map(std::path::PathBuf::as_path));
+            app.manage(access);
+            app.manage(estimate::Estimator::open(&dir, resources.as_deref()));
             index.check_for_changes();
             index.start_watching();
             app.manage(index);
@@ -221,6 +228,9 @@ fn main() {
             commands::open_project_page,
             commands::show_in_folder,
             commands::index_everything,
+            commands::survey_user_files,
+            commands::index_estimate,
+            commands::open_privacy_settings,
             commands::get_settings,
             commands::get_search_hotkey,
             commands::set_search_hotkey,

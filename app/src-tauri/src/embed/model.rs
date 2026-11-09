@@ -50,6 +50,7 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 pub enum ModelStatus {
     Downloading { done: u64, total: u64 },
     Verifying,
+    Finalizing,
     Starting,
     Preparing,
     Ready,

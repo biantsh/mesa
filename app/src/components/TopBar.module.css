@@ -18,23 +18,24 @@
   display: flex;
   align-items: center;
   gap: var(--vertical);
-  width: var(--side-default, clamp(260px, 18vw, 340px));
+  width: var(--side-default, clamp(284px, 18vw, 340px));
   min-width: min-content;
 }
 
 .actions > * {
   flex: 1 1 auto;
   min-width: min-content;
+  white-space: nowrap;
 }
 
 .bar .simpleButton {
-  padding-left: 13px;
-  padding-right: 16px;
+  padding-left: 21px;
+  padding-right: 24px;
 }
 
 .bar .indexButton {
-  padding-left: 6px;
-  padding-right: 8px;
+  padding-left: 14px;
+  padding-right: 16px;
 }
 
 .middle {

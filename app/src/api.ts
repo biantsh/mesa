@@ -24,7 +24,10 @@ export interface Entry {
   removable: boolean;
   size: number | null;
   modified: number | null;
+  privacy?: PrivacyPane | null;
 }
+
+export type PrivacyPane = "filesAndFolders" | "photos" | "media";
 
 export interface Listed extends Entry {
   missing: boolean;
@@ -86,6 +89,19 @@ export interface Overview {
   bytes: number;
 }
 
+export interface Survey {
+  counts: Record<Category, number>;
+  bytes: Record<Category, number>;
+  notAsked: string[];
+  noAccess: string[];
+}
+
+export interface Estimate {
+  seconds: Record<Category, number | null>;
+  measuring: boolean;
+  gentleSlowdown: number;
+}
+
 export interface Settings {
   gpuAcceleration: boolean;
   indexedTypes: Category[];
@@ -132,6 +148,7 @@ export const COMPUTER = "";
 export type ModelStatus =
   | { state: "downloading"; done: number; total: number }
   | { state: "verifying" }
+  | { state: "finalizing" }
   | { state: "starting" }
   | { state: "preparing" }
   | { state: "ready" }
@@ -155,6 +172,7 @@ export const api = {
   addToIndex: (paths: string[], completing?: string) => invoke<void>("add_to_index", { paths, completing }),
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
   openProjectPage: () => invoke<void>("open_project_page"),
+  openPrivacySettings: (pane: PrivacyPane) => invoke<void>("open_privacy_settings", { pane }),
   openFile: (path: string) => invoke<void>("open_file", { path }),
   copyFiles: (paths: string[]) => invoke<void>("copy_files", { paths }),
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
@@ -165,6 +183,8 @@ export const api = {
   indexedItems: () => invoke<Listed[]>("indexed_items"),
   excludedItems: () => invoke<Listed[]>("excluded_items"),
   indexEverything: () => invoke<void>("index_everything"),
+  surveyUserFiles: (includeProtected: boolean) => invoke<Survey>("survey_user_files", { includeProtected }),
+  indexEstimate: () => invoke<Estimate>("index_estimate"),
   getSettings: () => invoke<Settings>("get_settings"),
   getSearchHotkey: () => invoke<HotkeyStatus>("get_search_hotkey"),
   setSearchHotkey: (shortcut: string | null) => invoke<HotkeyStatus>("set_search_hotkey", { shortcut }),

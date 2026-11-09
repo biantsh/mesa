@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Mesa indexes your files so you can find them by describing what's in them. Everything stays on this Mac.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Mesa indexes your files so you can find them by describing what's in them. Everything stays on this Mac.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Mesa indexes your files so you can find them by describing what's in them. Everything stays on this Mac.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Mesa indexes your photos so you can find them by describing what's in them. Everything stays on this Mac.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Mesa indexes your music and videos so you can find them by describing what's in them. Everything stays on this Mac.</string>
+</dict>
+</plist>

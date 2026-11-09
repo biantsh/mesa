@@ -588,6 +588,10 @@ impl Index {
             .count()
     }
 
+    pub fn is_excluded(&self, path: &Path) -> bool {
+        self.shared.is_excluded(path)
+    }
+
     pub fn exclusion_count(&self) -> usize {
         lock(&self.shared.excluded).len()
     }
@@ -836,7 +840,11 @@ impl Index {
         self.set_paused(false)
     }
 
-    pub fn set_everything(&self, roots: &[PathBuf]) -> Result<(), String> {
+    pub fn set_everything_counted(
+        &self,
+        roots: &[PathBuf],
+        counted: impl Fn(&Path) -> Option<u64>,
+    ) -> Result<(), String> {
         let mut store = lock(&self.shared.store);
         let mut rules = lock(&self.shared.rules).clone();
         let roots: Vec<PathBuf> = roots
@@ -847,7 +855,7 @@ impl Index {
         rules::add(&mut rules, &roots);
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
-        self.start_jobs(&store, &roots)
+        self.start_jobs_counted(&store, &roots, counted)
     }
 
     fn is_left_to_index(&self, rules: &Rules, root: &Path) -> bool {
@@ -867,6 +875,15 @@ impl Index {
     }
 
     fn start_jobs(&self, store: &Store, roots: &[PathBuf]) -> Result<(), String> {
+        self.start_jobs_counted(store, roots, |_| None)
+    }
+
+    fn start_jobs_counted(
+        &self,
+        store: &Store,
+        roots: &[PathBuf],
+        counted: impl Fn(&Path) -> Option<u64>,
+    ) -> Result<(), String> {
         if roots.is_empty() {
             return Ok(());
         }
@@ -876,13 +893,24 @@ impl Index {
         }
         for (id, root) in ids.into_iter().zip(roots) {
             let already = store.files_under(root).unwrap_or(0);
-            self.queue_job_having_done(id, root.clone(), already);
+            self.queue_job_counted(id, root.clone(), already, counted(root));
         }
         Ok(())
     }
 
     fn queue_job_having_done(&self, id: i64, root: PathBuf, already: u64) {
-        let (ticket, first) = lock(&self.shared.progress).add_job_having_done(id, root.clone(), already);
+        self.queue_job_counted(id, root, already, None);
+    }
+
+    fn queue_job_counted(&self, id: i64, root: PathBuf, already: u64, counted: Option<u64>) {
+        let (ticket, first) = {
+            let mut progress = lock(&self.shared.progress);
+            let (ticket, first) = progress.add_job_having_done(id, root.clone(), already);
+            if let Some(total) = counted {
+                progress.counted_already(ticket, total);
+            }
+            (ticket, first)
+        };
         if first {
             lock(&self.shared.pending).add(root.clone());
         }
