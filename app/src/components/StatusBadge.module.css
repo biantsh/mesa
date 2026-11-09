@@ -1,14 +1,14 @@
 .badge {
+  flex: none;
   display: grid;
   place-items: center;
   width: 20px;
   height: 20px;
-  border-radius: 50%;
 }
 
 .indexed svg {
   fill: var(--color-primary);
-  stroke: var(--color-on-primary);
+  stroke: var(--color-badge-disc);
 }
 
 .partly {
@@ -27,18 +27,12 @@
   color: var(--color-paused);
 }
 
-.lock,
-.lockExcluded {
-  background: var(--color-surface);
-  box-shadow: 0 0 0 1px var(--color-border);
-}
-
 .lock {
   color: var(--color-lock);
 }
 
-.lockExcluded {
-  color: var(--color-text-faint);
+.lockGrey {
+  color: var(--color-lock-grey);
 }
 
 @keyframes spin {

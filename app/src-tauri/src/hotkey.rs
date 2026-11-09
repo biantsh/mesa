@@ -98,6 +98,7 @@ impl Hotkey {
         let mut inner = lock(&self.inner);
         let old = inner.active;
         inner.paused = None;
+        crate::system_menu::set_recording(false);
         if let Some(old) = old {
             let _ = keys.unregister(old);
         }
@@ -159,6 +160,7 @@ impl Hotkey {
         inner.pauses += 1;
         let pause = inner.pauses;
         inner.paused = Some(pause);
+        crate::system_menu::set_recording(true);
         drop(inner);
         let app = app.clone();
         let _ = thread::Builder::new().name("hotkey-pause-limit".into()).spawn(move || {
@@ -179,6 +181,7 @@ impl Hotkey {
             return;
         }
         inner.paused = None;
+        crate::system_menu::set_recording(false);
         let Some(active) = inner.active else { return };
         if app.global_shortcut().register(active).is_err() {
             inner.active = take_default(app);

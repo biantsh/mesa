@@ -29,6 +29,7 @@
 }
 
 .side {
+  position: relative;
   flex: none;
   width: clamp(260px, 18vw, 340px);
   width: round(clamp(260px, 18vw, 340px), 4px);
@@ -42,6 +43,21 @@
   .side {
     width: 220px;
   }
+}
+
+.side[data-sized] {
+  width: var(--side-width);
+  min-width: 220px;
+  max-width: calc(100% - 320px - var(--gap));
+}
+
+.side[data-sized][data-easing] {
+  transition: width 260ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.explorer[data-holding] > * {
+  flex: none;
+  width: var(--files-width);
 }
 
 .explorer {
@@ -89,4 +105,22 @@
 
 .dismiss:hover {
   background: var(--color-danger-bg);
+}
+
+.hintPlus {
+  --disc: 12px;
+  display: inline-grid;
+  place-items: center;
+  width: var(--disc);
+  height: var(--disc);
+  vertical-align: calc(0.37em - var(--disc) * 0.5);
+  margin: 0 1px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.hintPlus > svg {
+  width: var(--disc);
+  height: var(--disc);
 }

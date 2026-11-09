@@ -326,6 +326,11 @@
   color: var(--color-text-faint);
 }
 
+.icon {
+  width: 42%;
+  height: 42%;
+}
+
 .thumb {
   position: absolute;
   inset: 0;

@@ -11,6 +11,12 @@ body,
   margin: 0;
 }
 
+:root[data-resizing] *:not([data-keep-motion], [data-keep-motion] *),
+:root[data-resizing] *:not([data-keep-motion], [data-keep-motion] *)::before,
+:root[data-resizing] *:not([data-keep-motion], [data-keep-motion] *)::after {
+  transition: none !important;
+}
+
 html,
 body,
 #root {
@@ -65,13 +71,18 @@ button {
   border-width: 2px;
 }
 
+[data-region="files"]::-webkit-scrollbar {
+  width: 10px;
+}
+
 [data-region="files"]::-webkit-scrollbar-thumb:vertical {
-  border-width: 3px 2px 3px 4px;
+  border-width: 3px 2px;
+  border-radius: 5px / 6px;
 }
 
 [data-region="files"]::-webkit-scrollbar-thumb:vertical:hover,
 [data-region="files"]::-webkit-scrollbar-thumb:vertical:active {
-  border-width: 2px 1px 2px 3px;
+  border-width: 2px 1px;
 }
 
 :focus-visible {

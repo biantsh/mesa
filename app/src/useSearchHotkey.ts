@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api, errorText, hotkeyFailure, type HotkeyStatus } from "./api";
 import { NONE_HELD, heldFrom, isKeyCode, isModifierCode, anyHeld, shortcutString, type Held } from "./hotkey";
 
@@ -99,11 +100,13 @@ export function useSearchHotkey(open: boolean) {
 
   useEffect(() => {
     if (!recording) return;
+    let lastHeld: Held = NONE_HELD;
     const down = (event: KeyboardEvent) => {
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat || savingRef.current) return;
       const now = heldFrom(event);
+      lastHeld = now;
       if (isModifierCode(event.code)) {
         setHeld(now);
         setRefused(null);
@@ -116,7 +119,8 @@ export function useSearchHotkey(open: boolean) {
       choose(shortcutString(now, event.code), event.code);
     };
     const up = (event: KeyboardEvent) => {
-      if (isModifierCode(event.code)) setHeld(heldFrom(event));
+      lastHeld = heldFrom(event);
+      if (isModifierCode(event.code)) setHeld(lastHeld);
     };
     window.addEventListener("keydown", down, true);
     window.addEventListener("keyup", up, true);
@@ -125,7 +129,14 @@ export function useSearchHotkey(open: boolean) {
     };
     window.addEventListener("click", outside, true);
     window.addEventListener("blur", cancel);
+    const space = listen("system-menu-key", () => {
+      if (savingRef.current) return;
+      const now = { ...lastHeld, alt: true };
+      setHeld(now);
+      choose(shortcutString(now, "Space"), "Space");
+    });
     return () => {
+      space.then((unlisten) => unlisten()).catch(() => {});
       window.removeEventListener("keydown", down, true);
       window.removeEventListener("keyup", up, true);
       window.removeEventListener("click", outside, true);

@@ -7,7 +7,6 @@ import { SELECTING_FROM } from "../selection";
 import { useArrowKeys } from "../useArrowKeys";
 import { usePreview } from "../usePreview";
 import { useVirtualRows } from "../virtual";
-import { EmptyFolder } from "./EmptyFolder";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
 import { StatusBadge } from "./StatusBadge";
@@ -52,8 +51,6 @@ export const FileGrid = memo(function FileGrid({
     columns,
     reveal: entries.find((entry) => selected.has(entry.path))?.path ?? null,
   });
-
-  if (entries.length === 0 && !loading) return <EmptyFolder />;
 
   return (
     <div
@@ -228,36 +225,39 @@ const Tile = memo(function Tile({
     <button
       type="button"
       className={cx(styles.tile, selected && styles.selected, selected && leader && styles.leader, !usable && styles.unreadable)}
+      data-slide="tile"
       {...entryProps(entry, { selected, onSelect, onOpen, onContextMenu })}
     >
       <span className={styles.preview}>
         <span className={styles.iconBox}>
           <EntryIcon entry={entry} size={40} />
           {!showingImage && (
-            <span className={styles.badgeOnIcon}>
+            <span className={styles.badgeCorner}>
               <Corner entry={entry} onAdd={onAdd} onStop={onStop} />
             </span>
           )}
         </span>
         {hasImage && (
-          <img
-            className={cx(
-              styles.thumb,
-              showingImage && styles.loaded,
-              entry.category === "document" && styles.contain,
+          <span className={styles.picture}>
+            <img
+              className={cx(
+                styles.thumb,
+                showingImage && styles.loaded,
+                entry.category === "document" && styles.contain,
+              )}
+              src={previewUrl(entry.path)}
+              alt=""
+              draggable={false}
+              loading="lazy"
+              decoding="async"
+              onLoad={onLoad}
+              onError={onError}
+            />
+            {showingImage && (
+              <span className={styles.badgeCorner}>
+                <Corner entry={entry} onAdd={onAdd} onStop={onStop} />
+              </span>
             )}
-            src={previewUrl(entry.path)}
-            alt=""
-            draggable={false}
-            loading="lazy"
-            decoding="async"
-            onLoad={onLoad}
-            onError={onError}
-          />
-        )}
-        {showingImage && (
-          <span className={styles.badgeOnPreview}>
-            <Corner entry={entry} onAdd={onAdd} onStop={onStop} />
           </span>
         )}
       </span>

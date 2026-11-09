@@ -5,7 +5,7 @@
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   align-content: start;
   gap: 4px;
-  padding: 12px 0 12px 12px;
+  padding: 12px 2px 12px 12px;
   /* Always show the scrollbar so the tiles don't shift. scrollbar-gutter: stable reserves the system scrollbar's width in WebKit, not ours. */
   overflow-y: scroll;
   transition: opacity 120ms ease;
@@ -67,15 +67,23 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 56px;
+  height: 48px;
 }
 
-.thumb {
+.picture {
   position: absolute;
   top: 4px;
   left: 0;
-  width: 100%;
+  right: 0;
+  width: min(100%, 76px);
   height: calc(100% - 4px);
+  margin-inline: auto;
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   border-radius: var(--radius-sm);
   background: var(--color-preview-bg);
@@ -95,17 +103,10 @@
   display: grid;
 }
 
-.badgeOnIcon {
+.badgeCorner {
   position: absolute;
   right: -6px;
   bottom: -2px;
-  display: flex;
-}
-
-.badgeOnPreview {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
   display: flex;
 }
 

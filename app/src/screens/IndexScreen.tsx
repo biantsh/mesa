@@ -3,13 +3,16 @@ import { X } from "lucide-react";
 import { api, COMPUTER, errorText, type Entry, type Listed, type Listing } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ContextMenu } from "../components/ContextMenu";
+import { EmptyFolder } from "../components/EmptyFolder";
 import { FileGrid } from "../components/FileGrid";
 import { FileList } from "../components/FileList";
 import { ItemsPanel } from "../components/ItemsPanel";
 import { NavBar } from "../components/NavBar";
+import { PanelSplitter } from "../components/PanelSplitter";
 import { StatusBar } from "../components/StatusBar";
 import { TopBar } from "../components/TopBar";
 import { BACKGROUND_PRESS } from "../background";
+import { showsEmptyFolder } from "../emptyFolder";
 import { MAIN_HIDDEN } from "../events";
 import { describeIndexTotals } from "../format";
 import { menuGroups } from "../menuGroups";
@@ -35,16 +38,22 @@ import { useViewMode } from "../useViewMode";
 import styles from "./IndexScreen.module.css";
 
 const NO_ENTRIES: Entry[] = [];
-const KEEPS_SELECTION = "button, a, input, select, textarea, label, dialog, [role='menu']";
+const KEEPS_SELECTION = "button, a, input, select, textarea, label, dialog, [role='menu'], [role='separator']";
 
 const INDEXED_HINT = (
   <>
-    Hover a folder and click <b>+</b> to start indexing it
+    Hover a file or folder and click{" "}
+    <span className={styles.hintPlus} role="img" aria-label="plus">
+      <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" aria-hidden>
+        <path d="M3.2 6h5.6M6 3.2v5.6" />
+      </svg>
+    </span>{" "}
+    to start indexing it.
   </>
 );
 const EXCLUDED_HINT = (
   <>
-    Right-click a folder and choose <b>Exclude</b> to keep it out of the index
+    Right-click a file or folder and choose <b>Exclude</b> to keep it out of the index.
   </>
 );
 
@@ -62,6 +71,7 @@ interface Props {
 export function IndexScreen({ onBack, active }: Props) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(true);
+  const [openingAnother, setOpeningAnother] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const latestRequest = useRef(0);
@@ -140,6 +150,7 @@ export function IndexScreen({ onBack, active }: Props) {
   const loadsUnderway = useRef(0);
   const load = useCallback(async (path: string) => {
     const request = ++latestRequest.current;
+    setOpeningAnother(path !== shownFolder.current);
     setLoading(true);
     loadsUnderway.current++;
     try {
@@ -327,7 +338,9 @@ export function IndexScreen({ onBack, active }: Props) {
             </div>
           )}
 
-          {view === "grid" ? (
+          {showsEmptyFolder(entries.length, loading, openingAnother) ? (
+            <EmptyFolder />
+          ) : view === "grid" ? (
             <FileGrid
               key={listing?.path ?? ""}
               entries={entries}
@@ -363,6 +376,7 @@ export function IndexScreen({ onBack, active }: Props) {
           aria-label="What is indexed and what is excluded"
           style={loaded ? undefined : { visibility: "hidden" }}
         >
+          <PanelSplitter />
           <ItemsPanel
             title="Indexed"
             items={indexed}

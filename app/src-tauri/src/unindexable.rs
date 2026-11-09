@@ -3,7 +3,7 @@ use std::path::Path;
 pub fn is_unindexable(path: &Path) -> bool {
     #[cfg(windows)]
     {
-        is_inside(path, windows_folder())
+        system_folders().iter().any(|folder| is_inside(path, folder))
     }
     #[cfg(target_os = "macos")]
     {
@@ -19,9 +19,11 @@ pub fn is_unindexable(path: &Path) -> bool {
 pub fn could_be_unindexable(name: &str) -> bool {
     #[cfg(windows)]
     {
-        windows_folder()
-            .file_name()
-            .is_some_and(|called| called.eq_ignore_ascii_case(name))
+        system_folders().iter().any(|folder| {
+            folder
+                .file_name()
+                .is_some_and(|called| called.eq_ignore_ascii_case(name))
+        })
     }
     #[cfg(target_os = "macos")]
     {
@@ -50,13 +52,30 @@ fn is_inside(path: &Path, folder: &Path) -> bool {
 
 #[cfg(target_os = "macos")]
 const MACOS_FOLDERS: &[&str] = &[
-    "/System", "/Library", "/private", "/usr", "/bin", "/sbin", "/cores", "/opt",
+    "/System",
+    "/Library",
+    "/Applications",
+    "/private",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/cores",
+    "/opt",
 ];
 
 #[cfg(windows)]
-fn windows_folder() -> &'static std::path::PathBuf {
-    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    ROOT.get_or_init(|| std::env::var_os("SystemRoot").map_or_else(|| r"C:\Windows".into(), Into::into))
+fn system_folders() -> &'static [std::path::PathBuf] {
+    static FOLDERS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    FOLDERS.get_or_init(|| {
+        [
+            ("SystemRoot", r"C:\Windows"),
+            ("ProgramFiles", r"C:\Program Files"),
+            ("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+        ]
+        .into_iter()
+        .map(|(variable, usual)| std::env::var_os(variable).map_or_else(|| usual.into(), Into::into))
+        .collect()
+    })
 }
 
 #[cfg(test)]
@@ -85,7 +104,7 @@ mod tests {
 
     #[test]
     fn windows_folder_unindexable() {
-        let windows = windows_folder().clone();
+        let windows = system_folders()[0].clone();
         assert!(is_unindexable(&windows));
         assert!(is_unindexable(
             &windows.join("System32").join("drivers").join("etc").join("hosts")

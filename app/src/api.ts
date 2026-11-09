@@ -21,19 +21,20 @@ export interface Entry {
   index: IndexStatus;
   droppable: boolean;
   excludedHere: boolean;
+  removable: boolean;
   size: number | null;
   modified: number | null;
 }
 
 export interface Listed extends Entry {
   missing: boolean;
-  leftOut: number;
 }
 
 export interface IndexState {
   status: IndexStatus;
   droppable: boolean;
   excludedHere: boolean;
+  removable: boolean;
 }
 
 export interface Crumb {

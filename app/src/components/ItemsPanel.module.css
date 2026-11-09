@@ -80,6 +80,15 @@
   cursor: pointer;
 }
 
+.toggle:focus-visible {
+  outline: none;
+}
+
+.collapsed:has(button.toggle:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 div.toggle {
   cursor: default;
 }
@@ -194,11 +203,27 @@ div.toggle {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px;
+  margin-right: 1px;
+  padding: 5px 3px 0 4px;
+}
+
+.list::-webkit-scrollbar {
+  width: 8px;
 }
 
 .list::-webkit-scrollbar-track {
+  margin-top: 1px;
   margin-bottom: 8px;
+}
+
+.list::-webkit-scrollbar-thumb:vertical {
+  border-width: 3px 1px;
+  border-radius: 4px / 6px;
+}
+
+.list::-webkit-scrollbar-thumb:vertical:hover,
+.list::-webkit-scrollbar-thumb:vertical:active {
+  border-width: 2px 0;
 }
 
 .empty {
@@ -303,11 +328,6 @@ div.toggle {
 
 .folder {
   min-width: 0;
-}
-
-.leftOut {
-  flex: none;
-  white-space: nowrap;
 }
 
 .row .remove {

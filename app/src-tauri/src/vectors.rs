@@ -9,7 +9,7 @@ use half::f16;
 pub const DIMS: usize = 256;
 const ELEMENT_BYTES: usize = 2;
 pub const RECORD_BYTES: usize = DIMS * ELEMENT_BYTES;
-const HEADER_BYTES: u64 = 64;
+pub const HEADER_BYTES: u64 = 64;
 
 const MAGIC: &[u8; 8] = b"MESAVEC\0";
 const VERSION: u32 = 1;
@@ -92,6 +92,10 @@ impl VectorFile {
 
     pub fn sync(&self) -> io::Result<()> {
         self.file.sync_data()
+    }
+
+    pub fn flush_handle(&self) -> io::Result<File> {
+        self.file.try_clone()
     }
 
     pub fn read_each(&mut self, slots: &[u64], visit: &mut dyn FnMut(u64, &Record)) -> io::Result<()> {

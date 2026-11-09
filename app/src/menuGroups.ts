@@ -35,12 +35,9 @@ export function menuGroups(
       actions.exclude === 0 && actions.stop > 0
         ? { label: "Stop excluding", onSelect: actions.doStopExcluding }
         : { label: actions.excludeLabel, disabled: actions.exclude === 0, onSelect: actions.doExclude },
-      {
-        label: counted("Remove from index", actions.remove, several),
-        danger: true,
-        disabled: actions.remove === 0,
-        onSelect: actions.doRemove,
-      },
+      ...(actions.remove > 0
+        ? [{ label: counted("Remove from index", actions.remove, several), danger: true, onSelect: actions.doRemove }]
+        : []),
     ],
   ];
 }

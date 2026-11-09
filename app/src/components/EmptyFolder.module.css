@@ -15,6 +15,21 @@
   margin: 0;
 }
 
+@keyframes emptyIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.empty > p {
+  animation: emptyIn 260ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+.empty > p + p {
+  animation-delay: 70ms;
+}
+
 .title {
   font-size: 13px;
 }

@@ -172,6 +172,12 @@ fn response(png: Option<Vec<u8>>) -> Response<Vec<u8>> {
 }
 
 pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
+    crate::document_preview::render_before_system(path, size)
+        .or_else(|| system_preview(path, size))
+        .or_else(|| crate::document_preview::render_after_system(path, size))
+}
+
+fn system_preview(path: &str, size: u32) -> Option<Vec<u8>> {
     #[cfg(windows)]
     {
         shell::render(path, size)

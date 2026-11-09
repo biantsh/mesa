@@ -12,7 +12,10 @@ const mayStartIn = (entry: Entry) => entry.kind === "file" && entry.index === "i
 const inProgress = (state: IndexState | undefined) => state?.status === "indexing" || state?.status === "paused";
 
 const sameState = (entry: Entry, state: IndexState) =>
-  entry.index === state.status && entry.droppable === state.droppable && entry.excludedHere === state.excludedHere;
+  entry.index === state.status &&
+  entry.droppable === state.droppable &&
+  entry.excludedHere === state.excludedHere &&
+  entry.removable === state.removable;
 
 export function useLiveIndexStatus(
   listing: Listing | null,
@@ -43,7 +46,7 @@ export function useLiveIndexStatus(
         const state = stateOf.get(entry.path);
         if (!state || sameState(entry, state)) return entry;
         changed = true;
-        return { ...entry, index: state.status, droppable: state.droppable, excludedHere: state.excludedHere };
+        return { ...entry, index: state.status, droppable: state.droppable, excludedHere: state.excludedHere, removable: state.removable };
       });
       return changed ? { ...current, entries } : current;
     });

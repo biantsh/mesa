@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { markPlatform } from "./platform";
 import { ready } from "./ready";
+import { jumpWithTheWindow } from "./resizing";
 import { smoothMouseWheel } from "./smoothWheel";
 import { guardAgainstStaleHover } from "./staleHover";
 import { installTooltips } from "./tooltip";
@@ -17,6 +18,7 @@ const isWidget = currentWindow()?.label === "widget";
 const Screen = isWidget ? Widget : App;
 if (!isWidget) markPlatform();
 guardAgainstStaleHover();
+jumpWithTheWindow();
 installTooltips();
 smoothMouseWheel();
 

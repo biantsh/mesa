@@ -36,7 +36,7 @@ interface Props {
 
 export function ViewToggle({ view, onChange }: Props) {
   return (
-    <div className={styles.group} role="group" aria-label="View">
+    <div className={styles.group} role="group" aria-label="View" data-slide="item">
       <button
         type="button"
         className={cx(styles.button, view === "grid" && styles.selected)}

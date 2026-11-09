@@ -95,13 +95,21 @@ pub fn pdf(path: &Path, emit: Emit) -> Result<(), String> {
     File::open(path)
         .and_then(|file| file.take(MAX_PDF_BYTES).read_to_end(&mut bytes))
         .map_err(|e| format!("can't read the file: {e}"))?;
-    let pages = catch_unwind(AssertUnwindSafe(|| pdf_extract::extract_text_from_mem_by_pages(&bytes)))
+    let document = catch_unwind(AssertUnwindSafe(|| pdf_oxide::PdfDocument::from_bytes(bytes)))
         .map_err(|_| "can't read the PDF (its reader gave up on it)".to_owned())?
         .map_err(|e| format!("can't read the PDF: {e}"))?;
+    let count = document.page_count().map_err(|e| format!("can't read the PDF: {e}"))?;
 
-    let mut sent = 0;
-    for (number, page) in pages.iter().enumerate() {
-        let text = normalise(page);
+    let (mut sent, mut readable) = (0, 0);
+    for page in 0..count {
+        let Some(text) = catch_unwind(AssertUnwindSafe(|| document.extract_text(page)))
+            .ok()
+            .and_then(Result::ok)
+        else {
+            continue;
+        };
+        readable += 1;
+        let text = normalise(&text);
         if text.chars().filter(|c| c.is_alphanumeric()).count() < 20 {
             continue;
         }
@@ -111,17 +119,18 @@ pub fn pdf(path: &Path, emit: Emit) -> Result<(), String> {
             }
             sent += 1;
             if !emit(Unit {
-                locator: number as u64 + 1,
+                locator: page as u64 + 1,
                 input: Prepared::Text(titled(path, &passage)),
             }) {
                 return Ok(());
             }
         }
     }
-    if sent == 0 {
-        return Err("the PDF has no text to read (is it a scan?)".into());
+    match (sent, readable) {
+        (0, 0) if count > 0 => Err("can't read the PDF (none of its pages could be read)".into()),
+        (0, _) => Err("the PDF has no text to read (is it a scan?)".into()),
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 fn send_passages(

@@ -31,7 +31,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [querying, setQuerying] = useState(false);
   const onIndex = screen === "index";
-  const dimmed = querying && !onIndex;
+  const dimmed = (querying && !onIndex) || settingsOpen;
   const maximized = useMaximized();
   useFullscreen();
   const overview = useIndexOverview(!onIndex);
@@ -47,6 +47,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [setup]);
   const covered = setup !== "off";
+  const behind = covered || settingsOpen;
   const retryModel = useCallback(() => void api.retryModelSetup().catch(() => {}), []);
 
   const home = useRef<HTMLDivElement>(null);
@@ -54,8 +55,23 @@ export default function App() {
   const index = useRef<HTMLDivElement>(null);
   const goHome = useCallback(() => setScreen("home"), []);
   const goToIndex = useCallback(() => setScreen("index"), []);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const beforeSettings = useRef<Element | null>(null);
+  const changeSettingsOpen = useCallback((open: boolean) => {
+    if (open) beforeSettings.current = document.activeElement;
+    setSettingsOpen(open);
+  }, []);
+  const openSettings = useCallback(() => changeSettingsOpen(true), [changeSettingsOpen]);
+  const closeSettings = useCallback(() => changeSettingsOpen(false), [changeSettingsOpen]);
+  useEffect(() => {
+    const back = beforeSettings.current;
+    if (settingsOpen || !back) return;
+    beforeSettings.current = null;
+    const at = document.activeElement;
+    if (back instanceof HTMLElement && back.isConnected && (!at || at === document.body || at.closest("dialog"))) {
+      back.focus({ preventScroll: true });
+    }
+  }, [settingsOpen]);
+
   const first = useRef(true);
   useEffect(() => {
     if (first.current) {
@@ -68,7 +84,7 @@ export default function App() {
 
   const fromWidget = useWidgetRequests({
     setScreen,
-    setSettingsOpen,
+    setSettingsOpen: changeSettingsOpen,
     focusSearch: () => homeScreen.current?.focusField(),
   });
 
@@ -115,7 +131,7 @@ export default function App() {
           ref={home}
           className={cx(styles.pane, onIndex && styles.before)}
           tabIndex={-1}
-          inert={onIndex || covered}
+          inert={onIndex || behind}
         >
           <HomeScreen
             ref={homeScreen}
@@ -131,13 +147,13 @@ export default function App() {
           ref={index}
           className={cx(styles.pane, !onIndex && styles.after, onIndex && fromWidget && styles.arrive)}
           tabIndex={-1}
-          inert={!onIndex || covered}
+          inert={!onIndex || behind}
         >
           <IndexScreen onBack={goHome} active={onIndex} />
         </div>
         {covered && model && <SetupScreen status={model} leaving={setup === "leaving"} />}
+        <SettingsDialog open={settingsOpen} onClose={closeSettings} />
       </div>
-      <SettingsDialog open={settingsOpen} onClose={closeSettings} />
     </div>
   );
 }

@@ -110,6 +110,12 @@ export function installTooltips() {
 
   const look = () => {
     looking = 0;
+    if (document.documentElement.hasAttribute("data-resizing")) {
+      hide(false);
+      anchor = null;
+      quiet = false;
+      return;
+    }
     const under = document.elementFromPoint(pointer.x, pointer.y);
     const next = under instanceof Element ? under.closest<HTMLElement>("[data-tooltip]") : null;
     if (next === anchor) return;

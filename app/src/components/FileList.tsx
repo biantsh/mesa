@@ -7,10 +7,9 @@ import type { Sort, SortColumn } from "../sort";
 import { useArrowKeys } from "../useArrowKeys";
 import { usePreview } from "../usePreview";
 import { useVirtualRows } from "../virtual";
-import { EmptyFolder } from "./EmptyFolder";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
-import { StatusBadge, statusText } from "./StatusBadge";
+import { StatusBadge, statusColumnText, statusText } from "./StatusBadge";
 import styles from "./FileList.module.css";
 
 interface Props {
@@ -53,8 +52,6 @@ export const FileList = memo(function FileList({
     reveal: entries.find((entry) => selected.has(entry.path))?.path ?? null,
   });
 
-  if (entries.length === 0 && !loading) return <EmptyFolder />;
-
   return (
     <div
       ref={list}
@@ -62,14 +59,15 @@ export const FileList = memo(function FileList({
       tabIndex={-1}
       data-scroller
       data-region="files"
+      data-keep-motion
       onKeyDown={onKeyDown}
     >
       <div className={styles.header} data-no-marquee>
         <SortHeader column="name" label="Name" sort={sort} onSort={onSort} />
-        <SortHeader column="status" label="Status" sort={sort} onSort={onSort} />
+        <SortHeader column="status" label="Status" sort={sort} onSort={onSort} className={styles.status} />
         <SortHeader column="type" label="Type" sort={sort} onSort={onSort} className={styles.type} />
         <SortHeader column="size" label="Size" sort={sort} onSort={onSort} className={styles.size} />
-        <SortHeader column="modified" label="Modified" sort={sort} onSort={onSort} />
+        <SortHeader column="modified" label="Modified" sort={sort} onSort={onSort} className={styles.modified} />
       </div>
       {before > 0 && <div style={{ height: before }} aria-hidden />}
       {entries.slice(start, end).map((entry) => (
@@ -112,7 +110,7 @@ function SortHeader({ column, label, sort, onSort, className }: SortHeaderProps)
       onClick={() => onSort(column)}
     >
       {column === "size" && arrow}
-      {label}
+      <span className={styles.sortLabel}>{label}</span>
       {column !== "size" && arrow}
     </button>
   );
@@ -157,13 +155,13 @@ const Row = memo(function Row({ entry, selected, leader, onSelect, onOpen, onCon
         </span>
         <span className={styles.name} data-clip>{entry.name}</span>
       </span>
-      <span className={styles.statusCell}>
+      <span className={styles.statusCell} data-tooltip={statusText(entry) ?? undefined}>
         <StatusBadge entry={entry} />
-        <span className={styles.truncate}>{statusText(entry)}</span>
+        <span className={cx(styles.truncate, styles.statusText)}>{statusColumnText(entry)}</span>
       </span>
       <span className={cx(styles.cell, styles.type)}>{typeLabel(entry)}</span>
       <span className={cx(styles.cell, styles.size)}>{entry.size === null ? "" : formatSize(entry.size)}</span>
-      <span className={styles.cell}>{entry.modified === null ? "" : formatModified(entry.modified)}</span>
+      <span className={cx(styles.cell, styles.modified)}>{entry.modified === null ? "" : formatModified(entry.modified)}</span>
     </button>
   );
 });

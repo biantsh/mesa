@@ -27,7 +27,7 @@ export function SettingsDialog({ open, onClose }: Props) {
     if (!hotkey.isRecording()) onClose();
   };
   return (
-    <Modal open={open} onClose={close} className={styles.dialog} labelledBy={titleId} focusCard={isMac}>
+    <Modal open={open} onClose={close} className={styles.dialog} labelledBy={titleId} focusCard={isMac} modeless>
       {open && (
         <div className={styles.content}>
           <header className={styles.header}>

@@ -54,12 +54,31 @@ export function useIndexActions({
   const changeSelection = (action: () => Promise<void>) => changeIndex(action, clearSelection);
 
   const actionsFor = (targets: Entry[]) => {
-    const { add, drop, remove, exclude, stop } = menuTargets(targets);
+    const { add, drop, remove, inside, exclude, stop } = menuTargets(targets);
     const paths = (of: Entry[]) => of.map((entry) => entry.path);
+    const doRemove = () =>
+      remove.length > 1
+        ? setAsking({ which: "removeFromIndex", subject: `${remove.length} items`, paths: paths(remove) })
+        : changeSelection(() => api.removeFromIndex(paths(remove)));
+    const excludeEntries = async (which: Entry[]) => {
+      try {
+        const withData = await api.countWithData(paths(which));
+        const stops = which.some((entry) => entry.droppable);
+        if (withData > 1) {
+          setAsking({ which: "excludeFromIndex", subject: describeKinds(which), paths: paths(which), withData, stops });
+        } else {
+          if (stops) markStopped();
+          await changeSelection(() => api.excludeFromIndex(paths(which)));
+        }
+      } catch (e) {
+        setError(`Couldn't update the index. ${errorText(e)}`);
+      }
+    };
     return {
       add: add.length,
       drop: drop.length,
       remove: remove.length,
+      takeOut: remove.length + inside.length,
       exclude: exclude.length,
       excludeLabel: excludeLabel(targets, exclude),
       stop: stop.length,
@@ -75,24 +94,9 @@ export function useIndexActions({
         markStopped();
         return changeSelection(() => api.dropFromQueue(paths(drop)));
       },
-      doRemove: () =>
-        remove.length > 1
-          ? setAsking({ which: "removeFromIndex", subject: `${remove.length} items`, paths: paths(remove) })
-          : changeSelection(() => api.removeFromIndex(paths(remove))),
-      doExclude: async () => {
-        try {
-          const withData = await api.countWithData(paths(exclude));
-          const stops = exclude.some((entry) => entry.droppable);
-          if (withData > 1) {
-            setAsking({ which: "excludeFromIndex", subject: describeKinds(exclude), paths: paths(exclude), withData, stops });
-          } else {
-            if (stops) markStopped();
-            await changeSelection(() => api.excludeFromIndex(paths(exclude)));
-          }
-        } catch (e) {
-          setError(`Couldn't update the index. ${errorText(e)}`);
-        }
-      },
+      doRemove,
+      doExclude: () => excludeEntries(exclude),
+      doTakeOut: () => (remove.length > 0 ? doRemove() : excludeEntries(inside)),
       doStopExcluding: () => changeSelection(() => api.stopExcluding(paths(stop))),
     };
   };

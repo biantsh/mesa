@@ -1,0 +1,40 @@
+.splitter {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: calc(-1 * var(--gap));
+  width: calc(var(--gap) + 3px);
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.splitter:focus-visible {
+  outline: none;
+}
+
+.splitter::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--line-left, calc(var(--gap) / 2 - 1px));
+  width: var(--line-width, 2px);
+  background: var(--color-primary);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 24px), transparent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.splitter:hover::after {
+  opacity: 0.7;
+  transition-delay: 150ms;
+}
+
+.splitter:focus-visible::after,
+.dragging::after {
+  opacity: 1;
+  transition-delay: 0s;
+}

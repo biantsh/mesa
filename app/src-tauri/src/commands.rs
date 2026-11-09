@@ -39,6 +39,7 @@ pub async fn list_dir(path: String, index: State<'_, Index>) -> Result<Listing, 
         entry.index = state.status;
         entry.droppable = state.droppable;
         entry.excluded_here = state.excluded_here;
+        entry.removable = state.removable;
     }
     Ok(listing)
 }
@@ -257,20 +258,15 @@ pub struct Listed {
     #[serde(flatten)]
     pub entry: browse::Entry,
     pub missing: bool,
-    pub left_out: usize,
 }
 
-async fn listed(items: Vec<(PathBuf, usize)>, index: &Index) -> Result<Vec<Listed>, String> {
+async fn listed(items: Vec<PathBuf>, index: &Index) -> Result<Vec<Listed>, String> {
     let described = tauri::async_runtime::spawn_blocking(move || {
         let mut described: Vec<Listed> = items
             .into_iter()
-            .map(|(path, left_out)| {
+            .map(|path| {
                 let (entry, missing) = browse::describe(&path);
-                Listed {
-                    entry,
-                    missing,
-                    left_out,
-                }
+                Listed { entry, missing }
             })
             .collect();
         described.sort_by_cached_key(|item| (browse::listing_order(&item.entry), item.entry.path.clone()));
@@ -285,6 +281,7 @@ async fn listed(items: Vec<(PathBuf, usize)>, index: &Index) -> Result<Vec<Liste
             item.entry.index = state.status;
             item.entry.droppable = state.droppable;
             item.entry.excluded_here = state.excluded_here;
+            item.entry.removable = state.removable;
             item
         })
         .collect())
@@ -297,11 +294,7 @@ pub async fn indexed_items(index: State<'_, Index>) -> Result<Vec<Listed>, Strin
 
 #[tauri::command]
 pub async fn excluded_items(index: State<'_, Index>) -> Result<Vec<Listed>, String> {
-    listed(
-        index.excluded_paths().into_iter().map(|path| (path, 0)).collect(),
-        &index,
-    )
-    .await
+    listed(index.excluded_paths(), &index).await
 }
 
 fn to_paths(paths: Vec<String>) -> Vec<PathBuf> {

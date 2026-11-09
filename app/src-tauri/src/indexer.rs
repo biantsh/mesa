@@ -683,7 +683,7 @@ fn unix_millis(time: SystemTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeSet, HashMap, HashSet, VecDeque},
+        collections::{BTreeSet, HashSet, VecDeque},
         sync::{
             Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
@@ -786,8 +786,7 @@ mod tests {
         let embedder = Arc::new(embedder);
         let shared = Arc::new(Shared {
             store: Mutex::new(Store::open(&data.join("index")).unwrap()),
-            rules: Mutex::new(HashMap::from([(folder.clone(), true)])),
-            gaps: Mutex::new(BTreeSet::new()),
+            rules: Mutex::new(HashSet::from([folder.clone()])),
             included: Mutex::new(BTreeSet::new()),
             excluded: Mutex::new(HashSet::new()),
             pending: Mutex::new(Pending::default()),

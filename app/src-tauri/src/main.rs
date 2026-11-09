@@ -6,6 +6,7 @@ mod cgimage;
 mod clipboard;
 mod commands;
 mod crawl;
+mod document_preview;
 mod embed;
 mod examples;
 mod hotkey;
@@ -14,12 +15,14 @@ mod indexer;
 mod main_window;
 mod power;
 mod progress;
+mod reclaim;
 mod rules;
 mod settings;
 mod shown_folder;
 mod startup;
 mod store;
 mod surface;
+mod system_menu;
 mod thumbnail;
 #[cfg(windows)]
 mod toast;
@@ -185,6 +188,7 @@ fn main() {
             main_window::set_up_dock(app);
             main_window::watch_full_screen(app);
             widget::float_over_everything(app.handle());
+            system_menu::install(app.handle());
             main_window::show_if_the_page_does_not(app);
             Ok(())
         })

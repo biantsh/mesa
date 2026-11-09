@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
-    fs,
     ops::Bound,
     path::{Path, PathBuf},
     sync::{
@@ -15,12 +14,12 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    browse, crawl,
+    crawl,
     embed::{Device, Embedder, ModelStatus},
     examples::path_key,
     indexer,
     progress::{Progress, ProgressState},
-    rules::{self, Rules, effective, gaps_of, inclusions_of},
+    rules::{self, Rules, covered, effective},
     store::{self, Filter, Hit, Store},
     unindexable,
 };
@@ -59,6 +58,7 @@ pub struct IndexState {
     pub status: IndexStatus,
     pub droppable: bool,
     pub excluded_here: bool,
+    pub removable: bool,
 }
 
 pub struct Job {
@@ -107,7 +107,6 @@ pub const QUERY_PIECES: usize = 64;
 pub struct Shared {
     pub store: Mutex<Store>,
     pub rules: Mutex<Rules>,
-    pub gaps: Mutex<BTreeSet<PathBuf>>,
     pub included: Mutex<BTreeSet<PathBuf>>,
     pub excluded: Mutex<HashSet<PathBuf>>,
     pub pending: Mutex<Pending>,
@@ -213,6 +212,10 @@ impl Shared {
         !self.control.is_turbo()
     }
 
+    pub fn is_busy(&self) -> bool {
+        self.urgent.load(Ordering::SeqCst) > 0 || lock(&self.progress).is_active()
+    }
+
     pub fn wait_while_paused_for(&self, ticket: Option<u64>) {
         match ticket {
             Some(ticket) => self
@@ -232,13 +235,6 @@ impl Shared {
 
     pub fn is_indexed(&self, path: &Path) -> bool {
         !unindexable::is_unindexable(path) && !self.is_excluded(path) && effective(&lock(&self.rules), path)
-    }
-
-    pub fn has_gap_below(&self, path: &Path) -> bool {
-        lock(&self.gaps)
-            .range::<Path, _>((Bound::Excluded(path), Bound::Unbounded))
-            .next()
-            .is_some_and(|below| below.starts_with(path))
     }
 
     pub fn has_inclusion_below(&self, path: &Path) -> bool {
@@ -265,7 +261,6 @@ pub struct Index {
     shared: Arc<Shared>,
     queue: Mutex<Sender<Message>>,
     counter: Mutex<Sender<()>>,
-    dir: PathBuf,
     counted: Mutex<Option<Counted>>,
     latest_search: Mutex<Option<Arc<Ranking>>>,
     search_ids: AtomicU64,
@@ -277,6 +272,7 @@ pub struct Index {
 struct Counted {
     at: Instant,
     without_new: i64,
+    bytes: u64,
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq, Clone, Copy)]
@@ -305,7 +301,7 @@ impl Index {
             );
         }
         if store.has_stale_files()? {
-            for (root, _) in rules.iter().filter(|(_, indexed)| **indexed) {
+            for root in &rules {
                 if !unfinished.iter().any(|(_, queued)| queued == root) {
                     unfinished.push((store.add_job(root)?, root.clone()));
                 }
@@ -321,8 +317,7 @@ impl Index {
         }
         let shared = Arc::new(Shared {
             store: Mutex::new(store),
-            gaps: Mutex::new(gaps_of(&rules)),
-            included: Mutex::new(inclusions_of(&rules)),
+            included: Mutex::new(rules.iter().cloned().collect()),
             rules: Mutex::new(rules),
             excluded: Mutex::new(excluded),
             pending: Mutex::new(Pending::default()),
@@ -341,6 +336,7 @@ impl Index {
             .name("indexer".into())
             .spawn(move || indexer::work(&worker, receiver))
             .map_err(store::Error::Io)?;
+        crate::reclaim::spawn(Arc::downgrade(&shared), dir.to_owned()).map_err(store::Error::Io)?;
         let (wake, woken) = mpsc::channel();
         let counter = shared.clone();
         thread::Builder::new()
@@ -352,7 +348,6 @@ impl Index {
             shared,
             queue: Mutex::new(sender),
             counter: Mutex::new(wake),
-            dir: dir.to_owned(),
             counted: Mutex::new(None),
             latest_search: Mutex::new(None),
             search_ids: AtomicU64::new(0),
@@ -390,8 +385,6 @@ impl Index {
             } else {
                 IndexStatus::Indexing
             }
-        } else if self.shared.has_gap_below(path) {
-            IndexStatus::PartlyIndexed
         } else {
             IndexStatus::Indexed
         }
@@ -401,10 +394,16 @@ impl Index {
         let status = self.status(path);
         let droppable = lock(&self.shared.progress).is_job_root(path);
         let excluded_here = lock(&self.shared.excluded).contains(path);
+        let removable = match status {
+            IndexStatus::Indexed => !covered(&lock(&self.shared.rules), path),
+            IndexStatus::PartlyIndexed => true,
+            _ => false,
+        };
         IndexState {
             status,
             droppable,
             excluded_here,
+            removable,
         }
     }
 
@@ -445,6 +444,17 @@ impl Index {
         if indexed {
             self.refuse_to_add(&paths.iter().map(PathBuf::as_path).collect::<Vec<_>>())?;
         }
+        let outside: Vec<PathBuf>;
+        let paths = if indexed {
+            paths
+        } else {
+            let rules = lock(&self.shared.rules);
+            outside = paths.iter().filter(|path| !covered(&rules, path)).cloned().collect();
+            if outside.is_empty() {
+                return Ok(());
+            }
+            &outside
+        };
         let ended = if indexed {
             Vec::new()
         } else {
@@ -453,9 +463,10 @@ impl Index {
         let mut store = lock(&self.shared.store);
         store.finish_jobs(&ended)?;
         let mut rules = lock(&self.shared.rules).clone();
-        rules::set_rules(&mut rules, paths, indexed);
-        if !indexed {
-            self.drop_emptied_parents(&mut rules, paths);
+        if indexed {
+            rules::add(&mut rules, paths);
+        } else {
+            rules::drop_under(&mut rules, paths);
         }
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
@@ -476,37 +487,6 @@ impl Index {
         Ok(())
     }
 
-    fn drop_emptied_parents(&self, rules: &mut Rules, below: &[PathBuf]) {
-        let mut parents: Vec<PathBuf> = below
-            .iter()
-            .filter_map(|path| path.parent())
-            .map(Path::to_path_buf)
-            .collect();
-        parents.sort();
-        parents.dedup();
-
-        while let Some(parent) = parents.pop() {
-            let indexed =
-                effective(rules, &parent) && !self.shared.is_excluded(&parent) && !unindexable::is_unindexable(&parent);
-            if !indexed || self.holds_something_indexed(&parent, rules) {
-                continue;
-            }
-            rules::set_rule(rules, &parent, false);
-            parents.extend(parent.parent().map(Path::to_path_buf));
-        }
-    }
-
-    fn holds_something_indexed(&self, folder: &Path, rules: &Rules) -> bool {
-        let Ok(items) = fs::read_dir(folder) else { return true };
-        items.flatten().any(|item| {
-            let child = item.path();
-            browse::classify(&item).is_some()
-                && !unindexable::is_unindexable(&child)
-                && !self.shared.is_excluded(&child)
-                && effective(rules, &child)
-        })
-    }
-
     pub fn add_completing(&self, paths: &[PathBuf], folder: &Path) -> Result<(), String> {
         let mut everything: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
         everything.push(folder);
@@ -514,8 +494,8 @@ impl Index {
 
         let mut store = lock(&self.shared.store);
         let mut rules = lock(&self.shared.rules).clone();
-        rules::set_rules(&mut rules, paths, true);
-        rules::set_rule(&mut rules, folder, true);
+        rules::add(&mut rules, paths);
+        rules::add(&mut rules, std::slice::from_ref(&folder.to_path_buf()));
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
         self.start_jobs(&store, paths)
@@ -538,7 +518,6 @@ impl Index {
         }
         store.save_exclusions(&excluded)?;
         *lock(&self.shared.excluded) = excluded;
-        self.drop_emptied_parents(&mut rules, paths);
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
         Ok(store.remove_paths(paths)?)
@@ -585,28 +564,17 @@ impl Index {
         lock(&self.shared.excluded).len()
     }
 
-    pub fn indexed_roots(&self) -> Vec<(PathBuf, usize)> {
+    pub fn indexed_roots(&self) -> Vec<PathBuf> {
         let rules = lock(&self.shared.rules);
-        let mut roots: BTreeMap<&Path, usize> = rules
+        let mut roots: Vec<PathBuf> = rules
             .iter()
-            .filter(|(path, indexed)| {
-                **indexed
-                    && !path.parent().is_some_and(|parent| effective(&rules, parent))
-                    && !unindexable::is_unindexable(path)
-                    && !self.shared.is_excluded(path)
+            .filter(|path| {
+                !covered(&rules, path) && !unindexable::is_unindexable(path) && !self.shared.is_excluded(path)
             })
-            .map(|(path, _)| (path.as_path(), 0))
+            .cloned()
             .collect();
-        for gap in rules.iter().filter(|(_, indexed)| !**indexed).map(|(path, _)| path) {
-            let owner = gap.ancestors().skip(1).find(|above| rules.contains_key(*above));
-            if let Some(left_out) = owner.and_then(|owner| roots.get_mut(owner)) {
-                *left_out += 1;
-            }
-        }
+        roots.sort();
         roots
-            .into_iter()
-            .map(|(path, left_out)| (path.to_path_buf(), left_out))
-            .collect()
     }
 
     pub fn excluded_paths(&self) -> Vec<PathBuf> {
@@ -742,18 +710,16 @@ impl Index {
     }
 
     fn stats_within(&self, max_age: Duration) -> Stats {
-        Stats {
-            files: self.file_count(max_age),
-            bytes: store::disk_bytes(&self.dir),
-        }
+        let (files, bytes) = self.counts(max_age);
+        Stats { files, bytes }
     }
 
-    fn file_count(&self, max_age: Duration) -> u64 {
+    fn counts(&self, max_age: Duration) -> (u64, u64) {
         let made = self.shared.finished_new.load(Ordering::SeqCst) as i64;
         let mut counted = lock(&self.counted);
         if let Some(last) = *counted {
             if last.at.elapsed() <= max_age {
-                return (last.without_new + made).max(0) as u64;
+                return ((last.without_new + made).max(0) as u64, last.bytes);
             }
         }
         let now = match self.shared.store.try_lock() {
@@ -762,18 +728,20 @@ impl Index {
             Err(TryLockError::WouldBlock) if counted.is_some() => None,
             Err(TryLockError::WouldBlock) => self.count_with(&lock(&self.shared.store)),
         };
-        if let Some(without_new) = now {
+        if let Some((without_new, bytes)) = now {
             *counted = Some(Counted {
                 at: Instant::now(),
                 without_new,
+                bytes,
             });
         }
-        counted.map_or(0, |last| (last.without_new + made).max(0) as u64)
+        counted.map_or((0, 0), |last| ((last.without_new + made).max(0) as u64, last.bytes))
     }
 
-    fn count_with(&self, store: &Store) -> Option<i64> {
+    fn count_with(&self, store: &Store) -> Option<(i64, u64)> {
         let landed = self.shared.landed_new.load(Ordering::SeqCst) as i64;
-        store.file_count().ok().map(|files| files as i64 - landed)
+        let files = store.file_count().ok()? as i64 - landed;
+        Some((files, store.live_bytes().unwrap_or(0)))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -838,22 +806,14 @@ impl Index {
             .filter(|root| self.is_left_to_index(&rules, root))
             .cloned()
             .collect();
-        rules::set_rules(&mut rules, &roots, true);
+        rules::add(&mut rules, &roots);
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
         self.start_jobs(&store, &roots)
     }
 
     fn is_left_to_index(&self, rules: &Rules, root: &Path) -> bool {
-        if unindexable::is_unindexable(root) || self.shared.is_excluded(root) {
-            return false;
-        }
-        let gaps = lock(&self.shared.gaps);
-        let gap_inside = gaps
-            .range::<Path, _>((Bound::Included(root), Bound::Unbounded))
-            .next()
-            .is_some_and(|gap| gap.starts_with(root));
-        !effective(rules, root) || gap_inside
+        !unindexable::is_unindexable(root) && !self.shared.is_excluded(root) && !effective(rules, root)
     }
 
     pub fn has_everything(&self, roots: &[PathBuf]) -> bool {
@@ -863,8 +823,7 @@ impl Index {
 
     fn replace_rules(&self, store: &mut Store, rules: Rules) -> Result<(), String> {
         store.save_rules(&rules)?;
-        *lock(&self.shared.gaps) = gaps_of(&rules);
-        *lock(&self.shared.included) = inclusions_of(&rules);
+        *lock(&self.shared.included) = rules.iter().cloned().collect();
         *lock(&self.shared.rules) = rules;
         Ok(())
     }
@@ -957,7 +916,7 @@ impl Chores {
     }
 
     pub fn roots(&self) -> BTreeSet<PathBuf> {
-        inclusions_of(&lock(&self.shared.rules))
+        lock(&self.shared.rules).iter().cloned().collect()
     }
 
     pub fn is_indexed(&self, path: &Path) -> bool {
@@ -1012,7 +971,6 @@ impl Pending {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::HashMap,
         fs,
         time::{Duration, Instant},
     };
@@ -1096,6 +1054,43 @@ mod tests {
     }
 
     #[test]
+    fn exclude_file_in_indexed_folder() {
+        let f = Fixture::new("exclude");
+        f.index.set(&f.photos, true).unwrap();
+        f.settle();
+
+        f.index.exclude_many(&[f.photos.join("a.jpg")]).unwrap();
+        assert_eq!(f.count("files"), 3);
+        assert_eq!(f.index.status(&f.photos.join("a.jpg")), IndexStatus::Excluded);
+        assert_eq!(f.index.status(&f.photos.join("b.png")), IndexStatus::Indexed);
+        assert_eq!(f.index.status(&f.photos), IndexStatus::Indexed);
+
+        f.index.set(&f.photos, true).unwrap();
+        f.settle();
+        assert_eq!(f.count("files"), 3);
+
+        f.index.stop_excluding_many(&[f.photos.join("a.jpg")]).unwrap();
+        f.settle();
+        assert_eq!(f.count("files"), 4);
+        assert_eq!(f.index.status(&f.photos.join("a.jpg")), IndexStatus::Indexed);
+    }
+
+    #[test]
+    fn remove_indexed_folder() {
+        let f = Fixture::new("remove");
+        f.index.set(&f.photos, true).unwrap();
+        f.settle();
+
+        f.index.set(&f.photos.join("sub"), false).unwrap();
+        assert_eq!(f.count("files"), 4);
+        f.index.set(&f.photos, false).unwrap();
+        assert_eq!(f.count("files"), 0);
+        assert_eq!(f.count("embeddings"), 0);
+        assert_eq!(f.index.status(&f.photos), IndexStatus::NotIndexed);
+        assert!(f.index.indexed_roots().is_empty());
+    }
+
+    #[test]
     fn reindex_picks_up_changes() {
         let f = Fixture::new("again");
         f.index.set(&f.photos, true).unwrap();
@@ -1120,7 +1115,7 @@ mod tests {
         let (root, photos) = make_photos(tag);
         let data = root.join("data");
         let mut store = Store::open(&data).unwrap();
-        store.save_rules(&HashMap::from([(photos.clone(), true)])).unwrap();
+        store.save_rules(&HashSet::from([photos.clone()])).unwrap();
         store.add_job(&photos).unwrap();
         let a = ScannedFile {
             name: "a.jpg".into(),
@@ -1209,7 +1204,7 @@ mod tests {
         let data = root.join("data");
         {
             let mut store = Store::open(&data).unwrap();
-            store.save_rules(&HashMap::from([(photos.clone(), true)])).unwrap();
+            store.save_rules(&HashSet::from([photos.clone()])).unwrap();
             store.add_job(&photos).unwrap();
         }
         let index = Index::open(&data, embedder()).unwrap();

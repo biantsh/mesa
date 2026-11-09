@@ -237,7 +237,7 @@ function Result({ hit, index, selected, onSelect, onOpen, onContextMenu }: Resul
       {...pressProps(hit, true, hit.path, { selected, onSelect, onOpen, onContextMenu })}
     >
       <span className={styles.preview}>
-        <Icon size={28} strokeWidth={1.4} aria-hidden />
+        <Icon className={styles.icon} size={56} strokeWidth={1} aria-hidden />
         {wanted && (
           <img
             className={cx(styles.thumb, loaded && styles.loaded, hit.category === "document" && styles.contain)}

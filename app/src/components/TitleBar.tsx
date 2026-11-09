@@ -56,7 +56,7 @@ export function TitleBar({ maximized }: { maximized: boolean }) {
         <span className={styles.name}>Mesa</span>
         {version && <span className={styles.version}>v{version}</span>}
       </span>
-      {!isMac && <div className={styles.controls}>
+      {!isMac && <div className={styles.controls} onMouseDown={(e) => e.preventDefault()}>
         <button type="button" className={styles.control} aria-label="Minimize" data-tooltip="Minimize" onClick={windowControls.minimize}>
           <Minus size={15} aria-hidden />
         </button>

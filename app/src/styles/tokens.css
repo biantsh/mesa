@@ -106,12 +106,6 @@
   initial-value: rgba(181, 54, 43, 0.28);
 }
 
-@property --color-lock {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #cc4a3c;
-}
-
 @property --color-preview-bg {
   syntax: "<color>";
   inherits: true;
@@ -181,7 +175,6 @@
     --color-danger-ink 300ms ease,
     --color-danger-bg 300ms ease,
     --color-danger-border 300ms ease,
-    --color-lock 300ms ease,
     --color-preview-bg 300ms ease,
     --color-hover-bg 300ms ease,
     --color-selected-bg 300ms ease,
@@ -219,7 +212,10 @@
   --color-danger-ink: #b5362b;
   --color-danger-bg: rgba(181, 54, 43, 0.09);
   --color-danger-border: rgba(181, 54, 43, 0.28);
+  --color-badge-disc: #ffffff;
+  --color-badge-ring: #e6dfd8;
   --color-lock: #cc4a3c;
+  --color-lock-grey: #85786c;
 
   --color-folder: #fdbd64;
   --color-folder-back: #f39d3e;
@@ -282,7 +278,6 @@
   --color-danger-ink: #ea7a68;
   --color-danger-bg: rgba(234, 122, 104, 0.12);
   --color-danger-border: rgba(234, 122, 104, 0.35);
-  --color-lock: #e5675a;
 
   --color-preview-bg: #2f2520;
 

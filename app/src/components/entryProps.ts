@@ -1,5 +1,4 @@
 import type { Entry } from "../api";
-import { statusText } from "./StatusBadge";
 
 interface Handlers<T> {
   selected: boolean;
@@ -44,6 +43,5 @@ export function pressProps<T extends { path: string }>(item: T, usable: boolean,
 }
 
 export function entryProps(entry: Entry, handlers: Handlers<Entry>) {
-  const status = statusText(entry);
-  return pressProps(entry, entry.readable, status ? `${entry.name} (${status})` : entry.name, handlers);
+  return pressProps(entry, entry.readable, entry.name, handlers);
 }

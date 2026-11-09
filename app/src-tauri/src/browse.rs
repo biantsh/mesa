@@ -48,6 +48,7 @@ pub struct Entry {
     pub index: IndexStatus,
     pub droppable: bool,
     pub excluded_here: bool,
+    pub removable: bool,
     pub size: Option<u64>,
     pub modified: Option<i64>,
 }
@@ -64,6 +65,7 @@ impl Entry {
             index: IndexStatus::NotIndexed,
             droppable: false,
             excluded_here: false,
+            removable: false,
             size: None,
             modified: None,
         }

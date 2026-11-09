@@ -101,7 +101,7 @@ function Title({ title, count }: { title: string; count: number }) {
   );
 }
 
-function RowText({ item, withLeftOut = false }: { item: Listed; withLeftOut?: boolean }) {
+function RowText({ item }: { item: Listed }) {
   return (
     <>
       <span className={styles.icon}>
@@ -111,7 +111,6 @@ function RowText({ item, withLeftOut = false }: { item: Listed; withLeftOut?: bo
         <span className={styles.name}>{item.name}</span>
         <span className={styles.details}>
           <span className={styles.folder}>{parentOf(item.path)}</span>
-          {withLeftOut && item.leftOut > 0 && <span className={styles.leftOut}>· {item.leftOut} left out</span>}
         </span>
       </span>
     </>
@@ -286,7 +285,7 @@ export const ItemsPanel = memo(function ItemsPanel({
                   onContextMenu,
                 })}
               >
-                <RowText item={item} withLeftOut />
+                <RowText item={item} />
               </button>
               {isBusy(item) && (
                 <span className={styles.busy}>

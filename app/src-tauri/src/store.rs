@@ -169,23 +169,24 @@ impl Store {
             vectors.truncate_to(0)?;
         } else {
             vectors.truncate_to(expected)?;
+            heal_free_slots(&conn)?;
         }
         Ok(Self { conn, vectors })
     }
 
-    pub fn load_rules(&self) -> Result<HashMap<PathBuf, bool>> {
-        let mut statement = self.conn.prepare("SELECT path, indexed FROM rules")?;
-        let rows = statement.query_map([], |r| Ok((PathBuf::from(r.get::<_, String>(0)?), r.get(1)?)))?;
+    pub fn load_rules(&self) -> Result<HashSet<PathBuf>> {
+        let mut statement = self.conn.prepare("SELECT path FROM rules WHERE indexed = 1")?;
+        let rows = statement.query_map([], |r| Ok(PathBuf::from(r.get::<_, String>(0)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    pub fn save_rules(&mut self, rules: &HashMap<PathBuf, bool>) -> Result<()> {
+    pub fn save_rules(&mut self, rules: &HashSet<PathBuf>) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM rules", [])?;
         {
-            let mut insert = tx.prepare("INSERT INTO rules (path, indexed) VALUES (?1, ?2)")?;
-            for (path, indexed) in rules {
-                insert.execute(params![path.to_string_lossy(), indexed])?;
+            let mut insert = tx.prepare("INSERT INTO rules (path, indexed) VALUES (?1, 1)")?;
+            for path in rules {
+                insert.execute(params![path.to_string_lossy()])?;
             }
         }
         Ok(tx.commit()?)
@@ -487,6 +488,131 @@ impl Store {
         Ok(tx.commit()?)
     }
 
+    pub fn live_bytes(&self) -> Result<u64> {
+        Ok(self.reclaimable()?.live_bytes())
+    }
+
+    pub fn reclaimable(&self) -> Result<Reclaimable> {
+        let free_slots: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM free_slots WHERE config_id = ?1",
+            [CONFIG_ID],
+            |r| r.get(0),
+        )?;
+        let pragma = |name: &str| {
+            self.conn
+                .query_row(&format!("PRAGMA {name}"), [], |r| r.get::<_, i64>(0))
+        };
+        Ok(Reclaimable {
+            free_slots: free_slots.max(0) as u64,
+            slots: self.vectors.next_slot(),
+            free_pages: pragma("freelist_count")?.max(0) as u64,
+            pages: pragma("page_count")?.max(0) as u64,
+            page_size: pragma("page_size")?.max(0) as u64,
+        })
+    }
+
+    pub fn begin_compaction(&mut self, most: usize) -> Result<Option<Compaction>> {
+        let tx = self.conn.transaction()?;
+        let free: Vec<u64> = {
+            let mut statement =
+                tx.prepare("SELECT slot FROM free_slots WHERE config_id = ?1 ORDER BY slot LIMIT ?2")?;
+            let rows = statement.query_map(params![CONFIG_ID, most as i64], |r| {
+                r.get::<_, i64>(0).map(|s| s as u64)
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let Some(&lowest) = free.first() else { return Ok(None) };
+        let used: Vec<(u64, i64, i64)> = {
+            let mut statement = tx.prepare(
+                "SELECT slot, file_id, locator FROM embeddings WHERE config_id = ?1 AND slot > ?2 ORDER BY slot DESC LIMIT ?3",
+            )?;
+            let rows = statement.query_map(params![CONFIG_ID, lowest as i64, most as i64], |r| {
+                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+            })?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let pairs: Vec<(u64, (u64, i64, i64))> = free
+            .iter()
+            .copied()
+            .zip(used.iter().copied())
+            .take_while(|(to, (from, ..))| to < from)
+            .collect();
+        if pairs.is_empty() {
+            return Ok(None);
+        }
+        let records = read_records(&mut self.vectors, pairs.iter().map(|(_, (from, ..))| *from))?;
+        let moves: Vec<Move> = pairs
+            .iter()
+            .filter_map(|&(to, (from, file_id, locator))| {
+                records.get(&from).map(|record| Move {
+                    from,
+                    to,
+                    file_id,
+                    locator,
+                    record: *record,
+                })
+            })
+            .collect();
+        let mut writes: Vec<(u64, Record)> = moves.iter().map(|m| (m.to, m.record)).collect();
+        self.vectors.write(&mut writes)?;
+        for m in &moves {
+            tx.prepare_cached("DELETE FROM free_slots WHERE config_id = ?1 AND slot = ?2")?
+                .execute(params![CONFIG_ID, m.to as i64])?;
+        }
+        tx.commit()?;
+        Ok(Some(Compaction {
+            flush: self.vectors.flush_handle()?,
+            moves,
+        }))
+    }
+
+    pub fn finish_compaction(&mut self, compaction: Compaction) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let now = read_records(&mut self.vectors, compaction.moves.iter().map(|m| m.from))?;
+        let mut moved = 0;
+        for m in &compaction.moves {
+            let unchanged = now.get(&m.from).is_some_and(|record| *record == m.record);
+            let done = unchanged
+                && tx
+                    .prepare_cached(
+                        "UPDATE embeddings SET slot = ?1 WHERE config_id = ?2 AND slot = ?3 AND file_id = ?4 AND locator = ?5",
+                    )?
+                    .execute(params![m.to as i64, CONFIG_ID, m.from as i64, m.file_id, m.locator])?
+                    == 1;
+            let free = if done { m.from } else { m.to };
+            tx.prepare_cached("INSERT OR IGNORE INTO free_slots (config_id, slot) VALUES (?1, ?2)")?
+                .execute(params![CONFIG_ID, free as i64])?;
+            moved += usize::from(done);
+        }
+        tx.commit()?;
+        Ok(moved)
+    }
+
+    pub fn trim_vectors(&mut self) -> Result<u64> {
+        let tx = self.conn.transaction()?;
+        let end: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(slot) + 1, 0) FROM embeddings WHERE config_id = ?1",
+            [CONFIG_ID],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "DELETE FROM free_slots WHERE config_id = ?1 AND slot >= ?2",
+            params![CONFIG_ID, end],
+        )?;
+        tx.commit()?;
+        let cut = self.vectors.next_slot().saturating_sub(end as u64);
+        if cut > 0 {
+            self.vectors.truncate_to(end as u64)?;
+        }
+        Ok(cut)
+    }
+
+    pub fn give_back_pages(&self, pages: u32) -> Result<()> {
+        Ok(self
+            .conn
+            .execute_batch(&format!("PRAGMA incremental_vacuum({pages})"))?)
+    }
+
     pub fn file_count(&self) -> Result<u64> {
         Ok(self.conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?)
     }
@@ -604,23 +730,73 @@ pub struct Changes {
     pub new: HashSet<String>,
 }
 
-fn vectors_path(dir: &Path) -> PathBuf {
-    dir.join(format!("vectors-{CONFIG_ID}.bin"))
+fn read_records(vectors: &mut VectorFile, slots: impl Iterator<Item = u64>) -> Result<HashMap<u64, Record>> {
+    let mut slots: Vec<u64> = slots.collect();
+    slots.sort_unstable();
+    let mut records = HashMap::with_capacity(slots.len());
+    vectors.read_each(&slots, &mut |slot, record| {
+        records.insert(slot, *record);
+    })?;
+    Ok(records)
 }
 
-pub fn disk_bytes(dir: &Path) -> u64 {
-    ["mesa.db", "mesa.db-wal"]
-        .iter()
-        .map(|name| dir.join(name))
-        .chain(std::iter::once(vectors_path(dir)))
-        .filter_map(|path| fs::metadata(path).ok())
-        .map(|metadata| metadata.len())
-        .sum()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reclaimable {
+    pub free_slots: u64,
+    pub slots: u64,
+    pub free_pages: u64,
+    pub pages: u64,
+    pub page_size: u64,
+}
+
+impl Reclaimable {
+    pub fn live_bytes(&self) -> u64 {
+        let vectors = self.slots.saturating_sub(self.free_slots);
+        let pages = self.pages.saturating_sub(self.free_pages);
+        crate::vectors::HEADER_BYTES + vectors * crate::vectors::RECORD_BYTES as u64 + pages * self.page_size
+    }
+}
+
+struct Move {
+    from: u64,
+    to: u64,
+    file_id: i64,
+    locator: i64,
+    record: Record,
+}
+
+pub struct Compaction {
+    moves: Vec<Move>,
+    flush: fs::File,
+}
+
+impl Compaction {
+    pub fn flush(&self) -> io::Result<()> {
+        self.flush.sync_data()
+    }
+}
+
+pub fn checkpoint(dir: &Path) {
+    let Ok(conn) = Connection::open(dir.join("mesa.db")) else {
+        return;
+    };
+    let _ = conn.busy_timeout(std::time::Duration::ZERO);
+    let _ = conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+    let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+}
+
+fn vectors_path(dir: &Path) -> PathBuf {
+    dir.join(format!("vectors-{CONFIG_ID}.bin"))
 }
 
 fn open_db(dir: &Path) -> Result<Connection> {
     let conn = Connection::open(dir.join("mesa.db"))?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
+    conn.execute_batch("PRAGMA journal_size_limit = 1048576;")?;
+    let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?;
+    if auto_vacuum != 2 {
+        conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+    }
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version as usize > MIGRATIONS.len() {
         return Err(Error::Io(io::Error::new(
@@ -650,6 +826,28 @@ fn remove_other_vector_files(dir: &Path) {
             let _ = fs::remove_file(entry.path());
         }
     }
+}
+
+fn heal_free_slots(conn: &Connection) -> Result<()> {
+    let slots = extent(conn)? as i64;
+    let held = |table: &str| {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table} WHERE config_id = ?1"),
+            [CONFIG_ID],
+            |r| r.get::<_, i64>(0),
+        )
+    };
+    if slots > held("embeddings")? + held("free_slots")? {
+        conn.execute(
+            "WITH RECURSIVE slot(n) AS (SELECT 0 WHERE ?2 > 0 UNION ALL SELECT n + 1 FROM slot WHERE n + 1 < ?2)
+             INSERT INTO free_slots (config_id, slot)
+             SELECT ?1, n FROM slot
+             WHERE n NOT IN (SELECT slot FROM embeddings WHERE config_id = ?1)
+               AND n NOT IN (SELECT slot FROM free_slots WHERE config_id = ?1)",
+            params![CONFIG_ID, slots],
+        )?;
+    }
+    Ok(())
 }
 
 fn extent(conn: &Connection) -> Result<u64> {
@@ -1143,5 +1341,53 @@ mod tests {
         let hits = top(&mut store, &pointing(1.0, 0.0), EVERYTHING, 10).unwrap();
         assert_eq!(names(&hits), ["song.mp3", "between.jpg"]);
         assert!((hits[0].score - 1.0).abs() < 1e-2, "{}", hits[0].score);
+    }
+
+    fn numbered(from: usize, to: usize) -> Vec<ScannedFile> {
+        (from..to).map(|i| file(&format!("f{i}.jpg"), 1)).collect()
+    }
+
+    fn vector_file_bytes(dir: &Path) -> u64 {
+        fs::metadata(vectors_path(dir)).unwrap().len()
+    }
+
+    #[test]
+    fn compaction_moves_tail_vectors() {
+        let dir = temp_dir("compact");
+        let mut store = Store::open(&dir).unwrap();
+        write(&mut store, &[scan("a", numbered(0, 40))]);
+        write(&mut store, &[scan("a", numbered(30, 40))]);
+        assert_eq!((count(&store, "embeddings"), count(&store, "free_slots")), (10, 30));
+        let before: Vec<_> = (30..40)
+            .map(|i| store.vectors.read(slot_of(&store, "a", &format!("f{i}.jpg"))).unwrap())
+            .collect();
+        let long = vector_file_bytes(&dir);
+
+        let mut steps = 0;
+        while let Some(copied) = store.begin_compaction(8).unwrap() {
+            copied.flush().unwrap();
+            assert!(store.finish_compaction(copied).unwrap() > 0);
+            steps += 1;
+            assert!(steps < 100);
+        }
+        assert!(steps > 1, "in pieces: {steps}");
+        assert_eq!(store.trim_vectors().unwrap(), 30);
+
+        assert_eq!((count(&store, "embeddings"), count(&store, "free_slots")), (10, 0));
+        assert_eq!(store.vectors.next_slot(), 10);
+        assert_eq!(
+            vector_file_bytes(&dir),
+            vectors::HEADER_BYTES + 10 * vectors::RECORD_BYTES as u64
+        );
+        assert!(vector_file_bytes(&dir) < long);
+        for (i, vector) in (30..40).zip(&before) {
+            let slot = slot_of(&store, "a", &format!("f{i}.jpg"));
+            assert!(slot < 10, "slot {slot}");
+            assert_eq!(&store.vectors.read(slot).unwrap(), vector, "f{i}.jpg");
+        }
+        drop(store);
+        let again = Store::open(&dir).unwrap();
+        assert_eq!((count(&again, "embeddings"), again.vectors.next_slot()), (10, 10));
+        assert_eq!(again.reclaimable().unwrap().free_slots, 0);
     }
 }
