@@ -162,3 +162,36 @@ button {
     transition: none;
   }
 }
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 220ms;
+}
+
+::view-transition-group(index-switch) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+::view-transition-old(index-switch),
+::view-transition-new(index-switch) {
+  height: 100%;
+}
+
+html[data-morph-only]::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+
+html[data-morph-only]::view-transition-new(root) {
+  animation: none;
+}
+
+dialog {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:root {
+  --corner-bottom: 10px;
+}

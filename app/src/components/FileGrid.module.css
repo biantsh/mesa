@@ -5,7 +5,7 @@
   grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   align-content: start;
   gap: 4px;
-  padding: 12px 2px 12px 12px;
+  padding: 12px 2px var(--chip-room, 12px) 12px;
   /* Always show the scrollbar so the tiles don't shift. scrollbar-gutter: stable reserves the system scrollbar's width in WebKit, not ours. */
   overflow-y: scroll;
   transition: opacity 120ms ease;

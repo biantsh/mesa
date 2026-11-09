@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, MutexGuard, TryLockError,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU8, AtomicU64, Ordering},
         mpsc::{self, Sender},
     },
     thread,
@@ -14,6 +14,7 @@ use std::{
 use serde::Serialize;
 
 use crate::{
+    browse::{self, Categories},
     crawl,
     embed::{Device, Embedder, ModelStatus},
     examples::path_key,
@@ -117,6 +118,7 @@ pub struct Shared {
     pub embedder: Arc<dyn Embedder>,
     pub finished_new: AtomicU64,
     pub landed_new: AtomicU64,
+    pub indexed_types: AtomicU8,
 }
 
 pub struct Control {
@@ -158,10 +160,7 @@ impl Control {
     }
 
     pub fn set_turbo(&self, turbo: bool) {
-        let mut state = lock(&self.state);
-        state.turbo = turbo;
-        state.epoch += 1;
-        self.changed.notify_all();
+        lock(&self.state).turbo = turbo;
     }
 
     pub fn epoch(&self) -> u64 {
@@ -208,8 +207,19 @@ impl Control {
 }
 
 impl Shared {
+    pub fn types(&self) -> Categories {
+        Categories::from_bits(self.indexed_types.load(Ordering::Relaxed))
+    }
+
     pub fn is_gentle(&self) -> bool {
         !self.control.is_turbo()
+    }
+
+    pub fn set_turbo(&self, turbo: bool) {
+        if self.control.is_turbo() != turbo {
+            self.embedder.set_eco(!turbo);
+            self.control.set_turbo(turbo);
+        }
     }
 
     pub fn is_busy(&self) -> bool {
@@ -287,10 +297,11 @@ const COUNT_MAX_AGE: Duration = Duration::from_millis(750);
 impl Index {
     #[cfg(test)]
     pub fn open(dir: &Path, embedder: Arc<dyn Embedder>) -> store::Result<Self> {
-        Self::open_with(dir, embedder, true)
+        Self::open_with(dir, embedder, true, Categories::ALL)
     }
 
-    pub fn open_with(dir: &Path, embedder: Arc<dyn Embedder>, turbo: bool) -> store::Result<Self> {
+    pub fn open_with(dir: &Path, embedder: Arc<dyn Embedder>, turbo: bool, types: Categories) -> store::Result<Self> {
+        embedder.set_eco(!turbo);
         let store = Store::open(dir)?;
         let rules = store.load_rules()?;
         let excluded = store.load_exclusions()?;
@@ -328,6 +339,7 @@ impl Index {
             embedder,
             finished_new: AtomicU64::new(0),
             landed_new: AtomicU64::new(0),
+            indexed_types: AtomicU8::new(types.bits()),
         });
 
         let (sender, receiver) = mpsc::channel();
@@ -370,6 +382,12 @@ impl Index {
         }
         if self.shared.is_excluded(path) {
             return IndexStatus::Excluded;
+        }
+        let kind = path
+            .file_name()
+            .and_then(|name| browse::category_of(&name.to_string_lossy()));
+        if kind.is_some_and(|kind| !self.shared.types().contains(kind)) && path.is_file() {
+            return IndexStatus::NotIndexed;
         }
         if !effective(&lock(&self.shared.rules), path) {
             return if self.shared.has_inclusion_below(path) {
@@ -473,8 +491,15 @@ impl Index {
         if indexed {
             self.start_jobs(&store, paths)
         } else {
-            Ok(store.remove_paths(paths)?)
+            let removed = store.remove_paths(paths);
+            drop(store);
+            self.forget_count();
+            Ok(removed?)
         }
+    }
+
+    fn forget_count(&self) {
+        *lock(&self.counted) = None;
     }
 
     fn refuse_to_add(&self, paths: &[&Path]) -> Result<(), String> {
@@ -520,7 +545,10 @@ impl Index {
         *lock(&self.shared.excluded) = excluded;
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
-        Ok(store.remove_paths(paths)?)
+        let removed = store.remove_paths(paths);
+        drop(store);
+        self.forget_count();
+        Ok(removed?)
     }
 
     pub fn stop_excluding_many(&self, paths: &[PathBuf]) -> Result<(), String> {
@@ -750,15 +778,25 @@ impl Index {
 
     pub fn progress(&self) -> Option<Progress> {
         let paused = self.shared.control.is_paused();
-        lock(&self.shared.progress).snapshot(paused)
+        let turbo = self.shared.control.is_turbo();
+        lock(&self.shared.progress)
+            .snapshot(paused)
+            .map(|progress| Progress { turbo, ..progress })
     }
 
-    pub fn set_turbo(&self, turbo: bool) -> Result<(), String> {
-        if self.shared.control.is_turbo() != turbo {
-            self.shared.embedder.set_eco(!turbo).map_err(|e| e.to_string())?;
+    pub fn set_turbo(&self, turbo: bool) {
+        if turbo && !self.shared.is_busy() {
+            return;
         }
-        self.shared.control.set_turbo(turbo);
-        Ok(())
+        self.shared.set_turbo(turbo);
+    }
+
+    pub fn indexed_types(&self) -> Categories {
+        self.shared.types()
+    }
+
+    pub fn set_indexed_types(&self, types: Categories) {
+        self.shared.indexed_types.store(types.bits(), Ordering::Relaxed);
     }
 
     pub fn check_for_changes(&self) {

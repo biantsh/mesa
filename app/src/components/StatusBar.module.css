@@ -1,21 +1,35 @@
 .bar {
-  flex: none;
+  position: absolute;
+  z-index: 1;
+  left: var(--chip-margin, 6px);
+  bottom: var(--chip-margin, 6px);
+  box-sizing: border-box;
+  height: var(--chip-height, 20px);
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 16px;
-  margin: 8px 16px 12px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   color: var(--color-text-faint);
   font-size: 12px;
+  line-height: 16px;
   white-space: nowrap;
+  pointer-events: none;
+}
+
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .separator {
   width: 1px;
-  height: 12px;
+  height: 11px;
   background: var(--color-border-strong);
 }
 
-.indexed {
-  margin-left: auto;
+.selected {
+  font-variant-numeric: tabular-nums;
 }

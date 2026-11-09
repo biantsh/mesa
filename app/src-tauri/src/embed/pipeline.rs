@@ -42,10 +42,6 @@ pub trait Backend: Send + Sync + 'static {
         false
     }
 
-    fn set_eco(&self, _eco: bool) -> Result<(), Error> {
-        Ok(())
-    }
-
     fn max_batch(&self) -> usize {
         8
     }
@@ -55,7 +51,8 @@ pub trait Backend: Send + Sync + 'static {
     }
 }
 
-const REST_AFTER_A_BATCH: f64 = 1.0;
+const REST_AFTER_A_BATCH: f64 = 3.0;
+const PACE_POLL: Duration = Duration::from_millis(20);
 
 pub struct Pipeline<B: Backend> {
     backend: Arc<B>,
@@ -205,17 +202,25 @@ impl<B: Backend> Embedder for Pipeline<B> {
         let next = AtomicUsize::new(0);
         let cancel = AtomicBool::new(false);
         let failure: Mutex<Option<Error>> = Mutex::new(None);
-        let in_flight = self.in_flight();
+        let in_flight = backend.in_flight();
         let queue = backend.max_batch() * in_flight * 2;
         let (ready_in, ready_out) = bounded::<(usize, Unit)>(queue);
         let (event_in, event_out) = unbounded::<Event>();
+        let preparing = AtomicUsize::new(self.preparers);
 
         thread::scope(|scope| {
-            for _ in 0..self.preparers() {
+            for number in 0..self.preparers {
                 let (ready_in, event_in) = (ready_in.clone(), event_in.clone());
-                let (next, cancel) = (&next, &cancel);
+                let (next, cancel, preparing) = (&next, &cancel, &preparing);
                 scope.spawn(move || {
                     while !cancel.load(Ordering::Relaxed) {
+                        if number >= self.preparers() {
+                            if next.load(Ordering::Relaxed) >= items.len() {
+                                break;
+                            }
+                            thread::sleep(PACE_POLL);
+                            continue;
+                        }
                         let item = next.fetch_add(1, Ordering::Relaxed);
                         let Some(file) = items.get(item) else { break };
                         let mut units = 0;
@@ -240,13 +245,21 @@ impl<B: Backend> Embedder for Pipeline<B> {
                             break;
                         }
                     }
+                    preparing.fetch_sub(1, Ordering::Relaxed);
                 });
             }
-            for _ in 0..in_flight {
+            for number in 0..in_flight {
                 let (ready_out, event_in) = (ready_out.clone(), event_in.clone());
-                let (cancel, failure) = (&cancel, &failure);
+                let (cancel, failure, preparing) = (&cancel, &failure, &preparing);
                 scope.spawn(move || {
                     while !cancel.load(Ordering::Relaxed) {
+                        if number >= self.in_flight() {
+                            if preparing.load(Ordering::Relaxed) == 0 && ready_out.is_empty() {
+                                break;
+                            }
+                            thread::sleep(PACE_POLL);
+                            continue;
+                        }
                         let Ok(first) = ready_out.recv() else { break };
                         let mut batch = vec![first];
                         while batch.len() < backend.max_batch() {
@@ -376,10 +389,8 @@ impl<B: Backend> Embedder for Pipeline<B> {
         self.backend.set_device(device)
     }
 
-    fn set_eco(&self, eco: bool) -> Result<(), Error> {
-        self.backend.set_eco(eco)?;
+    fn set_eco(&self, eco: bool) {
         self.eco.store(eco, Ordering::Relaxed);
-        Ok(())
     }
 
     fn gpu(&self) -> Option<String> {

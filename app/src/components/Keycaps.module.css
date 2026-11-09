@@ -35,3 +35,20 @@
   color: var(--color-text-faint);
   box-shadow: none;
 }
+
+.compact {
+  vertical-align: middle;
+  gap: 3px;
+}
+
+.compact .key {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.compact .symbol {
+  padding: 0 5px;
+  font-size: 12px;
+}

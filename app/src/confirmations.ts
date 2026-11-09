@@ -32,7 +32,7 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     stopsIndexing: false,
     message: [
       "This will index every supported file in your user folder, which can take a long time.",
-      "Indexing runs gently in the background unless Turbo indexing is on.",
+      "Indexing runs in the background, and keeps going if you close the window.",
       ...(exclusions > 0 ? [{ note: "Your excluded items will not be indexed." }] : []),
     ],
     run: api.indexEverything,

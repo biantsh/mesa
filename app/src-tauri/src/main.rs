@@ -166,9 +166,8 @@ fn main() {
             let resources = app.path().resource_dir().ok();
             let settings = settings::SettingsStore::open(&dir);
             let embedder = embed::for_this_platform(&dir, resources.as_deref(), settings.get().device());
-            let _ = embedder.set_eco(!settings.get().turbo_indexing);
             embedder.warm_up();
-            let index = index::Index::open_with(&dir, embedder, settings.get().turbo_indexing)
+            let index = index::Index::open_with(&dir, embedder, false, settings.get().indexed())
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             index.check_for_changes();
             index.start_watching();
@@ -205,6 +204,9 @@ fn main() {
             commands::search,
             commands::search_more,
             commands::set_indexing_paused,
+            commands::set_indexing_turbo,
+            commands::get_indexed_types,
+            commands::set_indexed_types,
             commands::add_to_index,
             commands::drop_from_queue,
             commands::remove_from_index,
@@ -228,7 +230,6 @@ fn main() {
             commands::model_status,
             commands::retry_model_setup,
             commands::set_gpu_acceleration,
-            commands::set_turbo_indexing,
             commands::page_painted,
             commands::reveal_main,
             commands::hide_widget,

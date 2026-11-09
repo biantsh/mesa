@@ -13,7 +13,7 @@ use std::{
 use crossbeam_channel::bounded;
 
 use crate::{
-    browse::{self, Shown},
+    browse::{self, Categories, Shown},
     crawl::crawl,
     embed::{Item, Outcome},
     index::{Message, Shared, lock},
@@ -28,21 +28,16 @@ const CHUNK_FILES: usize = 512;
 const LISTED_AHEAD: usize = 1024;
 
 pub fn work(shared: &Shared, jobs: Receiver<Message>) {
-    let mut gentle = false;
     loop {
-        let wanted = shared.is_gentle();
-        if wanted != gentle {
-            if wanted {
-                power::give_way()
-            } else {
-                power::stop_giving_way()
-            }
-            gentle = wanted;
-        }
+        power::follow(shared.is_gentle());
         let message = match jobs.try_recv() {
             Ok(message) => message,
             Err(TryRecvError::Disconnected) => break,
             Err(TryRecvError::Empty) => {
+                if !shared.is_busy() {
+                    shared.set_turbo(false);
+                    power::follow(true);
+                }
                 let next = lock(&shared.quiet).next();
                 if let Some(path) = next {
                     check(shared, &path);
@@ -163,7 +158,7 @@ fn count_files(shared: &Shared, ticket: u64, root: &Path) {
             }
             let mut subdirs = Vec::new();
             let mut files = 0;
-            each_entry(&dir, |item, _, shown| match shown {
+            each_entry(&dir, shared.types(), |item, _, shown| match shown {
                 Shown::Folder => subdirs.push(item.path()),
                 Shown::File(_) => files += 1,
             });
@@ -176,7 +171,8 @@ fn count_files(shared: &Shared, ticket: u64, root: &Path) {
         && shared.is_indexed(root)
         && root
             .file_name()
-            .is_some_and(|name| browse::category_of(&name.to_string_lossy()).is_some())
+            .and_then(|name| browse::category_of(&name.to_string_lossy()))
+            .is_some_and(|category| shared.types().contains(category))
     {
         lock(&shared.progress).found(ticket, 1);
     }
@@ -206,7 +202,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
                         && !abandoned.load(Ordering::Relaxed)
                         && !(!in_progress && shared.urgent.load(Ordering::SeqCst) > 0)
                     {
-                        scan_dir(&dir)
+                        scan_dir(&dir, shared.types())
                     } else {
                         None
                     };
@@ -233,6 +229,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
             });
 
             for scan in found {
+                power::follow(shared.is_gentle());
                 walker.stored &= walker.batch.pause_point(shared);
                 if walker.dropped() {
                     abandoned.store(true, Ordering::Relaxed);
@@ -248,7 +245,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
             }
         });
     } else {
-        match scan_file(root).filter(|_| shared.is_indexed(root)) {
+        match scan_file(root, shared.types()).filter(|_| shared.is_indexed(root)) {
             Some(scan) => walker.add(scan),
             None => walker.release(root),
         }
@@ -365,7 +362,7 @@ impl<'a> Walker<'a> {
         if up_to_date > 0 {
             self.batch.files += up_to_date;
             if let Tracking::Job(ticket) = self.batch.tracking {
-                lock(&self.shared.progress).processed(ticket, up_to_date as u64);
+                lock(&self.shared.progress).processed_in(ticket, up_to_date as u64, &scan.path);
             }
         }
         if !self.batch.tracking.is_in_progress() && self.waiting.len() > waiting_before {
@@ -454,7 +451,7 @@ impl<'a> Walker<'a> {
                         subfolders: None,
                     });
                     batch.files += 1;
-                    batch.processed(shared, 1);
+                    batch.processed_in(shared, 1, &folders[folder].path);
                     finished[i] = true;
                     if batch.due() {
                         *stored &= batch.store(shared);
@@ -532,6 +529,12 @@ impl Batch {
         }
     }
 
+    fn processed_in(&self, shared: &Shared, files: u64, folder: &Path) {
+        if let Some(ticket) = self.tracking.ticket() {
+            lock(&shared.progress).processed_in(ticket, files, folder);
+        }
+    }
+
     fn pause_point(&mut self, shared: &Shared) -> bool {
         if !shared.control.is_paused() {
             return true;
@@ -585,7 +588,7 @@ struct Found {
     subdirs: Vec<PathBuf>,
 }
 
-fn each_entry(dir: &Path, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -> Option<bool> {
+fn each_entry(dir: &Path, types: Categories, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -> Option<bool> {
     let mut complete = true;
     for item in fs::read_dir(dir).ok()? {
         let Ok(item) = item else {
@@ -595,6 +598,9 @@ fn each_entry(dir: &Path, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -
         let Some((name, shown)) = browse::classify(&item) else {
             continue;
         };
+        if matches!(shown, Shown::File(category) if !types.contains(category)) {
+            continue;
+        }
         if matches!(shown, Shown::Folder)
             && (item.file_type().map_or(true, |kind| kind.is_symlink())
                 || (unindexable::could_be_unindexable(&name) && unindexable::is_unindexable(&item.path())))
@@ -606,11 +612,11 @@ fn each_entry(dir: &Path, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -
     Some(complete)
 }
 
-fn scan_dir(dir: &Path) -> Option<Found> {
+fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
     let mut files = Vec::new();
     let mut subdirs = Vec::new();
     let mut unreadable_file = false;
-    let all_listed = each_entry(dir, |item, name, shown| match shown {
+    let all_listed = each_entry(dir, types, |item, name, shown| match shown {
         Shown::Folder => subdirs.push(item.path()),
         Shown::File(category) => match facts(item) {
             Some((modified_ms, size)) => files.push(ScannedFile {
@@ -642,9 +648,9 @@ fn scan_dir(dir: &Path) -> Option<Found> {
     })
 }
 
-fn scan_file(path: &Path) -> Option<ScannedDir> {
+fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
     let name = path.file_name()?.to_string_lossy().into_owned();
-    let category = browse::category_of(&name)?;
+    let category = browse::category_of(&name).filter(|&category| types.contains(category))?;
     let (modified_ms, size) = facts_of(&fs::metadata(path).ok()?)?;
     Some(ScannedDir {
         path: path.parent()?.to_owned(),
@@ -793,6 +799,7 @@ mod tests {
             progress: Mutex::new(ProgressState::default()),
             finished_new: std::sync::atomic::AtomicU64::new(0),
             landed_new: std::sync::atomic::AtomicU64::new(0),
+            indexed_types: std::sync::atomic::AtomicU8::new(Categories::ALL.bits()),
             control: Control::with_turbo(false, true),
             quiet: Default::default(),
             urgent: Default::default(),

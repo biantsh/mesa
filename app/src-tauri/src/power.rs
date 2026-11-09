@@ -2,8 +2,17 @@ pub fn give_way() {
     imp::give_way(true);
 }
 
-pub fn stop_giving_way() {
-    imp::give_way(false);
+thread_local! {
+    static FOLLOWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn follow(on: bool) {
+    FOLLOWING.with(|state| {
+        if state.get() != on {
+            imp::give_way(on);
+            state.set(on);
+        }
+    });
 }
 
 #[cfg(windows)]

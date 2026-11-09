@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import type { Overview } from "../api";
 import { cx } from "../cx";
 import { prefersReducedMotion } from "../motion";
 import { Bar, figures, Label } from "./IndexProgress";
+import { Reveal } from "./Reveal";
 import styles from "./IndexStatus.module.css";
 
 interface Props {
@@ -11,11 +12,35 @@ interface Props {
   onOpenIndex: () => void;
   attention: number;
   raised?: boolean;
+  keepsFocus?: boolean;
 }
 
 const SWELL_PX = 3;
 
-export function IndexStatus({ overview, onOpenIndex, attention, raised = false }: Props) {
+function PillCount({ paused, count }: { paused: boolean; count: string }) {
+  const [arrivedWith] = useState(count !== "");
+  const [kept, setKept] = useState(count);
+  if (count && count !== kept) setKept(count);
+  if (!paused && !count && !kept) return null;
+  const separator = paused ? " · " : "";
+  return (
+    <span className={styles.count}>
+      {paused && "Paused"}
+      {arrivedWith ? (
+        count && `${separator}${count}`
+      ) : (
+        <Reveal show={count !== ""}>
+          <span className={styles.figures}>
+            {separator}
+            {kept}
+          </span>
+        </Reveal>
+      )}
+    </span>
+  );
+}
+
+export function IndexStatus({ overview, onOpenIndex, attention, raised = false, keepsFocus = raised }: Props) {
   const empty = useRef<HTMLParagraphElement>(null);
   const attended = useRef(attention);
   useEffect(() => {
@@ -35,14 +60,13 @@ export function IndexStatus({ overview, onOpenIndex, attention, raised = false }
   if (overview?.progress) {
     const { progress } = overview;
     const count = figures(progress);
-    const text = progress.paused ? (count ? `Paused · ${count}` : "Paused") : count;
     content = (
       <button key="progress" type="button" className={cx(styles.progress, raised && styles.raised)}
-        onMouseDown={raised ? (e) => e.preventDefault() : undefined}
-        onClick={onOpenIndex} data-tooltip="Show the index">
+        onMouseDown={keepsFocus ? (e) => e.preventDefault() : undefined}
+        onClick={onOpenIndex} data-tooltip="Show the index" data-pill>
         <Label progress={progress} />
         <Bar progress={progress} />
-        {text && <span className={styles.count}>{text}</span>}
+        <PillCount paused={progress.paused} count={count} />
         <ChevronRight size={16} className={styles.chevron} aria-hidden />
       </button>
     );

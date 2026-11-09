@@ -58,6 +58,8 @@ export interface Progress {
   total: number;
   paused: boolean;
   updating: boolean;
+  folders: string[];
+  turbo: boolean;
 }
 
 export function sameProgress(a: Progress | null, b: Progress | null): boolean {
@@ -70,7 +72,9 @@ export function sameProgress(a: Progress | null, b: Progress | null): boolean {
     a.done === b.done &&
     a.total === b.total &&
     a.paused === b.paused &&
-    a.updating === b.updating
+    a.updating === b.updating &&
+    a.folders.join("/") === b.folders.join("/") &&
+    a.turbo === b.turbo
   );
 }
 
@@ -84,7 +88,7 @@ export interface Overview {
 
 export interface Settings {
   gpuAcceleration: boolean;
-  turboIndexing: boolean;
+  indexedTypes: Category[];
 }
 
 export interface HotkeyParts {
@@ -144,6 +148,9 @@ export const api = {
     invoke<SearchPage>("search", { query, ...filter, files }),
   searchMore: (id: number) => invoke<SearchPage>("search_more", { id }),
   setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),
+  setIndexingTurbo: (enabled: boolean) => invoke<void>("set_indexing_turbo", { enabled }),
+  getIndexedTypes: () => invoke<Category[]>("get_indexed_types"),
+  setIndexedTypes: (types: Category[]) => invoke<Category[]>("set_indexed_types", { types }),
   dropFromQueue: (paths: string[]) => invoke<void>("drop_from_queue", { paths }),
   addToIndex: (paths: string[], completing?: string) => invoke<void>("add_to_index", { paths, completing }),
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
@@ -167,7 +174,6 @@ export const api = {
   retryModelSetup: () => invoke<void>("retry_model_setup"),
   embeddingGpu: () => invoke<string | null>("embedding_gpu"),
   setGpuAcceleration: (enabled: boolean) => invoke<void>("set_gpu_acceleration", { enabled }),
-  setTurboIndexing: (enabled: boolean) => invoke<void>("set_turbo_indexing", { enabled }),
   pagePainted: () => invoke<void>("page_painted"),
   revealMain: () => invoke<void>("reveal_main"),
   hideWidget: () => invoke<void>("hide_widget"),

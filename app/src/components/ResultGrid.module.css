@@ -61,7 +61,7 @@
 }
 
 .progress {
-  --for-progress: calc(36px + 10px);
+  --for-progress: calc(var(--pill-bottom, 16px) + 36px + 10px - var(--bottom-gap));
 }
 
 .pane.counting {

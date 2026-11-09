@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
-    browse::{self, Category, Listing},
+    browse::{self, Categories, Category, Listing},
     embed::ModelStatus,
     hotkey::{self, Hotkey},
     index::{Index, IndexState, Page, Stats},
@@ -161,6 +161,11 @@ pub fn search_more(id: u64, index: State<'_, Index>) -> Result<SearchPage, Strin
 #[tauri::command(async)]
 pub fn set_indexing_paused(paused: bool, index: State<'_, Index>) -> Result<(), String> {
     index.set_paused(paused)
+}
+
+#[tauri::command]
+pub fn set_indexing_turbo(enabled: bool, index: State<'_, Index>) {
+    index.set_turbo(enabled);
 }
 
 #[tauri::command(async)]
@@ -330,6 +335,41 @@ pub fn get_settings(settings: State<'_, SettingsStore>) -> Settings {
 }
 
 #[tauri::command]
+pub fn get_indexed_types(index: State<'_, Index>) -> Vec<Category> {
+    index.indexed_types().to_vec()
+}
+
+#[tauri::command(async)]
+pub fn set_indexed_types(
+    types: Vec<Category>,
+    settings: State<'_, SettingsStore>,
+    index: State<'_, Index>,
+) -> Result<Vec<Category>, String> {
+    let chosen = Categories::of(&types);
+    if chosen.is_empty() {
+        return Err("Choose at least one kind of file.".into());
+    }
+    let before = index.indexed_types();
+    let empty = index.is_empty();
+    let after = if empty { chosen } else { before.union(chosen) };
+    if after == before {
+        return Ok(after.to_vec());
+    }
+    index.set_indexed_types(after);
+    if let Err(e) = settings.set(Settings {
+        indexed_types: after.to_vec(),
+        ..settings.get()
+    }) {
+        index.set_indexed_types(before);
+        return Err(format!("Couldn't save the setting. {e}"));
+    }
+    if !empty && !before.includes(after) {
+        index.check_for_changes();
+    }
+    Ok(after.to_vec())
+}
+
+#[tauri::command]
 pub fn model_status(index: State<'_, Index>) -> ModelStatus {
     index.model_status()
 }
@@ -407,19 +447,6 @@ pub fn begin_hotkey_recording(app: AppHandle, hotkey: State<'_, Hotkey>) {
 #[tauri::command(async)]
 pub fn end_hotkey_recording(app: AppHandle, hotkey: State<'_, Hotkey>) {
     hotkey.resume(&app);
-}
-
-#[tauri::command(async)]
-pub fn set_turbo_indexing(
-    enabled: bool,
-    settings: State<'_, SettingsStore>,
-    index: State<'_, Index>,
-) -> Result<(), String> {
-    let after = Settings {
-        turbo_indexing: enabled,
-        ..settings.get()
-    };
-    apply_setting(&settings, after, |s| index.set_turbo(s.turbo_indexing))
 }
 
 #[tauri::command]

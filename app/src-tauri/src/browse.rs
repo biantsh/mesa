@@ -36,6 +36,59 @@ pub enum Category {
     Document,
 }
 
+pub const CATEGORIES: [Category; 4] = [Category::Image, Category::Video, Category::Audio, Category::Document];
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Categories(u8);
+
+impl Categories {
+    pub const ALL: Self = Self(0b1111);
+
+    fn bit(category: Category) -> u8 {
+        match category {
+            Category::Image => 0b0001,
+            Category::Video => 0b0010,
+            Category::Audio => 0b0100,
+            Category::Document => 0b1000,
+        }
+    }
+
+    pub fn of(categories: &[Category]) -> Self {
+        Self(categories.iter().fold(0, |bits, &category| bits | Self::bit(category)))
+    }
+
+    pub fn from_bits(bits: u8) -> Self {
+        Self(bits & Self::ALL.0)
+    }
+
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub fn contains(self, category: Category) -> bool {
+        self.0 & Self::bit(category) != 0
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub fn includes(self, other: Self) -> bool {
+        other.0 & !self.0 == 0
+    }
+
+    pub fn to_vec(self) -> Vec<Category> {
+        CATEGORIES
+            .into_iter()
+            .filter(|&category| self.contains(category))
+            .collect()
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {

@@ -1,0 +1,366 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  padding-bottom: calc(16px + var(--corner-bottom));
+}
+
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  min-height: 50px;
+  box-sizing: border-box;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  container: page / inline-size;
+}
+
+.content {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 12px 24px 0;
+}
+
+.stage {
+  --nudge: -8px;
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-top: calc(24px + var(--nudge));
+  padding-bottom: calc(24px - var(--nudge));
+}
+
+.explainer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 62ch;
+}
+
+.explainer p {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+
+.explainer .lead {
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.choices {
+  display: grid;
+  --or-width: 64px;
+  --reveal-delay: 260ms;
+  grid-template-columns: 1fr var(--or-width) 1fr;
+  align-items: stretch;
+  container: choices / inline-size;
+}
+
+.choices[data-animated] {
+  transition: grid-template-columns 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.choices[data-running] {
+  grid-template-columns: 1fr 0px 0fr;
+}
+
+.card,
+.otherCard {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+
+.card {
+  min-width: 0;
+}
+
+.card,
+.otherCard {
+  min-height: 360px;
+}
+
+.other {
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+}
+
+.otherCard {
+  flex: none;
+  min-width: calc((100cqw - var(--or-width)) / 2);
+}
+
+.or {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.choices[data-animated] .otherCard > *,
+.choices[data-animated] .or {
+  transition: opacity 240ms ease var(--reveal-delay);
+}
+
+.choices[data-running] .otherCard > *,
+.choices[data-running] .or {
+  opacity: 0;
+}
+
+.choices[data-animated] .otherCard {
+  transition: opacity 240ms ease;
+}
+
+.choices[data-running] .otherCard {
+  opacity: 0;
+}
+
+.choices[data-animated][data-running] .otherCard {
+  transition: opacity 140ms ease;
+}
+
+.choices[data-animated][data-running] .otherCard > *,
+.choices[data-animated][data-running] .or {
+  transition: opacity 120ms ease;
+}
+
+.or > .rule:first-child {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16px);
+  mask-image: linear-gradient(to bottom, transparent, #000 16px);
+}
+
+.or > .rule:last-child {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+}
+
+.rule {
+  flex: 1;
+  width: 1px;
+  background: var(--color-border);
+}
+
+.orWord {
+  color: var(--color-text-faint);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.choices[data-running] .other,
+.choices[data-running] .or {
+  pointer-events: none;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.cardText {
+  margin: -6px 0 0;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.uses {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--color-text-muted);
+}
+
+.uses li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.useIcon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--color-hover-bg);
+}
+
+.actions {
+  display: flex;
+  margin-top: auto;
+}
+
+.middle {
+  --progress-offset: 12px;
+  margin-top: var(--progress-offset);
+}
+
+.foot {
+  margin-top: auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.footActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.footActions > button {
+  flex: none;
+  white-space: nowrap;
+}
+
+.hint {
+  margin: 20px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  color: var(--color-text-muted);
+  font-size: 14px;
+  animation: hint-in 320ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+
+.hint > svg {
+  flex: none;
+}
+
+.hintLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  vertical-align: baseline;
+  padding: 2px 3px;
+  margin: -2px -3px -2px -2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.hintLink > svg {
+  flex: none;
+  position: relative;
+  top: -1px;
+}
+
+.hintLink:hover {
+  background: var(--color-hover-bg);
+}
+
+@keyframes hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.note {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-faint);
+  font-size: 13px;
+}
+
+
+.error {
+  margin: 0;
+  color: var(--color-danger-ink);
+  font-size: 13px;
+}
+
+@container page (max-width: 760px) {
+  .choices,
+  .choices[data-running] {
+    grid-template-columns: 1fr;
+    transition: none;
+  }
+
+  .or {
+    flex-direction: row;
+    padding-block: 12px;
+  }
+
+  .rule {
+    width: auto;
+    height: 1px;
+  }
+
+  .or > .rule:first-child {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 16px);
+    mask-image: linear-gradient(to right, transparent, #000 16px);
+  }
+
+  .or > .rule:last-child {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  }
+
+  .otherCard {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .choices[data-running] .other,
+  .choices[data-running] .or {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hint {
+    animation: none;
+  }
+
+  .choices[data-animated],
+  .choices[data-animated] .otherCard,
+  .choices[data-animated][data-running] .otherCard,
+  .choices[data-animated] .otherCard > *,
+  .choices[data-animated] .or {
+    transition: none;
+  }
+}

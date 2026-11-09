@@ -3,6 +3,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  box-sizing: border-box;
+  padding-bottom: 36px;
 }
 
 .app[data-marquee="on"] :is(button, [role="button"], a, input, select, textarea, [data-path], [data-row]) {
@@ -31,17 +33,26 @@
 .side {
   position: relative;
   flex: none;
-  width: clamp(260px, 18vw, 340px);
-  width: round(clamp(260px, 18vw, 340px), 4px);
+  width: var(--side-default);
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--gap);
 }
 
+.app {
+  --side-default: clamp(260px, 18vw, 340px);
+}
+
+@supports (width: round(1px, 1px)) {
+  .app {
+    --side-default: round(clamp(260px, 18vw, 340px), 4px);
+  }
+}
+
 @media (max-width: 800px) {
-  .side {
-    width: 220px;
+  .app {
+    --side-default: 220px;
   }
 }
 
@@ -55,12 +66,16 @@
   transition: width 260ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.explorer[data-holding] > * {
+.explorer[data-holding] > :not([data-overlay]) {
   flex: none;
   width: var(--files-width);
 }
 
 .explorer {
+  --chip-margin: 5px;
+  --chip-height: 22px;
+  --chip-room: calc(var(--chip-height) + 2 * var(--chip-margin));
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;

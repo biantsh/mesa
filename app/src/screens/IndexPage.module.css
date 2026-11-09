@@ -1,0 +1,10 @@
+.view {
+  position: absolute;
+  inset: 0;
+  outline: none;
+}
+
+.view[data-off] {
+  visibility: hidden;
+  pointer-events: none;
+}

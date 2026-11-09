@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { WINDOW_MS, addSample, formatEta, speedOf, type Sample } from "./eta";
 
-const at = (seconds: number, done: number): Sample => ({ t: seconds * 1000, done });
+const at = (seconds: number, done: number, turbo = false): Sample => ({ t: seconds * 1000, done, turbo });
 
 describe("speedOf", () => {
   it("measures files per second", () => {

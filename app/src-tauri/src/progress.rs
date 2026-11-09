@@ -4,6 +4,8 @@ use serde::Serialize;
 
 use crate::browse;
 
+const FOLDERS_SHOWN: usize = 2;
+
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Progress {
@@ -15,6 +17,19 @@ pub struct Progress {
     pub total: u64,
     pub paused: bool,
     pub updating: bool,
+    pub folders: Vec<String>,
+    pub turbo: bool,
+}
+
+fn folders_below(root: &Path, folder: Option<&Path>) -> Vec<String> {
+    let Some(below) = folder.and_then(|folder| folder.strip_prefix(root).ok()) else {
+        return Vec::new();
+    };
+    below
+        .components()
+        .take(FOLDERS_SHOWN)
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect()
 }
 
 struct ActiveJob {
@@ -27,6 +42,7 @@ struct ActiveJob {
     found: u64,
     total: Option<u64>,
     done: u64,
+    current: Option<PathBuf>,
     already: u64,
 }
 
@@ -42,6 +58,7 @@ impl ActiveJob {
             found: 0,
             total: quiet.then_some(0),
             done: 0,
+            current: None,
             already: 0,
         }
     }
@@ -203,6 +220,15 @@ impl ProgressState {
         }
     }
 
+    pub fn processed_in(&mut self, ticket: u64, files: u64, folder: &Path) {
+        if let Some(job) = self.job_mut(ticket) {
+            job.done += files;
+            if job.current.as_deref() != Some(folder) {
+                job.current = Some(folder.to_owned());
+            }
+        }
+    }
+
     pub fn finish_job(&mut self, ticket: u64) -> bool {
         let Some(position) = self.jobs.iter().position(|job| job.ticket == ticket) else {
             return false;
@@ -231,6 +257,8 @@ impl ProgressState {
             total: if counting { 0 } else { self.finished + counted },
             paused,
             updating: current.quiet,
+            folders: folders_below(&current.root, current.current.as_deref()),
+            turbo: false,
         })
     }
 }

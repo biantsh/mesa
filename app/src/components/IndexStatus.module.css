@@ -67,8 +67,15 @@
 
 .count {
   flex: none;
+  display: inline-flex;
+  align-items: center;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.figures {
+  display: block;
+  white-space: nowrap;
 }
 
 .chevron {

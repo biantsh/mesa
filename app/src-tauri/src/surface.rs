@@ -129,6 +129,8 @@ pub fn lines(progress: &Progress) -> Lines {
         total,
         paused,
         updating,
+        folders: _,
+        turbo: _,
     } = progress;
     let title = if *queued > 0 {
         format!("{name} + {queued} more")

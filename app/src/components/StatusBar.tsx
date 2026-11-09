@@ -1,5 +1,5 @@
 import type { Entry } from "../api";
-import { describeIndexed, describeItems } from "../format";
+import { splitItems } from "../format";
 import styles from "./StatusBar.module.css";
 
 interface Props {
@@ -9,26 +9,22 @@ interface Props {
 }
 
 export function StatusBar({ entries, selected, selectedInList }: Props) {
-  if (entries === null) return <footer className={styles.bar} />;
-  const indexed = selected.length > 0 ? describeIndexed(selected, true) : describeIndexed(entries);
+  const items = entries !== null ? splitItems(entries) : null;
+  const inList = selectedInList !== null && selectedInList.count > 0;
   return (
-    <footer className={styles.bar}>
-      <span>{describeItems(entries)}</span>
-      {selected.length > 0 && (
-        <>
-          <span className={styles.separator} aria-hidden />
-          <span>{selected.length} selected</span>
-        </>
-      )}
-      {selectedInList !== null && selectedInList.count > 0 && (
-        <>
-          <span className={styles.separator} aria-hidden />
+    <footer className={styles.bar} data-overlay>
+      {items !== null && (
+        <span className={styles.folder}>
           <span>
-            {selectedInList.count} selected in {selectedInList.name}
+            {items.total}
+            {items.detail && <span className={styles.detail}> {items.detail}</span>}
           </span>
-        </>
+          <span className={styles.separator} aria-hidden />
+          <span className={styles.selected}>
+            {inList ? `${selectedInList.count} selected in ${selectedInList.name}` : `${selected.length} selected`}
+          </span>
+        </span>
       )}
-      {indexed && <span className={styles.indexed}>{indexed}</span>}
     </footer>
   );
 }

@@ -5,7 +5,6 @@ import { isMac } from "../platform";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useSearchHotkey } from "../useSearchHotkey";
 import { useTheme } from "../theme";
-import { useTurboIndexing } from "../useTurboIndexing";
 import { IconButton } from "./IconButton";
 import { Keycaps } from "./Keycaps";
 import { Modal } from "./Modal";
@@ -21,7 +20,6 @@ interface Props {
 export function SettingsDialog({ open, onClose }: Props) {
   const titleId = useId();
   const gpu = useGpuAcceleration();
-  const turbo = useTurboIndexing();
   const hotkey = useSearchHotkey(open);
   const close = () => {
     if (!hotkey.isRecording()) onClose();
@@ -47,7 +45,6 @@ export function SettingsDialog({ open, onClose }: Props) {
             </Group>
             <Group title="Indexing">
               <GpuRow {...gpu} />
-              <TurboRow {...turbo} />
             </Group>
           </div>
         </div>
@@ -127,25 +124,6 @@ function HotkeyRow({ status, recording, held, refused, error, saving, field, sta
             {status ? active ? <Keycaps keys={active.keys} /> : <span className={styles.none}>None</span> : null}
           </ShortcutField>
         )}
-      />
-      <SettingError error={error} />
-    </>
-  );
-}
-
-function TurboRow({ enabled, pending, error, change }: ReturnType<typeof useTurboIndexing>) {
-  return (
-    <>
-      <Row
-        title="Turbo indexing"
-        description="Faster, but uses more resources."
-        control={(ids) =>
-          enabled !== null ? (
-            <Switch checked={pending ?? enabled} disabled={pending !== null} onChange={change} {...ids} />
-          ) : (
-            <span className={styles.switchSpace} aria-hidden />
-          )
-        }
       />
       <SettingError error={error} />
     </>

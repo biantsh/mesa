@@ -115,3 +115,48 @@
       visibility 0s linear 150ms;
   }
 }
+
+.totals,
+.legalCorner {
+  transition:
+    opacity 180ms ease-out,
+    visibility 0s;
+}
+
+.totals {
+  position: absolute;
+  z-index: 1;
+  left: 16px;
+  bottom: var(--corner-bottom);
+  height: 16px;
+  color: var(--color-text-faint);
+  font-size: 12px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.totals.cornerAway,
+.legalCorner.cornerAway {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 180ms ease-out,
+    visibility 0s linear 180ms;
+}
+
+.legalCorner {
+  position: absolute;
+  z-index: 1;
+  right: 16px;
+  bottom: var(--corner-bottom);
+  height: 16px;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-faint);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}

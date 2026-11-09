@@ -97,6 +97,12 @@ export function installTooltips() {
       if (!target.isConnected) {
         hide(false);
         anchor = null;
+        return;
+      }
+      const now = target.dataset.tooltip?.trim();
+      if (now && now !== tip.textContent) {
+        tip.textContent = now;
+        tip.dataset.side = place(tip, target, pointer);
       }
     }, 250);
   };

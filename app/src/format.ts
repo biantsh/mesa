@@ -43,22 +43,18 @@ function plural(count: number, one: string): string {
   return `${count} ${count === 1 ? one : `${one}s`}`;
 }
 
-export function describeItems(entries: Entry[]): string {
+export function splitItems(entries: Entry[]): { total: string; detail: string | null } {
   const files = entries.filter((entry) => entry.kind === "file").length;
   const folders = entries.length - files;
-  const total = plural(entries.length, "item");
-  return files > 0 && folders > 0
-    ? `${total} (${plural(folders, "folder")}, ${plural(files, "file")})`
-    : total;
+  return {
+    total: plural(entries.length, "item"),
+    detail: files > 0 && folders > 0 ? `(${plural(folders, "folder")}, ${plural(files, "file")})` : null,
+  };
 }
 
-export function describeIndexed(entries: Entry[], selection = false): string | null {
-  const possible = entries.filter(
-    (entry) => entry.readable && entry.index !== "unindexable" && entry.index !== "excluded",
-  );
-  if (possible.length === 0) return null;
-  const indexed = possible.filter((entry) => entry.index === "indexed").length;
-  return `${indexed} of ${possible.length} ${selection ? "selected are " : ""}indexed`;
+export function describeItems(entries: Entry[]): string {
+  const { total, detail } = splitItems(entries);
+  return detail ? `${total} ${detail}` : total;
 }
 
 const downloadedFormat = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });

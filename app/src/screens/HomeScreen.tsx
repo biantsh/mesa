@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { ArrowRight, ArrowUpRight, Ban, Database, Files, Search, Settings, X } from "lucide-react";
+import { ArrowRight, Ban, Database, Files, Search, Settings, X } from "lucide-react";
 import { api, errorText, type Category, type ModelStatus, type Overview, type SearchHit, type SearchPage } from "../api";
-import { CATEGORY_LABELS, describeIndexTotals } from "../format";
+import { CATEGORY_LABELS } from "../format";
 import { Button } from "../components/Button";
 import { ContextMenu } from "../components/ContextMenu";
 import { ExampleButton } from "../components/ExampleButton";
@@ -18,17 +18,21 @@ import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chose
 import { BACKGROUND_PRESS } from "../background";
 import { MAIN_HIDDEN } from "../events";
 import { scrollByKey } from "../scrollKeys";
+import { ShortcutTip } from "../components/ShortcutTip";
 import { useDefaultScroll } from "../useDefaultScroll";
 import { useFileDrop } from "../useFileDrop";
 import { isForSomethingElse } from "../useSelection";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { useResultSelection } from "../useResultSelection";
+import { useShortcutTip } from "../useShortcutTip";
 import { useTauriEvent } from "../useTauriEvent";
 import styles from "./HomeScreen.module.css";
 
-const LICENSE = "MIT License";
 const TOP_GAP_PX = 20;
 const BOTTOM_GAP_PX = 16;
+const CORNER_TEXT_RISE_PX = -2;
+const ARRIVING_SNAP_MS = 300;
+const BOTTOM_GAP_WITH_CORNERS_PX = 36;
 const CLEAR_RESULTS_MS = 500;
 const SEARCH_DELAY_MS = 150;
 
@@ -43,6 +47,8 @@ interface Found {
 
 export interface HomeHandle {
   restoreFocus: () => boolean;
+  hasText: () => boolean;
+  focusFieldAtOnce: () => void;
   focusField: () => void;
 }
 
@@ -52,8 +58,11 @@ interface Props {
   model: ModelStatus | null;
   onRetryModel: () => void;
   onFocusChange?: (focused: boolean) => void;
+  onBottomPill?: (width: number | null) => void;
   onOpenIndex: () => void;
   onOpenSettings: () => void;
+  onScreen?: boolean;
+  indexShown?: boolean;
   asWidget?: boolean;
   onDismiss?: () => void;
 }
@@ -285,7 +294,7 @@ function Understanding({ understood, query, examples, fieldFocused, onFocusField
   );
 }
 
-export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onOpenIndex, onOpenSettings, asWidget, onDismiss }: Props) {
+export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, onBottomPill, onOpenIndex, onOpenSettings, onScreen = false, indexShown = false, asWidget, onDismiss }: Props) {
   const blocked = overview?.empty === true;
   const modelFailed = model?.state === "failed";
   const input = useRef<HTMLInputElement>(null);
@@ -374,6 +383,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   }, [results, searchable, text, fileType, fromMs, toMs, examples]);
   const batches = found && "batches" in found ? found.batches : NO_BATCHES;
   const hits = useMemo(() => (batches.length === 0 ? NO_HITS : batches.flat()), [batches]);
+  const shortcutTip = useShortcutTip({ onScreen: onScreen && !asWidget, worth: hits.length > 0 && !searching });
   const viewMore = useCallback(() => {
     if (!found || !("id" in found) || loadingMore) return;
     const { id } = found;
@@ -487,6 +497,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     closeMenu();
   });
   const away = useRef(false);
+  const [snapping, setSnapping] = useState(false);
+  const snapTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(snapTimer.current), []);
   useImperativeHandle(ref, () => ({
     restoreFocus() {
       if (!away.current) return false;
@@ -497,6 +510,15 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     },
     focusField() {
       if (input.current && !input.current.readOnly) input.current.focus({ preventScroll: true });
+    },
+    focusFieldAtOnce() {
+      setSnapping(true);
+      window.clearTimeout(snapTimer.current);
+      snapTimer.current = window.setTimeout(() => setSnapping(false), ARRIVING_SNAP_MS);
+      if (input.current && !input.current.readOnly) input.current.focus({ preventScroll: true });
+    },
+    hasText() {
+      return query.trim() !== "" || examples.length > 0;
     },
   }));
   const openIndexFromProgress = useCallback(() => {
@@ -536,9 +558,13 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       const lift = Math.max(0, block.top - around.top - TOP_GAP_PX);
       const set = (name: string, px: number) => root.style.setProperty(name, `${px}px`);
       set("--top-gap", TOP_GAP_PX);
-      set("--bottom-gap", BOTTOM_GAP_PX);
+      const bottomGap = asWidget ? BOTTOM_GAP_PX : BOTTOM_GAP_WITH_CORNERS_PX;
+      const cornerBottom = parseFloat(getComputedStyle(root).getPropertyValue("--corner-bottom")) || 10;
+      const pillBottom = asWidget ? BOTTOM_GAP_PX : cornerBottom + CORNER_TEXT_RISE_PX;
+      set("--bottom-gap", bottomGap);
+      set("--pill-bottom", pillBottom);
       set("--lift", lift);
-      set("--drop", Math.max(0, around.bottom - BOTTOM_GAP_PX - block.bottom));
+      set("--drop", Math.max(0, around.bottom - pillBottom - block.bottom));
       set("--actions-width", snapToLayout(actionsWidth) + gap);
       set("--hole-left", block.left - around.left);
       set("--hole-right", around.right - block.right);
@@ -550,11 +576,32 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     observer.observe(root);
     observer.observe(actions.current!);
     return () => observer.disconnect();
-  }, []);
+  }, [asWidget]);
+
+  const pillAtBottom = engaged && !asWidget && overview?.progress != null;
+  const wasAtBottom = useRef(false);
+  const fading = indexShown && wasAtBottom.current;
+  useLayoutEffect(() => {
+    if (!indexShown) wasAtBottom.current = pillAtBottom;
+  });
+  useEffect(() => {
+    const pill = pillAtBottom ? home.current?.querySelector<HTMLElement>("[data-pill]") : null;
+    if (!pill) {
+      onBottomPill?.(null);
+      return;
+    }
+    const report = () => onBottomPill?.(pill.offsetWidth);
+    report();
+    const observer = new ResizeObserver(report);
+    observer.observe(pill);
+    return () => observer.disconnect();
+  }, [pillAtBottom, onBottomPill]);
 
   return (
     <main
       ref={home}
+      data-fading={fading ? "" : undefined}
+      data-snapping={snapping ? "" : undefined}
       className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed, blocked && styles.blocked, asWidget && styles.asWidget, opening && styles.opening, overview?.progress != null && styles.indexing)}
       onClick={(e) => {
         const target = e.target as HTMLElement;
@@ -632,7 +679,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               readOnly={blocked}
               aria-disabled={blocked || undefined}
               tabIndex={blocked ? -1 : undefined}
-              onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : () => setFocus(true)}
+              onFocus={blocked ? (e) => { e.currentTarget.blur(); refuse(); } : () => { away.current = false; setFocus(true); }}
               onBlur={() => { if (!blocked && document.hasFocus() && !away.current) setFocus(false); }}
               value={query}
               onChange={(e) => change(e.target.value)}
@@ -675,22 +722,10 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           </div>
         </div>
         <div className={styles.status}>
-          <IndexStatus overview={overview} onOpenIndex={openIndexFromProgress} attention={attention} raised={dim} />
+          <IndexStatus overview={overview} onOpenIndex={openIndexFromProgress} attention={attention} raised={dim} keepsFocus={focused} />
         </div>
       </div>
-      <footer className={styles.footer}>
-        <span className={styles.totals}>
-          {overview && describeIndexTotals(overview.files, overview.bytes)}
-        </span>
-        <span className={styles.legal}>
-          <span>{LICENSE}</span>
-          <span className={styles.divider} aria-hidden />
-          <button type="button" className={styles.project} onClick={() => api.openProjectPage().catch(() => {})}>
-            GitHub
-            <ArrowUpRight size={12} aria-hidden />
-          </button>
-        </span>
-      </footer>
+      <ShortcutTip show={shortcutTip.visible} keys={shortcutTip.keys} lifted={overview?.progress != null} />
       {menu && (
         <ContextMenu
           key={`${menu.hits[0].path}:${menu.x}:${menu.y}`}

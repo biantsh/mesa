@@ -1,7 +1,9 @@
-import { ChevronLeft, DatabaseZap } from "lucide-react";
+import { ArrowDownLeft, DatabaseZap } from "lucide-react";
 import type { Progress } from "../api";
 import { SELECTING_FROM } from "../selection";
-import { IconButton } from "./IconButton";
+import { SWITCH_NAME } from "../indexView";
+import { Button } from "./Button";
+import { IndexHeader } from "./IndexHeader";
 import { MorphButton } from "./MorphButton";
 import { IndexProgress } from "./IndexProgress";
 import styles from "./TopBar.module.css";
@@ -15,13 +17,15 @@ interface SelectionActions {
 interface Props {
   onBack: () => void;
   progress: Progress | null;
+  secondsLeft: number | null;
   onRefreshProgress: () => Promise<void>;
   onIndexAll: () => void;
   everythingIndexed: boolean;
   onError: (message: string) => void;
   stoppedAt: number;
-  summary: string | null;
   selection: SelectionActions;
+  active: boolean;
+  onSimpleView: () => void;
 }
 
 function plural(count: number): string {
@@ -31,56 +35,63 @@ function plural(count: number): string {
 export function TopBar({
   onBack,
   progress,
+  secondsLeft,
   onRefreshProgress,
   onIndexAll,
   everythingIndexed,
   onError,
   stoppedAt,
-  summary,
   selection,
+  active,
+  onSimpleView,
 }: Props) {
   const selecting = selection.selected >= SELECTING_FROM;
   return (
     <header className={styles.bar} data-busy={progress ? "" : undefined}>
-      <div className={styles.heading}>
-        <IconButton label="Back to search" onClick={onBack}>
-          <ChevronLeft size={24} absoluteStrokeWidth strokeWidth={1.67} aria-hidden />
-        </IconButton>
-        <div className={styles.titleGroup}>
-          <h1 className={styles.title}>Index</h1>
-          {summary && <span className={styles.summary}>{summary}</span>}
-        </div>
-      </div>
+      <IndexHeader onBack={onBack} />
       <div className={styles.middle}>
         <IndexProgress
           progress={progress}
+          secondsLeft={secondsLeft}
           onRefresh={onRefreshProgress}
           onError={onError}
           stoppedAt={stoppedAt}
+          active={active}
         />
       </div>
-      <MorphButton
-        variant="primary"
-        className={styles.indexButton}
-        selecting={selecting}
-        icon={<DatabaseZap size={15} />}
-        iconSize={15}
-        label="Index all"
-        selectingLabel="Index selected"
-        onClick={selecting ? selection.onAdd : onIndexAll}
-        disabled={selecting ? selection.add === 0 : everythingIndexed}
-        data-tooltip={
-          !selecting
-            ? everythingIndexed
-              ? progress
-                ? "Already indexing everything"
-                : "Everything is already indexed"
-              : undefined
-            : selection.add === 0
-              ? "Nothing selected can be indexed"
-              : `Index ${selection.add} selected ${plural(selection.add)}`
-        }
-      />
+      <div className={styles.actions}>
+        <Button
+          variant="secondary"
+          className={styles.simpleButton}
+          onClick={onSimpleView}
+          style={{ viewTransitionName: active ? SWITCH_NAME : undefined }}
+        >
+          <ArrowDownLeft size={15} aria-hidden />
+          Simple view
+        </Button>
+        <MorphButton
+          variant="primary"
+          className={styles.indexButton}
+          selecting={selecting}
+          icon={<DatabaseZap size={15} />}
+          iconSize={15}
+          label="Index all"
+          selectingLabel="Index selected"
+          onClick={selecting ? selection.onAdd : onIndexAll}
+          disabled={selecting ? selection.add === 0 : everythingIndexed}
+          data-tooltip={
+            !selecting
+              ? everythingIndexed
+                ? progress
+                  ? "Already indexing everything"
+                  : "Everything is already indexed"
+                : undefined
+              : selection.add === 0
+                ? "Nothing selected can be indexed"
+                : `Index ${selection.add} selected ${plural(selection.add)}`
+          }
+        />
+      </div>
     </header>
   );
 }

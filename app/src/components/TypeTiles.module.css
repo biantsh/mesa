@@ -1,0 +1,95 @@
+.tiles {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.tile:hover:not(.fixed) {
+  background: var(--color-hover-bg);
+}
+
+.on {
+  border-color: color-mix(in srgb, var(--color-primary) 70%, var(--color-border-strong));
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+  color: var(--color-text);
+}
+
+.on:hover:not(.fixed) {
+  background: color-mix(in srgb, var(--color-primary) 15%, var(--color-surface));
+}
+
+.fixed {
+  cursor: default;
+}
+
+.fixed:not(.on) {
+  opacity: 0.55;
+}
+
+.input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.tile:has(.input:focus-visible) {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.box {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: 5px;
+  color: var(--color-on-primary);
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+}
+
+.on .box {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile,
+  .box {
+    transition: none;
+  }
+}

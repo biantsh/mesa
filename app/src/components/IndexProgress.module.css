@@ -13,6 +13,13 @@
   font-size: 13px;
 }
 
+.buttons {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
 .label {
   flex: 0 1 auto;
   min-width: 0;
@@ -45,9 +52,20 @@
 
 .fill {
   height: 100%;
+  min-width: 0;
   border-radius: inherit;
   background: var(--color-primary);
-  transition: width 400ms ease;
+  transition: width 400ms ease, min-width 400ms ease, background-color 250ms ease;
+}
+
+.afterSweep {
+  transition-duration: 400ms, 400ms, 250ms;
+  transition-delay: 750ms, 750ms, 0s;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.started {
+  min-width: var(--sliver, 8px);
 }
 
 .paused .fill {
@@ -69,7 +87,7 @@
 .searchingGone {
   opacity: 0;
   visibility: hidden;
-  transition: opacity 300ms ease, visibility 0s linear 300ms;
+  transition: opacity 400ms ease, visibility 0s linear 400ms;
 }
 
 .count {
@@ -171,7 +189,18 @@
   );
 }
 
+.turbo:not(.paused) .fill {
+  background-image: var(--flow);
+  background-size: 240px 100%;
+  background-repeat: repeat-x;
+  animation: flow 650ms linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .turbo:not(.paused) .fill {
+    animation: none;
+  }
+
   .searching {
     width: 100%;
     transform: none;

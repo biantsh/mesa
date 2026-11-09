@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { api } from "./api";
 import { FOCUS_SEARCH, NAVIGATE } from "./events";
+import { markShortcutTipKnown } from "./shortcutTip";
 import { useTauriEvent } from "./useTauriEvent";
 
 const FROM_WIDGET_MS = 450;
@@ -18,6 +19,7 @@ export function useWidgetRequests({ setScreen, setSettingsOpen, focusSearch }: W
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
   useTauriEvent<string>(NAVIGATE, (screen) => {
+    markShortcutTipKnown();
     flushSync(() => {
       if (screen === "index") {
         setFromWidget(true);
@@ -33,6 +35,7 @@ export function useWidgetRequests({ setScreen, setSettingsOpen, focusSearch }: W
   });
 
   useTauriEvent(FOCUS_SEARCH, () => {
+    markShortcutTipKnown();
     setScreen("home");
     setSettingsOpen(false);
     requestAnimationFrame(() => requestAnimationFrame(focusSearch));

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
@@ -6,10 +6,14 @@ import { cx } from "./cx";
 import { MAIN_HIDDEN, MAIN_SHOWN } from "./events";
 import { isMac } from "./platform";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
-import { IndexScreen } from "./screens/IndexScreen";
+import { IndexPage } from "./screens/IndexPage";
 import { api, type ModelStatus } from "./api";
+import { describeIndexTotals } from "./format";
+import { LegalCorner } from "./components/LegalCorner";
 import { startup } from "./ready";
-import { useIndexOverview } from "./useIndexOverview";
+import { useCornersAway } from "./useCornersAway";
+import { useFrozenWhile } from "./useFrozenWhile";
+import { useIndexOverviewNow } from "./useIndexOverview";
 import { useFullscreen, useMaximized } from "./useMaximized";
 import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
@@ -25,6 +29,8 @@ function needsSetup(status: ModelStatus | null): boolean {
 }
 
 const OPEN_ON_TOP = "dialog[open], [role='menu']";
+const Home = memo(HomeScreen);
+const FOCUS_DELAY_MS = 0;
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("home");
@@ -34,7 +40,13 @@ export default function App() {
   const dimmed = (querying && !onIndex) || settingsOpen;
   const maximized = useMaximized();
   useFullscreen();
-  const overview = useIndexOverview(!onIndex);
+  const { overview, refresh: refreshOverview } = useIndexOverviewNow(true);
+  const homeOverview = useFrozenWhile(onIndex, overview);
+  const [pillWidth, setPillWidth] = useState<number | null>(null);
+  const screensBox = useRef<HTMLDivElement>(null);
+  const totalsLine = useRef<HTMLElement>(null);
+  const legalLine = useRef<HTMLElement>(null);
+  const cornersAway = useCornersAway(screensBox, totalsLine, legalLine, pillWidth);
   const model = useModelStatus();
   const [setup, setSetup] = useState<"off" | "on" | "leaving">(needsSetup(startup.modelStatus) ? "on" : "off");
   useEffect(() => {
@@ -55,6 +67,12 @@ export default function App() {
   const index = useRef<HTMLDivElement>(null);
   const goHome = useCallback(() => setScreen("home"), []);
   const goToIndex = useCallback(() => setScreen("index"), []);
+  const focusOnArrival = useRef(false);
+  const searchFromIndex = useCallback(() => {
+    if (homeScreen.current?.hasText()) focusOnArrival.current = true;
+    else window.setTimeout(() => homeScreen.current?.focusField(), FOCUS_DELAY_MS);
+    setScreen("home");
+  }, []);
   const beforeSettings = useRef<Element | null>(null);
   const changeSettingsOpen = useCallback((open: boolean) => {
     if (open) beforeSettings.current = document.activeElement;
@@ -76,6 +94,11 @@ export default function App() {
   useEffect(() => {
     if (first.current) {
       first.current = false;
+      return;
+    }
+    if (!onIndex && focusOnArrival.current) {
+      focusOnArrival.current = false;
+      homeScreen.current?.focusFieldAtOnce();
       return;
     }
     if (!onIndex && homeScreen.current?.restoreFocus()) return;
@@ -126,19 +149,22 @@ export default function App() {
         <TitleBar maximized={maximized} />
         <div className={cx(styles.titleDim, dimmed && styles.dimmed)} aria-hidden />
       </div>
-      <div className={cx(styles.screens, fromWidget && styles.fromWidget)}>
+      <div ref={screensBox} className={cx(styles.screens, fromWidget && styles.fromWidget)}>
         <div
           ref={home}
           className={cx(styles.pane, onIndex && styles.before)}
           tabIndex={-1}
           inert={onIndex || behind}
         >
-          <HomeScreen
+          <Home
             ref={homeScreen}
-            overview={overview}
+            overview={homeOverview}
             model={model}
             onRetryModel={retryModel}
             onFocusChange={setQuerying}
+            onBottomPill={setPillWidth}
+            onScreen={!onIndex && !behind}
+            indexShown={onIndex}
             onOpenIndex={goToIndex}
             onOpenSettings={openSettings}
           />
@@ -149,8 +175,14 @@ export default function App() {
           tabIndex={-1}
           inert={!onIndex || behind}
         >
-          <IndexScreen onBack={goHome} active={onIndex} />
+          <IndexPage onBack={goHome} onSearch={searchFromIndex} overview={overview} onRefreshOverview={refreshOverview} active={onIndex} />
         </div>
+        <footer ref={totalsLine} className={cx(styles.totals, cornersAway && styles.cornerAway)}>
+          {overview && describeIndexTotals(overview.files, overview.bytes)}
+        </footer>
+        <footer ref={legalLine} className={cx(styles.legalCorner, cornersAway && styles.cornerAway)}>
+          <LegalCorner />
+        </footer>
         {covered && model && <SetupScreen status={model} leaving={setup === "leaving"} />}
         <SettingsDialog open={settingsOpen} onClose={closeSettings} />
       </div>

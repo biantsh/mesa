@@ -8,13 +8,17 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{embed::Device, index::lock};
+use crate::{
+    browse::{Categories, Category},
+    embed::Device,
+    index::lock,
+};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub gpu_acceleration: bool,
-    pub turbo_indexing: bool,
+    pub indexed_types: Vec<Category>,
     pub search_hotkey: Option<String>,
 }
 
@@ -22,13 +26,18 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             gpu_acceleration: true,
-            turbo_indexing: false,
+            indexed_types: Categories::ALL.to_vec(),
             search_hotkey: None,
         }
     }
 }
 
 impl Settings {
+    pub fn indexed(&self) -> Categories {
+        let chosen = Categories::of(&self.indexed_types);
+        if chosen.is_empty() { Categories::ALL } else { chosen }
+    }
+
     pub fn device(&self) -> Device {
         if self.gpu_acceleration {
             Device::Auto

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { api, COMPUTER, errorText, type Entry, type Listed, type Listing } from "../api";
+import { api, COMPUTER, errorText, type Entry, type Listed, type Listing, type Overview } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ContextMenu } from "../components/ContextMenu";
 import { EmptyFolder } from "../components/EmptyFolder";
@@ -14,7 +14,6 @@ import { TopBar } from "../components/TopBar";
 import { BACKGROUND_PRESS } from "../background";
 import { showsEmptyFolder } from "../emptyFolder";
 import { MAIN_HIDDEN } from "../events";
-import { describeIndexTotals } from "../format";
 import { menuGroups } from "../menuGroups";
 import { parentOf } from "../paths";
 import { DEFAULT_SORT, nextSort, type Sort, type SortColumn } from "../sort";
@@ -24,7 +23,6 @@ import { useMarquee } from "../useMarquee";
 import { useIndexActions } from "../useIndexActions";
 import { useIndexKeys } from "../useIndexKeys";
 import { useIndexLists } from "../useIndexLists";
-import { useIndexOverview } from "../useIndexOverview";
 import { useIndexProgress } from "../useIndexProgress";
 import { useLatest } from "../useLatest";
 import { useListMenu } from "../useListMenu";
@@ -65,10 +63,14 @@ interface MenuState {
 
 interface Props {
   onBack: () => void;
+  onSimple: () => void;
+  overview: Overview | null;
+  secondsLeft: number | null;
+  arrivalDelay: number;
   active: boolean;
 }
 
-export function IndexScreen({ onBack, active }: Props) {
+export function IndexScreen({ onBack, onSimple, overview, secondsLeft, arrivalDelay, active }: Props) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(true);
   const [openingAnother, setOpeningAnother] = useState(true);
@@ -130,9 +132,6 @@ export function IndexScreen({ onBack, active }: Props) {
     await refreshProgress();
   };
 
-  const overview = useIndexOverview(active);
-  const summary = overview === null ? null : describeIndexTotals(overview.files, overview.bytes);
-
   const { open, choose } = usePanelLayout(indexed.length, excluded.length, loaded);
   const expandIndexed = useCallback(() => choose("indexed"), [choose]);
   const expandExcluded = useCallback(() => choose("excluded"), [choose]);
@@ -142,7 +141,7 @@ export function IndexScreen({ onBack, active }: Props) {
     const frame = requestAnimationFrame(() => setAnimate(true));
     return () => cancelAnimationFrame(frame);
   }, [loaded]);
-  const arrival = useFirstArrival(active, loaded);
+  const arrival = useFirstArrival(active, loaded, arrivalDelay);
   useEffect(() => {
     if (listSelection.list !== null && open !== listSelection.list) clearListSelection();
   }, [open, listSelection.list, clearListSelection]);
@@ -301,12 +300,14 @@ export function IndexScreen({ onBack, active }: Props) {
       <TopBar
         onBack={onBack}
         progress={progress}
+        secondsLeft={secondsLeft}
         onRefreshProgress={refreshAll}
         onIndexAll={askAboutIndexAll}
         everythingIndexed={overview?.everythingIndexed ?? false}
         onError={setError}
         stoppedAt={stoppedAt}
-        summary={summary}
+        active={active}
+        onSimpleView={onSimple}
         selection={{
           selected: selectedEntries.length,
           add: selectionActions.add,
@@ -369,6 +370,19 @@ export function IndexScreen({ onBack, active }: Props) {
               onContextMenu={openMenu}
             />
           )}
+
+          <StatusBar
+            entries={listing?.entries ?? null}
+            selected={selectedEntries}
+            selectedInList={
+              listSelection.list === null
+                ? null
+                : {
+                    name: listSelection.list === "indexed" ? "Indexed" : "Excluded",
+                    count: listItems[listSelection.list].filter((item) => listSelection.paths.has(item.path)).length,
+                  }
+            }
+          />
         </main>
 
         <aside
@@ -419,18 +433,6 @@ export function IndexScreen({ onBack, active }: Props) {
         </aside>
       </div>
 
-      <StatusBar
-        entries={listing?.entries ?? null}
-        selected={selectedEntries}
-        selectedInList={
-          listSelection.list === null
-            ? null
-            : {
-                name: listSelection.list === "indexed" ? "Indexed" : "Excluded",
-                count: listItems[listSelection.list].filter((item) => listSelection.paths.has(item.path)).length,
-              }
-        }
-      />
 
       {menu && (
         <ContextMenu
