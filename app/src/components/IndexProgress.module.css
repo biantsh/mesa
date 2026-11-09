@@ -17,7 +17,7 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 4px;
 }
 
 .label {
@@ -26,6 +26,10 @@
   display: flex;
   font-weight: 600;
   white-space: pre;
+}
+
+.row .track {
+  width: 100px;
 }
 
 .fixed {

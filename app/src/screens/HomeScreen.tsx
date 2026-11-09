@@ -384,7 +384,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   }, [results, searchable, text, fileType, fromMs, toMs, examples]);
   const batches = found && "batches" in found ? found.batches : NO_BATCHES;
   const hits = useMemo(() => (batches.length === 0 ? NO_HITS : batches.flat()), [batches]);
-  const shortcutTip = useShortcutTip({ onScreen: onScreen && !asWidget, worth: hits.length > 0 && !searching });
+  const shortcutTip = useShortcutTip({ onScreen: onScreen && !asWidget, worth: hits.length > 0 && !searching, results: hits.length > 0 });
   const viewMore = useCallback(() => {
     if (!found || !("id" in found) || loadingMore) return;
     const { id } = found;

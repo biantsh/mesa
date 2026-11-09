@@ -53,6 +53,7 @@ export function wholeFolderAdd(
       !entry.readable ||
       entry.index === "unindexable" ||
       entry.index === "excluded" ||
+      entry.index === "typeNotIndexed" ||
       adding.has(entry.path) ||
       entry.index === "indexed",
   );

@@ -73,10 +73,6 @@ impl Categories {
         self.0 == 0
     }
 
-    pub fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
     pub fn includes(self, other: Self) -> bool {
         other.0 & !self.0 == 0
     }

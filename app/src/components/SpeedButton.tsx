@@ -30,6 +30,7 @@ export function SpeedButton({ progress, secondsLeft, onScreen, onToggle }: Props
   });
   const [present, setPresent] = useState(false);
   if (showTip && !present) setPresent(true);
+  const label = progress.turbo ? "Turn off fast indexing" : "Turn on fast indexing (uses more resources)";
 
   return (
     <span
@@ -40,15 +41,16 @@ export function SpeedButton({ progress, secondsLeft, onScreen, onToggle }: Props
       onPointerLeave={() => setHovered(false)}
     >
       <IconButton
-        label={progress.turbo ? "Turn off fast indexing" : "Turn on fast indexing (uses more resources)"}
+        label={label}
         onClick={onToggle}
         className={styles.speed}
         data-on={progress.turbo ? "" : undefined}
+        data-tooltip={present ? undefined : label}
       >
         <Zap size={18} className={styles.bolt} aria-hidden />
       </IconButton>
       {present && anchor && (
-        <Tip anchor={anchor} hidden={hovered} leaving={!showTip} onGone={() => setPresent(false)} />
+        <Tip anchor={anchor} leaving={!showTip} onGone={() => setPresent(false)} />
       )}
     </span>
   );
@@ -56,12 +58,10 @@ export function SpeedButton({ progress, secondsLeft, onScreen, onToggle }: Props
 
 function Tip({
   anchor,
-  hidden,
   leaving,
   onGone,
 }: {
   anchor: HTMLElement;
-  hidden: boolean;
   leaving: boolean;
   onGone: () => void;
 }) {
@@ -101,7 +101,6 @@ function Tip({
       ref={tip}
       className={styles.tip}
       role="status"
-      data-hidden={hidden ? "" : undefined}
       data-leaving={leaving ? "" : undefined}
       style={
         place

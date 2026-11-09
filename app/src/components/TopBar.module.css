@@ -42,6 +42,7 @@
   flex: 1;
   min-width: 0;
   display: flex;
+  gap: var(--gap);
   min-height: 34px;
   align-items: center;
   margin-right: calc(var(--vertical) - var(--gap));

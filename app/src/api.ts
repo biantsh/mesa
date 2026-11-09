@@ -9,7 +9,8 @@ export type IndexStatus =
   | "indexed"
   | "partlyIndexed"
   | "unindexable"
-  | "excluded";
+  | "excluded"
+  | "typeNotIndexed";
 
 export interface Entry {
   name: string;
@@ -168,6 +169,7 @@ export const api = {
   setIndexingTurbo: (enabled: boolean) => invoke<void>("set_indexing_turbo", { enabled }),
   getIndexedTypes: () => invoke<Category[]>("get_indexed_types"),
   setIndexedTypes: (types: Category[]) => invoke<Category[]>("set_indexed_types", { types }),
+  countIndexedOfType: (kind: Category) => invoke<number>("count_indexed_of_type", { kind }),
   dropFromQueue: (paths: string[]) => invoke<void>("drop_from_queue", { paths }),
   addToIndex: (paths: string[], completing?: string) => invoke<void>("add_to_index", { paths, completing }),
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),

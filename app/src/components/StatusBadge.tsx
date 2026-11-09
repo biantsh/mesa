@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type ComponentType, type ReactNode } from "rea
 import { CircleCheck, CirclePause, LoaderCircle, type LucideProps } from "lucide-react";
 import type { Entry, IndexStatus } from "../api";
 import { cx } from "../cx";
+import { NO_TYPES_TIP, typeOffTip } from "../indexTypes";
 import styles from "./StatusBadge.module.css";
 
 interface Badge {
@@ -72,10 +73,12 @@ function badgeOf(entry: Entry): Badge | null {
 }
 
 export function statusText(entry: Entry): string | null {
+  if (entry.readable && entry.index === "typeNotIndexed") return entry.category ? typeOffTip(entry.category) : NO_TYPES_TIP;
   return badgeOf(entry)?.label ?? null;
 }
 
 export function statusColumnText(entry: Entry): string | null {
+  if (entry.readable && entry.index === "typeNotIndexed") return entry.category ? "Type not indexed" : null;
   const badge = badgeOf(entry);
   return badge ? (badge.columnText ?? badge.label) : null;
 }

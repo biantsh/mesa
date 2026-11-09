@@ -214,6 +214,7 @@ fn main() {
             commands::set_indexing_turbo,
             commands::get_indexed_types,
             commands::set_indexed_types,
+            commands::count_indexed_of_type,
             commands::add_to_index,
             commands::drop_from_queue,
             commands::remove_from_index,

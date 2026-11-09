@@ -400,7 +400,7 @@ impl<'a> Walker<'a> {
             let dropped = self.dropped();
             left.retain(|&n| {
                 let path = path_of(&folders, places[n]);
-                let wanted = !dropped && shared.is_indexed(&path);
+                let wanted = !dropped && shared.wants(&path);
                 if !wanted {
                     self.release(&path);
                 }
@@ -553,7 +553,7 @@ impl Batch {
         let mut stored = true;
         if !self.scans.is_empty() {
             let mut store = lock(&shared.store);
-            let result = store.write_scans(&self.scans, &|path| shared.is_indexed(path));
+            let result = store.write_scans(&self.scans, &|path| shared.wants(path));
             if let Err(e) = result {
                 eprintln!("Mesa: couldn't store indexed files: {e}");
                 stored = false;

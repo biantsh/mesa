@@ -18,15 +18,22 @@ use crate::{
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub gpu_acceleration: bool,
+    #[serde(default = "every_type")]
     pub indexed_types: Vec<Category>,
     pub search_hotkey: Option<String>,
+}
+
+const DEFAULT_TYPES: [Category; 2] = [Category::Document, Category::Image];
+
+fn every_type() -> Vec<Category> {
+    Categories::ALL.to_vec()
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             gpu_acceleration: true,
-            indexed_types: Categories::ALL.to_vec(),
+            indexed_types: DEFAULT_TYPES.to_vec(),
             search_hotkey: None,
         }
     }
@@ -34,8 +41,7 @@ impl Default for Settings {
 
 impl Settings {
     pub fn indexed(&self) -> Categories {
-        let chosen = Categories::of(&self.indexed_types);
-        if chosen.is_empty() { Categories::ALL } else { chosen }
+        Categories::of(&self.indexed_types)
     }
 
     pub fn device(&self) -> Device {
@@ -114,14 +120,18 @@ mod tests {
     fn unknown_settings_ignored() {
         let dir = temp_dir("unknown");
         fs::write(dir.join(FILE), r#"{"gpuAcceleration": false, "fromTheFuture": 7}"#).unwrap();
+        let old = Settings {
+            indexed_types: every_type(),
+            ..Settings::default()
+        };
         assert_eq!(
             SettingsStore::open(&dir).get(),
             Settings {
                 gpu_acceleration: false,
-                ..Settings::default()
+                ..old.clone()
             }
         );
         fs::write(dir.join(FILE), r#"{"fromTheFuture": 7}"#).unwrap();
-        assert_eq!(SettingsStore::open(&dir).get(), Settings::default());
+        assert_eq!(SettingsStore::open(&dir).get(), old);
     }
 }

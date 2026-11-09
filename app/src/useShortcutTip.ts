@@ -11,9 +11,10 @@ import { useOnceTip } from "./useOnceTip";
 interface Options {
   onScreen: boolean;
   worth: boolean;
+  results: boolean;
 }
 
-export function useShortcutTip({ onScreen, worth }: Options): { visible: boolean; keys: string[] } {
+export function useShortcutTip({ onScreen, worth, results }: Options): { visible: boolean; keys: string[] } {
   const [keys, setKeys] = useState<string[] | null>(null);
   const { visible, seen, here } = useOnceTip({
     flag: shortcutTipFlag,
@@ -21,6 +22,7 @@ export function useShortcutTip({ onScreen, worth }: Options): { visible: boolean
     onScreen,
     ready: worth && keys !== null && keys.length > 0,
     endsWhenNotReady: true,
+    keptWhile: results,
     delayMs: SHORTCUT_TIP_DELAY_MS,
     countsAfterMs: SHORTCUT_TIP_COUNTS_AFTER_MS,
     visibleMs: SHORTCUT_TIP_VISIBLE_MS,

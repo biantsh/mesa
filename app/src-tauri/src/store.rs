@@ -470,6 +470,23 @@ impl Store {
         Ok(true)
     }
 
+    pub fn count_of(&self, category: Category) -> Result<u64> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM files WHERE category = ?1",
+            [category_code(category)],
+            |r| r.get(0),
+        )?;
+        Ok(count as u64)
+    }
+
+    pub fn remove_categories(&mut self, categories: &[Category]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for &category in categories {
+            tx.execute("DELETE FROM files WHERE category = ?1", [category_code(category)])?;
+        }
+        Ok(tx.commit()?)
+    }
+
     pub fn remove_paths(&mut self, paths: &[PathBuf]) -> Result<()> {
         let tx = self.conn.transaction()?;
         for path in paths {

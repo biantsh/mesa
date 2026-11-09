@@ -352,6 +352,9 @@ pub fn index_everything(
     access: State<'_, FolderAccess>,
     estimator: State<'_, Arc<Estimator>>,
 ) -> Result<(), String> {
+    if index.indexed_types().is_empty() {
+        return Err("No file types chosen to index.".into());
+    }
     let roots = everything_roots(&app);
     if roots.is_empty() {
         return Err("Couldn't find your folders.".into());
@@ -420,27 +423,27 @@ pub fn set_indexed_types(
     index: State<'_, Index>,
 ) -> Result<Vec<Category>, String> {
     let chosen = Categories::of(&types);
-    if chosen.is_empty() {
-        return Err("Choose at least one kind of file.".into());
-    }
     let before = index.indexed_types();
+    if chosen == before {
+        return Ok(chosen.to_vec());
+    }
     let empty = index.is_empty();
-    let after = if empty { chosen } else { before.union(chosen) };
-    if after == before {
-        return Ok(after.to_vec());
-    }
-    index.set_indexed_types(after);
-    if let Err(e) = settings.set(Settings {
-        indexed_types: after.to_vec(),
-        ..settings.get()
-    }) {
-        index.set_indexed_types(before);
-        return Err(format!("Couldn't save the setting. {e}"));
-    }
-    if !empty && !before.includes(after) {
+    settings
+        .set(Settings {
+            indexed_types: chosen.to_vec(),
+            ..settings.get()
+        })
+        .map_err(|e| format!("Couldn't save the setting. {e}"))?;
+    index.set_indexed_types(chosen)?;
+    if !empty && !before.includes(chosen) {
         index.check_for_changes();
     }
-    Ok(after.to_vec())
+    Ok(chosen.to_vec())
+}
+
+#[tauri::command(async)]
+pub fn count_indexed_of_type(kind: Category, index: State<'_, Index>) -> Result<u64, String> {
+    index.count_of_type(kind)
 }
 
 #[tauri::command]

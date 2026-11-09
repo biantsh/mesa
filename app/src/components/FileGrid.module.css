@@ -126,6 +126,7 @@
   cursor: pointer;
   opacity: 0;
   transition: opacity 120ms ease;
+  will-change: opacity;
 }
 
 .addDisc {
@@ -148,6 +149,15 @@
   background: var(--color-primary-hover);
 }
 
+.addOff {
+  cursor: default;
+}
+
+.addOff .addDisc,
+.addOff:hover .addDisc {
+  background: var(--color-paused);
+}
+
 .stoppable {
   position: relative;
   display: flex;
@@ -156,6 +166,7 @@
 .status {
   display: flex;
   transition: opacity 120ms ease;
+  will-change: opacity;
 }
 
 .stop {
@@ -166,6 +177,7 @@
   cursor: pointer;
   opacity: 0;
   transition: opacity 120ms ease;
+  will-change: opacity;
 }
 
 .stopDisc {

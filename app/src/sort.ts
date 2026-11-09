@@ -24,12 +24,13 @@ const STATUS_ORDER = {
   indexing: 2,
   paused: 3,
   notIndexed: 4,
-  excluded: 5,
-  unindexable: 6,
+  typeNotIndexed: 5,
+  excluded: 6,
+  unindexable: 7,
 } as const;
 
 function statusRank(entry: Entry): number {
-  return entry.readable ? STATUS_ORDER[entry.index] : 7;
+  return entry.readable ? STATUS_ORDER[entry.index] : 8;
 }
 
 function compareColumn(a: Entry, b: Entry, column: SortColumn): number | null {

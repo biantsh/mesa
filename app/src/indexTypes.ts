@@ -1,7 +1,7 @@
 import type { Category } from "./api";
 
-export const TYPE_ORDER: Category[] = ["image", "document", "video", "audio"];
-export const DEFAULT_TYPES: Category[] = ["image", "document"];
+export const TYPE_ORDER: Category[] = ["document", "image", "video", "audio"];
+export const DEFAULT_TYPES: Category[] = ["document", "image"];
 
 export const TYPE_NAMES: Record<Category, string> = {
   image: "Images",
@@ -9,6 +9,13 @@ export const TYPE_NAMES: Record<Category, string> = {
   video: "Videos",
   audio: "Audio",
 };
+
+export function typeOffTip(type: Category): string {
+  const kind = type === "audio" ? "Audio files" : TYPE_NAMES[type];
+  return `${kind} aren't being indexed. Turn them on in the bar above.`;
+}
+
+export const NO_TYPES_TIP = "No file types chosen to index.";
 
 const TYPE_WORDS: Record<Category, string> = {
   image: "images",

@@ -24,6 +24,7 @@
 }
 
 .content {
+  --lift: max(0px, (100vh - 635px) / 2);
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -31,7 +32,7 @@
   width: 100%;
   max-width: 980px;
   margin: 0 auto;
-  padding: 12px 24px 0;
+  padding: calc(12px + var(--lift)) 24px 0;
 }
 
 .stage {
@@ -284,6 +285,7 @@
 
 .cardsAndNote {
   position: relative;
+  margin-top: calc(-1 * var(--lift));
 }
 
 .deniedNote {

@@ -9,12 +9,23 @@ interface Options {
   onScreen: boolean;
   ready: boolean;
   endsWhenNotReady?: boolean;
+  keptWhile?: boolean;
   delayMs: number;
   countsAfterMs: number;
   visibleMs: number;
 }
 
-export function useOnceTip({ flag, owner, onScreen, ready, endsWhenNotReady = false, delayMs, countsAfterMs, visibleMs }: Options) {
+export function useOnceTip({
+  flag,
+  owner,
+  onScreen,
+  ready,
+  endsWhenNotReady = false,
+  keptWhile = ready,
+  delayMs,
+  countsAfterMs,
+  visibleMs,
+}: Options) {
   const [seen, setSeen] = useState(flag.seen);
   const [visible, setVisible] = useState(false);
   const pageVisible = usePageVisible();
@@ -32,11 +43,22 @@ export function useOnceTip({ flag, owner, onScreen, ready, endsWhenNotReady = fa
 
   useEffect(() => {
     if (seen || visible || !here || !ready) return;
-    const timer = window.setTimeout(() => claimTipSlot(owner) && setVisible(true), delayMs);
-    return () => window.clearTimeout(timer);
+    const show = () => claimTipSlot(owner) && setVisible(true);
+    let timer = window.setTimeout(show, delayMs);
+    const restart = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(show, delayMs);
+    };
+    window.addEventListener("keydown", restart, { capture: true });
+    window.addEventListener("pointerdown", restart, { capture: true });
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("keydown", restart, { capture: true });
+      window.removeEventListener("pointerdown", restart, { capture: true });
+    };
   }, [seen, visible, here, ready, owner, delayMs]);
 
-  const stays = here && (ready || !endsWhenNotReady);
+  const stays = here && (keptWhile || !endsWhenNotReady);
   useEffect(() => {
     if (visible && !stays) setVisible(false);
   }, [visible, stays]);

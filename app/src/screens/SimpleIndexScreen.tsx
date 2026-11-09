@@ -95,10 +95,11 @@ export function SimpleIndexScreen({
     return () => clearTimeout(timer);
   }, [view, active, hint]);
 
+  const chosenTypes = indexed.types;
   useEffect(() => {
-    if (mode === "setup") setPicked(DEFAULT_TYPES);
+    if (mode === "setup") setPicked(chosenTypes ?? DEFAULT_TYPES);
     else if (mode === "idle") setPicked([]);
-  }, [mode]);
+  }, [mode, chosenTypes]);
 
   const [survey, setSurvey] = useState<Survey | "counting" | "failed" | null>(null);
   const count = async (includeProtected: boolean, quietly = false) => {
@@ -248,15 +249,15 @@ export function SimpleIndexScreen({
                     )}
                   </div>
                   <div className={styles.foot}>
-                    <p className={styles.note}>Indexing {describeTypes(indexedTypes)}.</p>
+                    <p className={styles.note}>Indexing: {describeTypes(indexedTypes)}</p>
                     <div className={styles.footActions}>
                       {!progress.updating && (
                         <Button variant="dangerOutline" onClick={() => setStopAsked(true)} disabled={stopping}>
-                          Stop
+                          Stop indexing
                         </Button>
                       )}
                       <Button variant="secondary" onClick={onAdvanced} style={named}>
-                        See details in the advanced view
+                        See details in advanced view
                         <ArrowUpRight size={16} aria-hidden />
                       </Button>
                     </div>
@@ -285,14 +286,17 @@ export function SimpleIndexScreen({
                   <h2 className={styles.cardTitle}>Your files are indexed</h2>
                   <p className={styles.cardText}>{everyType ? "Every type is indexed." : "Add more types:"}</p>
                   <TypeTiles checked={checked} locked={indexedTypes} disabled={starting} onToggle={toggle} />
-                  {!everyType && (
-                    <div className={styles.actions}>
-                      <Button variant="primary" onClick={start} disabled={!canStart || starting}>
-                        <DatabaseZap size={16} aria-hidden />
-                        {starting ? "Starting…" : "Index these too"}
-                      </Button>
-                    </div>
-                  )}
+                  <div className={styles.actions}>
+                    <Button
+                      variant="primary"
+                      onClick={start}
+                      disabled={!canStart || starting}
+                      data-tooltip={everyType ? "All files are already indexed." : undefined}
+                    >
+                      <DatabaseZap size={16} aria-hidden />
+                      {starting ? "Starting…" : "Index these too"}
+                    </Button>
+                  </div>
                 </>
               )}
 
@@ -334,9 +338,11 @@ export function SimpleIndexScreen({
           </div>
           {ready && view === "setup" && counted && counted.noAccess.length > 0 && (
             <p className={styles.deniedNote}>
-              Mesa isn&rsquo;t allowed to look in {joinNames(counted.noAccess)}.
+              Mesa isn&rsquo;t allowed to look in {counted.noAccess.length === 1 ? "this folder" : "these folders"}:{" "}
+              {joinNames(counted.noAccess)}.
               <br />
-              To allow access, open System Settings &rsaquo; Privacy &amp; Security, or double-click a locked folder in the advanced view.
+              To allow access, double-click {counted.noAccess.length === 1 ? "it" : "them"} in the advanced view, or open System Settings &rsaquo;
+              Privacy &amp; Security.
             </p>
           )}
           </div>

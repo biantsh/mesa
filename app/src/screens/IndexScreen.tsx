@@ -31,6 +31,7 @@ import { usePageSelection } from "../usePageSelection";
 import { usePanelLayout } from "../usePanelLayout";
 import { useSortedEntries } from "../useSortedEntries";
 import { useTauriEvent } from "../useTauriEvent";
+import { useTypeChoice } from "../useTypeChoice";
 import { useViewMode } from "../useViewMode";
 import styles from "./IndexScreen.module.css";
 
@@ -141,6 +142,16 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
     const frame = requestAnimationFrame(() => setAnimate(true));
     return () => cancelAnimationFrame(frame);
   }, [loaded]);
+
+  const typeChoice = useTypeChoice({
+    active,
+    nothingIndexed: overview?.empty ?? true,
+    onChanged: async () => {
+      await refreshProgress();
+      await Promise.all([refreshFolder(), refreshLists()]);
+    },
+    onError: setError,
+  });
   const arrival = useFirstArrival(active, loaded, arrivalDelay);
   useEffect(() => {
     if (listSelection.list !== null && open !== listSelection.list) clearListSelection();
@@ -220,8 +231,7 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
   const { actionsFor, addEntry, stopEntry, undoRecentAdd, undoRecentStop, listActions, askAboutIndexAll, confirmation, confirm, dismiss } = useIndexActions({
     folder: listing?.path ?? null,
     entries,
-    shownFolder,
-    load,
+    rereadFolder: refreshFolder,
     refreshProgress,
     refreshLists,
     clearSelection: clear,
@@ -321,6 +331,8 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
         stoppedAt={stoppedAt}
         active={active}
         onSimpleView={onSimple}
+        types={typeChoice.types}
+        onToggleType={(type) => void typeChoice.toggle(type)}
         selection={{
           selected: selectedEntries.length,
           add: selectionActions.add,
@@ -484,6 +496,17 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
             </p>
           ),
         )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={typeChoice.question?.open ?? false}
+        title={typeChoice.question?.title ?? ""}
+        confirmLabel={typeChoice.question?.confirmLabel ?? ""}
+        danger={typeChoice.question?.danger}
+        onCancel={() => typeChoice.answer(false)}
+        onConfirm={() => typeChoice.answer(true)}
+      >
+        {typeChoice.question?.paragraphs.map((paragraph, i) => <p key={i}>{paragraph}</p>)}
       </ConfirmDialog>
     </div>
   );

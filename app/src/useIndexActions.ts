@@ -6,8 +6,7 @@ import { describeKinds, excludeLabel, menuTargets, wholeFolderAdd } from "./menu
 interface Inputs {
   folder: string | null;
   entries: Entry[];
-  shownFolder: { readonly current: string | null };
-  load: (path: string) => Promise<void>;
+  rereadFolder: () => Promise<void>;
   refreshProgress: () => Promise<void>;
   refreshLists: () => Promise<void>;
   clearSelection: () => void;
@@ -25,8 +24,7 @@ export type IndexActions = ReturnType<ReturnType<typeof useIndexActions>["action
 export function useIndexActions({
   folder,
   entries,
-  shownFolder,
-  load,
+  rereadFolder,
   refreshProgress,
   refreshLists,
   clearSelection,
@@ -42,13 +40,12 @@ export function useIndexActions({
         await action();
         await refreshProgress();
         afterwards?.();
-        const shown = shownFolder.current;
-        await Promise.all([shown !== null ? load(shown) : undefined, refreshLists()]);
+        await Promise.all([rereadFolder(), refreshLists()]);
       } catch (e) {
         setError(`Couldn't update the index. ${errorText(e)}`);
       }
     },
-    [load, refreshProgress, refreshLists, setError, shownFolder],
+    [rereadFolder, refreshProgress, refreshLists, setError],
   );
 
   const changeSelection = (action: () => Promise<void>) => changeIndex(action, clearSelection);

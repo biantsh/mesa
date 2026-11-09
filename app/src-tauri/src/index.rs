@@ -51,6 +51,7 @@ pub enum IndexStatus {
     PartlyIndexed,
     Unindexable,
     Excluded,
+    TypeNotIndexed,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -247,6 +248,13 @@ impl Shared {
         !unindexable::is_unindexable(path) && !self.is_excluded(path) && effective(&lock(&self.rules), path)
     }
 
+    pub fn wants(&self, path: &Path) -> bool {
+        let kind = path
+            .file_name()
+            .and_then(|name| browse::category_of(&name.to_string_lossy()));
+        kind.is_none_or(|kind| self.types().contains(kind)) && self.is_indexed(path)
+    }
+
     pub fn has_inclusion_below(&self, path: &Path) -> bool {
         let included = lock(&self.included);
         included
@@ -383,11 +391,15 @@ impl Index {
         if self.shared.is_excluded(path) {
             return IndexStatus::Excluded;
         }
+        let types = self.shared.types();
+        if types.is_empty() {
+            return IndexStatus::TypeNotIndexed;
+        }
         let kind = path
             .file_name()
             .and_then(|name| browse::category_of(&name.to_string_lossy()));
-        if kind.is_some_and(|kind| !self.shared.types().contains(kind)) && path.is_file() {
-            return IndexStatus::NotIndexed;
+        if kind.is_some_and(|kind| !types.contains(kind)) && path.is_file() {
+            return IndexStatus::TypeNotIndexed;
         }
         if !effective(&lock(&self.shared.rules), path) {
             return if self.shared.has_inclusion_below(path) {
@@ -508,6 +520,12 @@ impl Index {
         }
         if paths.iter().any(|path| self.shared.is_excluded(path)) {
             return Err("That is excluded. Stop excluding it first.".into());
+        }
+        if paths
+            .iter()
+            .any(|path| self.status(path) == IndexStatus::TypeNotIndexed)
+        {
+            return Err("That kind of file isn't being indexed. Turn it on first.".into());
         }
         Ok(())
     }
@@ -799,8 +817,38 @@ impl Index {
         self.shared.types()
     }
 
-    pub fn set_indexed_types(&self, types: Categories) {
+    pub fn set_indexed_types(&self, types: Categories) -> Result<(), String> {
+        let before = self.shared.types();
         self.shared.indexed_types.store(types.bits(), Ordering::Relaxed);
+        let dropped: Vec<browse::Category> = browse::CATEGORIES
+            .iter()
+            .copied()
+            .filter(|&kind| before.contains(kind) && !types.contains(kind))
+            .collect();
+        if dropped.is_empty() {
+            return Ok(());
+        }
+        let gone: Vec<PathBuf> = self
+            .indexed_roots()
+            .into_iter()
+            .filter(|root| {
+                let kind = root
+                    .file_name()
+                    .and_then(|name| browse::category_of(&name.to_string_lossy()));
+                types.is_empty() || (kind.is_some_and(|kind| dropped.contains(&kind)) && !root.is_dir())
+            })
+            .collect();
+        if !gone.is_empty() {
+            self.set_many(&gone, false)?;
+        }
+        self.shared.control.poke();
+        let removed = lock(&self.shared.store).remove_categories(&dropped);
+        self.forget_count();
+        Ok(removed?)
+    }
+
+    pub fn count_of_type(&self, kind: browse::Category) -> Result<u64, String> {
+        Ok(lock(&self.shared.store).count_of(kind)?)
     }
 
     pub fn check_for_changes(&self) {

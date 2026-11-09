@@ -9,7 +9,7 @@ import { usePreview } from "../usePreview";
 import { useVirtualRows } from "../virtual";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
-import { StatusBadge } from "./StatusBadge";
+import { StatusBadge, statusText } from "./StatusBadge";
 import styles from "./FileGrid.module.css";
 
 interface Props {
@@ -186,16 +186,18 @@ function Corner({
 }
 
 function AddCorner({ entry, onAdd }: { entry: Entry; onAdd: (entry: Entry) => void }) {
-  if (entry.index !== "notIndexed" || !entry.readable || entry.kind === "drive") return null;
+  if (!entry.readable || entry.kind === "drive") return null;
+  const off = entry.index === "typeNotIndexed";
+  if (!off && entry.index !== "notIndexed") return null;
   return (
     <span
-      role="button"
-      className={styles.add}
-      data-tooltip="Add to index"
-      aria-label={`Add ${entry.name} to the index`}
+      role={off ? undefined : "button"}
+      className={cx(styles.add, off && styles.addOff)}
+      data-tooltip={off ? (statusText(entry) ?? undefined) : "Add to index"}
+      aria-label={off ? undefined : `Add ${entry.name} to the index`}
       onClick={(e) => {
         e.stopPropagation();
-        if (e.detail >= 2) return;
+        if (off || e.detail >= 2) return;
         noteAdded(entry.path);
         onAdd(entry);
       }}
