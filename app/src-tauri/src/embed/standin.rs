@@ -9,7 +9,7 @@ use std::{
 use super::{
     Device, Embedder,
     llama::{LlamaServer, Locations},
-    model::{self, ModelFile},
+    model::{self, ModelFile, Sources},
     pipeline::Pipeline,
 };
 
@@ -19,7 +19,7 @@ const FIRST_ASK: usize = 1024 * 1024;
 pub fn embedder(data_dir: &Path, resource_dir: Option<&Path>, device: Device) -> Result<Arc<dyn Embedder>, String> {
     let real = Locations::new(data_dir, resource_dir);
     let folder = folder(data_dir);
-    make(&model::FILES, &real.models, model::SOURCE, &folder)?;
+    make(&model::FILES, &real.models, &Sources::ours(), &folder)?;
     let locations = Locations {
         models: folder,
         log: data_dir.join("logs").join("estimate-server.log"),
@@ -30,10 +30,10 @@ pub fn embedder(data_dir: &Path, resource_dir: Option<&Path>, device: Device) ->
     Ok(Arc::new(Pipeline::new(server)))
 }
 
-pub fn make(files: &[ModelFile], models: &Path, source: &str, folder: &Path) -> Result<(), String> {
+pub fn make(files: &[ModelFile], models: &Path, sources: &Sources, folder: &Path) -> Result<(), String> {
     fs::create_dir_all(folder).map_err(|e| format!("can't make {}: {e}", folder.display()))?;
     for file in files {
-        let header = header_of(file, models, source)?;
+        let header = header_of(file, models, sources)?;
         let path = folder.join(file.name);
         let same = fs::metadata(&path).is_ok_and(|meta| meta.len() == file.bytes)
             && read_start(&path, header.len()).is_ok_and(|start| start == header);
@@ -49,7 +49,7 @@ pub fn make(files: &[ModelFile], models: &Path, source: &str, folder: &Path) -> 
     Ok(())
 }
 
-fn header_of(file: &ModelFile, models: &Path, source: &str) -> Result<Vec<u8>, String> {
+fn header_of(file: &ModelFile, models: &Path, sources: &Sources) -> Result<Vec<u8>, String> {
     for local in [models.join(file.name), models.join(format!("{}.part", file.name))] {
         if let Ok(start) = read_start(&local, MOST_HEADER)
             && let Ok(Some(length)) = header_length(&start)
@@ -57,7 +57,47 @@ fn header_of(file: &ModelFile, models: &Path, source: &str) -> Result<Vec<u8>, S
             return Ok(start[..length].to_vec());
         }
     }
-    download_header(&format!("{source}/{}", file.name))
+    if let Some(packed) = sources.packed_for(std::slice::from_ref(file))
+        && let Ok(header) = download_packed_header(&format!("{packed}/{}.zst", file.name))
+    {
+        return Ok(header);
+    }
+    download_header(&format!("{}/{}", sources.plain, file.name))
+}
+
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_per_read(Some(Duration::from_secs(30)))
+        .build()
+        .into()
+}
+
+fn download_packed_header(url: &str) -> Result<Vec<u8>, String> {
+    let response = agent()
+        .get(url)
+        .header("Accept-Encoding", "identity")
+        .call()
+        .map_err(|e| format!("couldn't get the start of the model: {e}"))?;
+    let mut unpacked =
+        zstd::stream::read::Decoder::new(response.into_body().into_reader()).map_err(|e| e.to_string())?;
+    let mut have: Vec<u8> = Vec::new();
+    while have.len() < MOST_HEADER {
+        let mut more = Vec::new();
+        (&mut unpacked)
+            .take(FIRST_ASK as u64)
+            .read_to_end(&mut more)
+            .map_err(|e| format!("couldn't unpack the start of the model: {e}"))?;
+        if more.is_empty() {
+            return Err("the model ended before its header did".into());
+        }
+        have.extend(more);
+        if let Some(length) = header_length(&have)? {
+            have.truncate(length);
+            return Ok(have);
+        }
+    }
+    Err("the model's header is longer than any should be".into())
 }
 
 fn read_start(path: &Path, most: usize) -> std::io::Result<Vec<u8>> {
@@ -67,11 +107,7 @@ fn read_start(path: &Path, most: usize) -> std::io::Result<Vec<u8>> {
 }
 
 fn download_header(url: &str) -> Result<Vec<u8>, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_per_read(Some(Duration::from_secs(30)))
-        .build()
-        .into();
+    let agent = agent();
     let mut have: Vec<u8> = Vec::new();
     let mut ask = FIRST_ASK;
     loop {

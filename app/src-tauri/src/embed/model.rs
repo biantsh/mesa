@@ -1,6 +1,7 @@
 use std::{
+    cell::Cell,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{self, BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
     sync::Mutex,
     thread,
@@ -18,6 +19,27 @@ pub struct ModelFile {
     pub name: &'static str,
     pub bytes: u64,
     pub sha256: &'static str,
+    pub packed: Option<Packed>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Packed {
+    pub piece: u64,
+    pub sizes: &'static [u64],
+}
+
+impl Packed {
+    fn offset(&self, piece: usize) -> u64 {
+        self.sizes[..piece.min(self.sizes.len())].iter().sum()
+    }
+
+    fn bytes(&self) -> u64 {
+        self.offset(self.sizes.len())
+    }
+
+    fn piece_of(&self, at: u64) -> usize {
+        (at / self.piece) as usize
+    }
 }
 
 pub const FILES: [ModelFile; 2] = [
@@ -25,16 +47,65 @@ pub const FILES: [ModelFile; 2] = [
         name: TEXT_MODEL,
         bytes: 309_855_456,
         sha256: "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135",
+        packed: Some(Packed {
+            piece: PIECE,
+            sizes: &[
+                4_131_144, 13_895_274, 16_173_776, 16_174_008, 16_163_666, 16_153_952, 16_156_076, 16_136_581,
+                16_135_957, 16_090_445, 12_956_457, 16_135_526, 16_124_531, 16_115_377, 16_111_047, 16_098_636,
+                16_134_903, 16_136_134, 7_553_754,
+            ],
+        }),
     },
     ModelFile {
         name: PICTURE_MODEL,
         bytes: 554_821_056,
         sha256: "0531309472a6bc6f4b146c3736eee7795ec9db1903c25490d3c937490cef6dd8",
+        packed: Some(Packed {
+            piece: PIECE,
+            sizes: &[
+                4_962_179, 5_972_435, 5_621_512, 5_368_734, 6_033_505, 5_399_902, 5_645_464, 5_963_108, 4_977_090,
+                6_042_669, 5_646_061, 5_333_711, 5_876_398, 5_448_928, 5_557_433, 6_042_709, 5_020_981, 6_099_188,
+                5_709_763, 11_947_093, 16_015_093, 16_106_448, 16_126_881, 16_112_852, 16_052_007, 16_023_288,
+                16_045_157, 16_060_560, 16_085_898, 8_790_321, 7_791_206, 7_955_281, 7_787_097, 570_776,
+            ],
+        }),
     },
 ];
 
 pub const SOURCE: &str =
     "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/6ea3e3a309d12a4779cfda98b8c19800d2d5da71";
+pub const PACKED_SOURCE: &str =
+    "https://huggingface.co/biantsh/embeddinggemma-2-GGUF-zstd/resolve/ccb0ae1208fc908d9fa29a1cf0eadacd3a96ac15";
+const PIECE: u64 = 16 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct Sources {
+    pub packed: Option<String>,
+    pub plain: String,
+}
+
+impl Sources {
+    pub fn ours() -> Self {
+        Self {
+            packed: Some(PACKED_SOURCE.to_owned()),
+            plain: SOURCE.to_owned(),
+        }
+    }
+
+    pub fn plain(plain: &str) -> Self {
+        Self {
+            packed: None,
+            plain: plain.to_owned(),
+        }
+    }
+
+    pub fn packed_for(&self, files: &[ModelFile]) -> Option<&str> {
+        self.packed
+            .as_deref()
+            .filter(|_| files.iter().all(|f| f.packed.is_some()))
+    }
+}
+
 const SPARE_BYTES: u64 = 100 * 1024 * 1024;
 const ATTEMPTS: u32 = 4;
 const RETRY_PAUSE: Duration = if cfg!(test) {
@@ -141,15 +212,30 @@ pub fn check(dir: &Path, files: &[ModelFile]) -> Check {
     if known { Check::Good } else { Check::NeedsVerifying }
 }
 
-pub fn initial_status(dir: &Path, files: &[ModelFile]) -> ModelStatus {
+pub fn initial_status(dir: &Path, files: &[ModelFile], sources: &Sources) -> ModelStatus {
     match check(dir, files) {
         Check::Good => ModelStatus::Starting,
         Check::NeedsVerifying => ModelStatus::Verifying,
-        Check::Missing => {
-            let total = files.iter().map(|f| f.bytes).sum();
-            let have = files.iter().map(|f| present_bytes(dir, f)).sum::<u64>().min(total);
-            ModelStatus::Downloading { done: have, total }
-        }
+        Check::Missing => downloading(dir, files, sources.packed_for(files).is_some()),
+    }
+}
+
+fn downloading(dir: &Path, files: &[ModelFile], packed: bool) -> ModelStatus {
+    let total = files.iter().map(|f| download_size(f, packed)).sum();
+    let done = files.iter().map(|f| downloaded(dir, f, packed)).sum::<u64>().min(total);
+    ModelStatus::Downloading { done, total }
+}
+
+fn download_size(file: &ModelFile, packed: bool) -> u64 {
+    file.packed.filter(|_| packed).map_or(file.bytes, |copy| copy.bytes())
+}
+
+fn downloaded(dir: &Path, file: &ModelFile, packed: bool) -> u64 {
+    let have = present_bytes(dir, file);
+    match file.packed.filter(|_| packed) {
+        Some(copy) if have < file.bytes => copy.offset(copy.piece_of(have)),
+        Some(copy) => copy.bytes(),
+        None => have,
     }
 }
 
@@ -164,7 +250,7 @@ fn part_path(dir: &Path, file: &ModelFile) -> std::path::PathBuf {
     dir.join(format!("{}.part", file.name))
 }
 
-pub fn ensure(dir: &Path, files: &[ModelFile], source: &str, state: &ModelState) -> Result<(), String> {
+pub fn ensure(dir: &Path, files: &[ModelFile], sources: &Sources, state: &ModelState) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("Couldn't make the folder {}: {e}", dir.display()))?;
     let mut marker = read_marker(dir);
 
@@ -211,27 +297,53 @@ pub fn ensure(dir: &Path, files: &[ModelFile], source: &str, state: &ModelState)
         ));
     }
 
-    let mut done_before = total - missing.iter().map(|f| f.bytes).sum::<u64>();
-    state.set(ModelStatus::Downloading {
-        done: already.min(total),
-        total,
-    });
+    let mut packed = sources.packed_for(files);
+    let mut came_packed = Vec::new();
+    let received = Cell::new(false);
     for file in &missing {
-        download(
-            &format!("{source}/{}", file.name),
-            &part_path(dir, file),
-            file.bytes,
-            done_before,
-            total,
-            state,
-        )?;
-        done_before += file.bytes;
+        if let Some(from) = packed {
+            let copy = file.packed.expect("every file has a packed copy (`packed_for`)");
+            match download_packed(
+                &format!("{from}/{}.zst", file.name),
+                copy,
+                dir,
+                files,
+                file,
+                state,
+                &received,
+            ) {
+                Ok(()) => {
+                    came_packed.push(file.name);
+                    continue;
+                }
+                Err(Failure::Again(last)) if received.get() => return Err(unfinished(&last)),
+                Err(Failure::Again(why) | Failure::Final(why)) => {
+                    eprintln!(
+                        "Mesa: the packed copy of {} couldn't be had, so it is downloaded as it is: {why}",
+                        file.name
+                    );
+                    packed = None;
+                }
+            }
+        }
+        download_plain(&sources.plain, dir, files, file, state)?;
     }
 
     state.set(ModelStatus::Verifying);
     for file in missing {
         let part = part_path(dir, file);
-        if !sha256_of(&part).is_ok_and(|hash| hash == file.sha256) {
+        let mut right = sha256_of(&part).is_ok_and(|hash| hash == file.sha256);
+        if !right && came_packed.contains(&file.name) {
+            eprintln!(
+                "Mesa: the packed copy of {} isn't the model, so it is downloaded as it is",
+                file.name
+            );
+            let _ = fs::remove_file(&part);
+            download_plain(&sources.plain, dir, files, file, state)?;
+            state.set(ModelStatus::Verifying);
+            right = sha256_of(&part).is_ok_and(|hash| hash == file.sha256);
+        }
+        if !right {
             let _ = fs::remove_file(&part);
             return Err(format!(
                 "The downloaded file {} is damaged (its checksum doesn't match). Try again.",
@@ -247,6 +359,63 @@ pub fn ensure(dir: &Path, files: &[ModelFile], source: &str, state: &ModelState)
     write_marker(dir, &marker)
 }
 
+fn progress_around(dir: &Path, files: &[ModelFile], file: &ModelFile, packed: bool) -> (u64, u64) {
+    let others = files
+        .iter()
+        .filter(|f| f.name != file.name)
+        .map(|f| downloaded(dir, f, packed))
+        .sum();
+    (others, files.iter().map(|f| download_size(f, packed)).sum())
+}
+
+fn unfinished(last: &str) -> String {
+    format!("The download didn't finish. Check the internet connection and try again. ({last})")
+}
+
+fn download_plain(
+    source: &str,
+    dir: &Path,
+    files: &[ModelFile],
+    file: &ModelFile,
+    state: &ModelState,
+) -> Result<(), String> {
+    let (done_before, total) = progress_around(dir, files, file, false);
+    let (url, part) = (format!("{source}/{}", file.name), part_path(dir, file));
+    state.set(downloading(dir, files, false));
+    with_retries(|agent| try_download(agent, &url, &part, file.bytes, done_before, total, state)).map_err(|failure| {
+        match failure {
+            Failure::Again(last) => unfinished(&last),
+            Failure::Final(why) => why,
+        }
+    })
+}
+
+fn download_packed(
+    url: &str,
+    copy: Packed,
+    dir: &Path,
+    files: &[ModelFile],
+    file: &ModelFile,
+    state: &ModelState,
+    received: &Cell<bool>,
+) -> Result<(), Failure> {
+    let (done_before, total) = progress_around(dir, files, file, true);
+    let part = part_path(dir, file);
+    state.set(downloading(dir, files, true));
+    with_retries(|agent| {
+        try_packed(
+            agent,
+            url,
+            copy,
+            &part,
+            file.bytes,
+            (done_before, total),
+            state,
+            received,
+        )
+    })
+}
+
 fn megabytes(bytes: u64) -> String {
     format!("{} MB", bytes / 1_000_000)
 }
@@ -256,14 +425,7 @@ enum Failure {
     Final(String),
 }
 
-fn download(
-    url: &str,
-    part: &Path,
-    bytes: u64,
-    done_before: u64,
-    total: u64,
-    state: &ModelState,
-) -> Result<(), String> {
+fn with_retries(mut attempt: impl FnMut(&ureq::Agent) -> Result<(), Failure>) -> Result<(), Failure> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_per_read(Some(SILENCE))
@@ -271,19 +433,17 @@ fn download(
         .build()
         .into();
     let mut last = String::new();
-    for attempt in 0..ATTEMPTS {
-        if attempt > 0 {
-            thread::sleep(RETRY_PAUSE * attempt);
+    for attempt_number in 0..ATTEMPTS {
+        if attempt_number > 0 {
+            thread::sleep(RETRY_PAUSE * attempt_number);
         }
-        match try_download(&agent, url, part, bytes, done_before, total, state) {
+        match attempt(&agent) {
             Ok(()) => return Ok(()),
-            Err(Failure::Final(why)) => return Err(why),
+            Err(Failure::Final(why)) => return Err(Failure::Final(why)),
             Err(Failure::Again(why)) => last = why,
         }
     }
-    Err(format!(
-        "The download didn't finish. Check the internet connection and try again. ({last})"
-    ))
+    Err(Failure::Again(last))
 }
 
 fn try_download(
@@ -367,6 +527,122 @@ fn try_download(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn try_packed(
+    agent: &ureq::Agent,
+    url: &str,
+    copy: Packed,
+    part: &Path,
+    bytes: u64,
+    (done_before, total): (u64, u64),
+    state: &ModelState,
+    received: &Cell<bool>,
+) -> Result<(), Failure> {
+    let have = fs::metadata(part).map_or(0, |m| m.len());
+    if have == bytes {
+        return Ok(());
+    }
+    let mut piece = if have > bytes { 0 } else { copy.piece_of(have) };
+    let mut request = agent.get(url).header("Accept-Encoding", "identity");
+    if piece > 0 {
+        request = request.header("Range", format!("bytes={}-", copy.offset(piece)));
+    }
+    let response = request.call().map_err(|e| Failure::Again(e.to_string()))?;
+    let status = response.status().as_u16();
+    match status {
+        206 if piece > 0 => {}
+        200 => piece = 0,
+        408 | 429 | 500..=599 => return Err(Failure::Again(format!("the server answered {status}"))),
+        _ => return Err(Failure::Final(format!("the server answered {status} for {url}"))),
+    }
+    let start = copy.offset(piece);
+    let cant_write = |e: io::Error| Failure::Final(format!("Couldn't write {}: {e}", part.display()));
+    let mut out = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(part)
+        .map_err(cant_write)?;
+    out.set_len(piece as u64 * copy.piece).map_err(cant_write)?;
+    out.seek(SeekFrom::End(0)).map_err(cant_write)?;
+
+    let counted = Counted {
+        inner: response.into_body().into_reader(),
+        read: 0,
+        ended: false,
+        received,
+    };
+    let mut input = BufReader::with_capacity(256 * 1024, counted);
+    let mut unpacked = Vec::with_capacity(copy.piece.min(bytes) as usize);
+    let mut buffer = vec![0u8; 256 * 1024];
+    let mut reported = Instant::now() - PROGRESS_EVERY;
+    while piece < copy.sizes.len() {
+        let expected = copy.piece.min(bytes.saturating_sub(piece as u64 * copy.piece)) as usize;
+        unpacked.clear();
+        let mut frame = zstd::stream::read::Decoder::with_buffer(input)
+            .map_err(|e| Failure::Final(e.to_string()))?
+            .single_frame();
+        let result = loop {
+            match frame.read(&mut buffer) {
+                Ok(0) => break Ok(()),
+                Ok(n) if unpacked.len() + n > expected => {
+                    break Err(io::Error::other("a piece is longer than it should be"));
+                }
+                Ok(n) => unpacked.extend_from_slice(&buffer[..n]),
+                Err(e) => break Err(e),
+            }
+            if reported.elapsed() >= PROGRESS_EVERY {
+                reported = Instant::now();
+                state.set(ModelStatus::Downloading {
+                    done: done_before + start + frame.get_ref().get_ref().read,
+                    total,
+                });
+            }
+        };
+        input = frame.finish();
+        let cut_off = input.get_ref().ended;
+        match result {
+            Ok(()) if unpacked.len() == expected => {}
+            Ok(()) if cut_off => return Err(Failure::Again("the connection ended early".into())),
+            Ok(()) => {
+                return Err(Failure::Final(format!(
+                    "a piece of {url} isn't as long as it should be"
+                )));
+            }
+            Err(e) if cut_off => return Err(Failure::Again(e.to_string())),
+            Err(e) => return Err(Failure::Final(format!("{url} couldn't be unpacked: {e}"))),
+        }
+        out.write_all(&unpacked).map_err(cant_write)?;
+        piece += 1;
+    }
+    state.set(ModelStatus::Downloading {
+        done: done_before + copy.bytes(),
+        total,
+    });
+    Ok(())
+}
+
+struct Counted<'a, R> {
+    inner: R,
+    read: u64,
+    ended: bool,
+    received: &'a Cell<bool>,
+}
+
+impl<R: Read> Read for Counted<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let result = self.inner.read(buffer);
+        match result {
+            Ok(0) | Err(_) => self.ended = true,
+            Ok(n) => {
+                self.read += n as u64;
+                self.received.set(true);
+            }
+        }
+        result
+    }
+}
+
 pub fn sha256_of(path: &Path) -> std::io::Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
@@ -426,6 +702,7 @@ pub(super) mod testing {
                     name: Box::leak(name.to_string().into_boxed_str()),
                     bytes: bytes.len() as u64,
                     sha256: Box::leak(hash.into_boxed_str()),
+                    packed: None,
                 }
             })
             .collect()
@@ -443,6 +720,7 @@ pub(super) mod testing {
         pub no_ranges: bool,
         pub wrong_bytes: bool,
         pub busy_first: usize,
+        pub busy_after: bool,
     }
 
     pub fn server(
@@ -481,11 +759,15 @@ pub(super) mod testing {
                             break;
                         }
                         if let Some(value) = line.to_ascii_lowercase().strip_prefix("range: bytes=") {
-                            range = value.trim().trim_end_matches('-').parse::<usize>().ok();
+                            range = value
+                                .trim()
+                                .split('-')
+                                .next()
+                                .and_then(|start| start.parse::<usize>().ok());
                         }
                     }
                     let nth = requests.fetch_add(1, Ordering::SeqCst);
-                    if nth < behaviour.busy_first {
+                    if nth < behaviour.busy_first || (behaviour.busy_after && nth > behaviour.busy_first) {
                         let _ = write!(stream, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
                         return;
                     }
@@ -551,7 +833,13 @@ mod tests {
         };
         let (address, ranges, _) = server(vec![("a.gguf".into(), a.clone())], behaviour);
 
-        ensure(&dir, &files, &address, &ModelState::new(ModelStatus::Verifying)).unwrap();
+        ensure(
+            &dir,
+            &files,
+            &Sources::plain(&address),
+            &ModelState::new(ModelStatus::Verifying),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(dir.join("a.gguf")).unwrap(), a);
         let ranges = ranges.lock().unwrap();
@@ -574,7 +862,13 @@ mod tests {
                 ..Default::default()
             },
         );
-        let error = ensure(&dir, &files, &address, &ModelState::new(ModelStatus::Verifying)).unwrap_err();
+        let error = ensure(
+            &dir,
+            &files,
+            &Sources::plain(&address),
+            &ModelState::new(ModelStatus::Verifying),
+        )
+        .unwrap_err();
         assert!(error.contains("damaged") && error.contains("a.gguf"), "{error}");
         assert!(!dir.join("a.gguf").exists() && !part_path(&dir, &files[0]).exists());
         assert_eq!(check(&dir, &files), Check::Missing);
@@ -587,7 +881,13 @@ mod tests {
         let files = files(&[("a.gguf", &a)]);
         fs::write(dir.join("a.gguf"), content(9, 80_000)).unwrap();
         let (address, _, requests) = server(vec![("a.gguf".into(), a.clone())], Behaviour::default());
-        ensure(&dir, &files, &address, &ModelState::new(ModelStatus::Verifying)).unwrap();
+        ensure(
+            &dir,
+            &files,
+            &Sources::plain(&address),
+            &ModelState::new(ModelStatus::Verifying),
+        )
+        .unwrap();
         assert_eq!(fs::read(dir.join("a.gguf")).unwrap(), a);
         assert_eq!(requests.load(Ordering::SeqCst), 1);
     }

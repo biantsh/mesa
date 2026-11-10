@@ -122,7 +122,7 @@ pub trait Embedder: Send + Sync {
 pub fn for_this_platform(data_dir: &Path, resource_dir: Option<&Path>, device: Device) -> Arc<dyn Embedder> {
     let mut server = llama::LlamaServer::new(Locations::new(data_dir, resource_dir));
     if std::env::var_os("MESA_MODELS_DIR").is_none_or(|dir| dir.is_empty()) {
-        server = server.download_from(model::SOURCE);
+        server = server.download_from(model::Sources::ours());
     }
     server.choose_device(device);
     Arc::new(Pipeline::new(server))

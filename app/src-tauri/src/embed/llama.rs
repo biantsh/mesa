@@ -146,7 +146,7 @@ pub struct LlamaServer {
     generation: AtomicU64,
     gpu: OnceLock<Option<String>>,
     model: Arc<ModelState>,
-    source: Option<String>,
+    source: Option<model::Sources>,
     files: Vec<model::ModelFile>,
     files_ok: AtomicBool,
     setting_up: Mutex<()>,
@@ -172,10 +172,10 @@ impl LlamaServer {
         }
     }
 
-    pub fn download_from(mut self, source: &str) -> Self {
-        self.source = Some(source.to_owned());
+    pub fn download_from(mut self, sources: model::Sources) -> Self {
         self.model
-            .set(model::initial_status(&self.locations.models, &self.files));
+            .set(model::initial_status(&self.locations.models, &self.files, &sources));
+        self.source = Some(sources);
         self
     }
 
@@ -396,9 +396,9 @@ impl Backend for LlamaServer {
 
     fn retry_setup(&self) -> bool {
         match self.model.get() {
-            ModelStatus::Failed { setup: true, .. } if self.source.is_some() => {
+            ModelStatus::Failed { setup: true, .. } if let Some(sources) = &self.source => {
                 self.model
-                    .set(model::initial_status(&self.locations.models, &self.files));
+                    .set(model::initial_status(&self.locations.models, &self.files, sources));
             }
             ModelStatus::Failed { setup: false, .. } => self.model.set(ModelStatus::Starting),
             _ => return false,
