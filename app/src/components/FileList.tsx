@@ -1,6 +1,6 @@
 import { memo, useRef } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { previewUrl, type Entry } from "../api";
+import { type Entry, type PreviewBox } from "../api";
 import { cx } from "../cx";
 import { formatModified, formatSize, typeLabel } from "../format";
 import type { Sort, SortColumn } from "../sort";
@@ -24,6 +24,9 @@ interface Props {
   onOpen: (entry: Entry) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
 }
+
+const PICTURE_BOX: PreviewBox = { width: 26, height: 26, fit: "cover" };
+const PAGE_BOX: PreviewBox = { ...PICTURE_BOX, fit: "contain" };
 
 export const FileList = memo(function FileList({
   entries,
@@ -126,7 +129,7 @@ interface RowProps {
 }
 
 const Row = memo(function Row({ entry, selected, leader, onSelect, onOpen, onContextMenu }: RowProps) {
-  const { wanted, loaded, onLoad, onError } = usePreview(entry);
+  const { wanted, src, loaded, onLoad, onError } = usePreview(entry, entry.category === "document" ? PAGE_BOX : PICTURE_BOX);
   return (
     <button
       type="button"
@@ -143,10 +146,9 @@ const Row = memo(function Row({ entry, selected, leader, onSelect, onOpen, onCon
                 loaded && styles.loaded,
                 entry.category === "document" && styles.contain,
               )}
-              src={previewUrl(entry.path)}
+              src={src}
               alt=""
               draggable={false}
-              loading="lazy"
               decoding="async"
               onLoad={onLoad}
               onError={onError}

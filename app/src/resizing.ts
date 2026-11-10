@@ -1,15 +1,24 @@
 const ATTRIBUTE = "data-resizing";
 const SETTLE_MS = 150;
-let holds = 0;
+const holds = new Map<Element, number>();
 
-export function holdStill(): () => void {
-  const root = document.documentElement;
-  if (holds++ === 0) root.setAttribute(ATTRIBUTE, "");
+export const isResizing = () => holds.size > 0;
+
+export function holdStill(within: Element = document.documentElement): () => void {
+  const count = holds.get(within) ?? 0;
+  holds.set(within, count + 1);
+  if (count === 0) within.setAttribute(ATTRIBUTE, "");
   let held = true;
   return () => {
     if (!held) return;
     held = false;
-    if (--holds === 0) root.removeAttribute(ATTRIBUTE);
+    const left = (holds.get(within) ?? 1) - 1;
+    if (left > 0) {
+      holds.set(within, left);
+    } else {
+      holds.delete(within);
+      within.removeAttribute(ATTRIBUTE);
+    }
   };
 }
 

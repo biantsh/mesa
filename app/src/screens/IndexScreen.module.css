@@ -67,7 +67,6 @@
 }
 
 .explorer[data-holding] > :not([data-overlay]) {
-  flex: none;
   width: var(--files-width);
 }
 

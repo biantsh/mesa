@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type 
 import { cx } from "../cx";
 import { prefersReducedMotion } from "../motion";
 import { holdStill } from "../resizing";
+import { virtualViews } from "../virtual";
 import styles from "./PanelSplitter.module.css";
 
 const MIN = 220;
@@ -63,10 +64,31 @@ function placeLine(handle: HTMLElement, side: HTMLElement, row: HTMLElement) {
   handle.style.setProperty("--line-width", `${width / scale}px`);
 }
 
+const filesBeside = (side: HTMLElement) => (side.previousElementSibling instanceof HTMLElement ? side.previousElementSibling : null);
+const showsTiles = (files: HTMLElement) => files.querySelector('[data-slide="tile"]') !== null;
+
+function hold(files: HTMLElement, width: number | null) {
+  if (width === null) {
+    delete files.dataset.holding;
+    files.style.removeProperty("--files-width");
+  } else {
+    files.style.setProperty("--files-width", `${width}px`);
+    files.dataset.holding = "";
+  }
+}
+
+function settle(files: HTMLElement) {
+  const view = files.querySelector<HTMLElement>("[data-scroller]");
+  if (view) virtualViews.get(view)?.settle();
+}
+
 interface Mover {
   element: HTMLElement;
   x: number;
   y: number;
+  tile: boolean;
+  top: number;
+  bottom: number;
 }
 
 function capture(files: HTMLElement): Mover[] {
@@ -75,17 +97,19 @@ function capture(files: HTMLElement): Mover[] {
     const box = element.getBoundingClientRect();
     if (box.width === 0) continue;
     const tile = element.dataset.slide === "tile";
-    movers.push({ element, x: tile ? box.left + box.width / 2 : box.left, y: tile ? box.top + box.height / 2 : box.top });
+    movers.push({ element, x: tile ? box.left + box.width / 2 : box.left, y: tile ? box.top + box.height / 2 : box.top, tile, top: box.top, bottom: box.bottom });
   }
   return movers;
 }
 
-function slides(before: Mover[], after: Mover[]): Animation[] {
+function slides(files: HTMLElement, before: Mover[], after: Mover[]): Animation[] {
+  const view = files.querySelector("[data-scroller]")?.getBoundingClientRect();
+  const seen = (mover: Mover) => !mover.tile || !view || (mover.bottom > view.top && mover.top < view.bottom);
   const now = new Map(after.map((mover) => [mover.element, mover]));
   const made: Animation[] = [];
   for (const was of before) {
     const to = now.get(was.element);
-    if (!to) continue;
+    if (!to || !(seen(was) || seen(to))) continue;
     const dx = was.x - to.x;
     const dy = was.y - to.y;
     if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
@@ -105,8 +129,21 @@ export function PanelSplitter() {
   const handle = useRef<HTMLDivElement>(null);
   const column = () => handle.current?.parentElement ?? null;
   const current = () => Math.round(column()?.getBoundingClientRect().width ?? 0);
-  const drag = useRef<{ x: number; width: number; moved: boolean; release: () => void; frame: number } | null>(null);
+  const drag = useRef<{
+    x: number;
+    width: number;
+    moved: boolean;
+    release: () => void;
+    frame: number;
+    pending: number | null;
+    held: HTMLElement | null;
+  } | null>(null);
   const easing = useRef<(() => void) | null>(null);
+  const sliding = useRef<Animation[]>([]);
+  const stopSliding = () => {
+    for (const animation of sliding.current) animation.cancel();
+    sliding.current = [];
+  };
 
   useLayoutEffect(() => {
     const side = column();
@@ -131,34 +168,56 @@ export function PanelSplitter() {
   const endDrag = () => {
     const now = drag.current;
     drag.current = null;
-    if (!now) return false;
+    if (!now) return null;
     cancelAnimationFrame(now.frame);
+    const side = column();
+    if (side && now.pending !== null) apply(side, now.pending);
     now.release();
-    document.body.style.removeProperty("cursor");
-    return now.moved;
+    return { moved: now.moved, held: now.held };
   };
 
   useEffect(
     () => () => {
       easing.current?.();
-      endDrag();
+      const ended = endDrag();
+      if (ended?.held) hold(ended.held, null);
+      stopSliding();
     },
     [],
   );
 
+  const letGo = (files: HTMLElement) => {
+    const animate = !prefersReducedMotion();
+    const before = animate ? capture(files) : [];
+    hold(files, null);
+    settle(files);
+    if (!animate) return;
+    sliding.current = slides(files, before, capture(files));
+    for (const animation of sliding.current) {
+      animation.onfinish = () => animation.cancel();
+      animation.play();
+    }
+  };
+
   const finish = () => {
     setDragging(false);
-    if (endDrag()) keep(current());
+    const ended = endDrag();
+    if (!ended) return;
+    if (ended.moved) keep(current());
+    if (ended.held) letGo(ended.held);
   };
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || !column()) return;
     easing.current?.();
+    stopSliding();
     e.preventDefault();
     e.currentTarget.focus({ preventScroll: true });
     e.currentTarget.setPointerCapture(e.pointerId);
-    drag.current = { x: e.clientX, width: current(), moved: false, release: holdStill(), frame: 0 };
-    document.body.style.setProperty("cursor", "col-resize");
+    const side = column()!;
+    const files = filesBeside(side);
+    const changing = files && !showsTiles(files) && side.parentElement ? side.parentElement : side;
+    drag.current = { x: e.clientX, width: current(), moved: false, release: holdStill(changing), frame: 0, pending: null, held: null };
     setDragging(true);
   };
 
@@ -168,8 +227,17 @@ export function PanelSplitter() {
     if (!now || !side) return;
     const next = clamp(side, now.width + (now.x - e.clientX));
     now.moved ||= next !== now.width;
+    const files = filesBeside(side);
+    if (now.moved && !now.held && files && showsTiles(files)) {
+      hold(files, files.clientWidth);
+      now.held = files;
+    }
     cancelAnimationFrame(now.frame);
-    now.frame = requestAnimationFrame(() => apply(side, next));
+    now.pending = next;
+    now.frame = requestAnimationFrame(() => {
+      now.pending = null;
+      apply(side, next);
+    });
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -188,8 +256,9 @@ export function PanelSplitter() {
     const row = side?.parentElement;
     if (!side || !row) return;
     easing.current?.();
+    stopSliding();
     keep(null);
-    const files = side.previousElementSibling instanceof HTMLElement ? side.previousElementSibling : null;
+    const files = filesBeside(side);
     const before = files ? capture(files) : [];
     const from = current();
     apply(side, null);
@@ -198,9 +267,9 @@ export function PanelSplitter() {
     let moving: Animation[] = [];
     if (files && before.some((mover) => mover.element.dataset.slide === "tile")) {
       const border = files.offsetWidth - files.clientWidth;
-      files.style.setProperty("--files-width", `${row.clientWidth - gapOf(row) - to - border}px`);
-      files.dataset.holding = "";
-      moving = slides(before, capture(files));
+      hold(files, row.clientWidth - gapOf(row) - to - border);
+      settle(files);
+      moving = slides(files, before, capture(files));
     }
     apply(side, from);
     void side.offsetWidth;
@@ -215,10 +284,7 @@ export function PanelSplitter() {
       const here = Math.round(side.getBoundingClientRect().width);
       delete side.dataset.easing;
       for (const animation of moving) animation.cancel();
-      if (files) {
-        delete files.dataset.holding;
-        files.style.removeProperty("--files-width");
-      }
+      if (files) hold(files, null);
       if (here === to) {
         apply(side, null);
       } else {

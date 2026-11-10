@@ -247,6 +247,10 @@ impl LlamaServer {
             });
         })?;
         server.connection.generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        #[cfg(windows)]
+        if let Some(child) = &server.child {
+            crate::power::never_throttle(child);
+        }
         if device == Device::Auto && self.gpu().is_some() {
             self.model.set(ModelStatus::Preparing);
             prime_in_the_background(server.connection.clone(), self.model.clone());

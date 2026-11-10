@@ -92,6 +92,7 @@ impl Sources {
         }
     }
 
+    #[cfg(test)]
     pub fn plain(plain: &str) -> Self {
         Self {
             packed: None,

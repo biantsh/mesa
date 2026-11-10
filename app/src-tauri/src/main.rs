@@ -124,6 +124,7 @@ fn main() {
     }
     main_window::keep_hidden_at_start(startup::starts_without_window());
     let previews = thumbnail::PreviewServer::start();
+    let kept_previews = previews.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -161,11 +162,16 @@ fn main() {
             }
             _ => {}
         })
-        .setup(|app| {
+        .setup(move |app| {
             let dir = match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
                 Some(dir) => std::path::PathBuf::from(dir),
                 None => app.path().app_data_dir()?,
             };
+            let previews_dir = match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
+                Some(_) => dir.join("previews"),
+                None => app.path().app_cache_dir()?.join("previews"),
+            };
+            kept_previews.keep_on_disk_in(previews_dir);
             let resources = app.path().resource_dir().ok();
             let settings = settings::SettingsStore::open(&dir);
             let embedder = embed::for_this_platform(&dir, resources.as_deref(), settings.get().device());

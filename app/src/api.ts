@@ -207,8 +207,17 @@ export const api = {
   showMain: () => invoke<void>("show_main"),
 };
 
-export function previewUrl(path: string): string {
-  return convertFileSrc(path, "thumb");
+export function previewUrl(path: string, box?: PreviewBox, scale = 1): string {
+  const url = convertFileSrc(path, "thumb");
+  if (!box) return url;
+  const pixels = (n: number) => Math.max(1, Math.round(n * scale));
+  return `${url}?w=${pixels(box.width)}&h=${pixels(box.height)}&fit=${box.fit}`;
+}
+
+export interface PreviewBox {
+  width: number;
+  height: number;
+  fit: "cover" | "contain";
 }
 
 export function hotkeyFailure(error: unknown): HotkeyFailure {

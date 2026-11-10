@@ -11,9 +11,9 @@ body,
   margin: 0;
 }
 
-:root[data-resizing] *:not([data-keep-motion], [data-keep-motion] *),
-:root[data-resizing] *:not([data-keep-motion], [data-keep-motion] *)::before,
-:root[data-resizing] *:not([data-keep-motion], [data-keep-motion] *)::after {
+[data-resizing] *:not([data-keep-motion], [data-keep-motion] *),
+[data-resizing] *:not([data-keep-motion], [data-keep-motion] *)::before,
+[data-resizing] *:not([data-keep-motion], [data-keep-motion] *)::after {
   transition: none !important;
 }
 

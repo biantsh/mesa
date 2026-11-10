@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 
 export interface Layout {
   columns: number;
@@ -44,9 +45,24 @@ export function placeOf(layout: Layout, index: number) {
   return { left, top, right: left + layout.itemWidth, bottom: top + layout.itemHeight };
 }
 
+export interface TopItem {
+  index: number;
+  into: number;
+}
+
+export function topItem(layout: Layout, scrollTop: number): TopItem {
+  const row = Math.max(0, Math.floor((scrollTop - layout.top) / layout.rowStride));
+  return { index: row * layout.columns, into: scrollTop - (layout.top + row * layout.rowStride) };
+}
+
+export function scrollTopFor(layout: Layout, top: TopItem): number {
+  return Math.max(0, layout.top + Math.floor(top.index / layout.columns) * layout.rowStride + top.into);
+}
+
 export interface VirtualView {
   place(): { path: string; left: number; top: number; right: number; bottom: number }[];
   reveal(path: string): void;
+  settle(): void;
 }
 
 export const virtualViews = new WeakMap<HTMLElement, VirtualView>();
@@ -83,7 +99,8 @@ export function useVirtualRows<T extends { path: string }>(
     const under = made[columnCount]?.getBoundingClientRect();
     const rowStride = under ? under.top - box.top : (layout.current?.rowStride ?? 0);
     if (rowStride <= 0) return layout.current;
-    const startRow = Math.floor(latest.current.shown.start / columnCount);
+    const gap = parseFloat(getComputedStyle(element).rowGap) || 0;
+    const { before } = latest.current.shown;
     const style = getComputedStyle(first);
     return {
       columns: columnCount,
@@ -91,13 +108,17 @@ export function useVirtualRows<T extends { path: string }>(
       columnStride: beside ? beside.left - box.left : 0,
       itemWidth: box.width,
       itemHeight: box.height,
-      top: box.top - at.y - startRow * rowStride,
+      top: box.top - at.y - (before > 0 ? before + gap : 0),
       left: box.left - at.x,
-      gap: parseFloat(getComputedStyle(element).rowGap) || 0,
+      gap,
       marginTop: parseFloat(style.scrollMarginTop) || 0,
       marginBottom: parseFloat(style.scrollMarginBottom) || 0,
     };
   }, [view]);
+
+  const remeasureNow = useRef<(() => void) | null>(null);
+
+  const keptTop = useRef<{ top: TopItem; scrollTop: number } | null>(null);
 
   const scrollAfter = useRef<number | null>(null);
 
@@ -107,7 +128,7 @@ export function useVirtualRows<T extends { path: string }>(
     if (!element || !now) return;
     if (scrollTop !== undefined) {
       element.scrollTop = scrollTop;
-      scrollAfter.current = scrollTop;
+      scrollAfter.current = Math.abs(element.scrollTop - scrollTop) > 1 ? scrollTop : null;
     }
     const next = windowOf(now, latest.current.items.length, scrollTop ?? element.scrollTop, element.clientHeight, OVERSCAN);
     setShown((current) =>
@@ -139,21 +160,37 @@ export function useVirtualRows<T extends { path: string }>(
   useLayoutEffect(() => {
     const element = view.current;
     if (!element) return;
-    const remeasure = () => {
+    const measured = { width: -1, height: -1 };
+    const remeasure = (remeasureNow.current = () => {
+      const was = layout.current;
       const next = measure();
       if (!next) return;
       layout.current = next;
+      measured.width = element.clientWidth;
+      measured.height = element.clientHeight;
       if (!revealed.current) {
         revealed.current = true;
         const at = reveal === null ? -1 : latest.current.items.findIndex((item) => item.path === reveal);
         if (at >= 0) return scrollTo(at);
       }
+      if (was && was.columns !== next.columns) {
+        const kept = keptTop.current;
+        const top = kept && Math.abs(kept.scrollTop - element.scrollTop) <= 1 ? kept.top : topItem(was, element.scrollTop);
+        const scrollTop = scrollTopFor(next, top);
+        keptTop.current = { top, scrollTop };
+        return update(scrollTop);
+      }
       update();
-    };
+    });
     remeasure();
-    const observer = new ResizeObserver(remeasure);
+    const observer = new ResizeObserver(() => {
+      if (element.clientWidth !== measured.width || element.clientHeight !== measured.height) remeasure();
+    });
     observer.observe(element);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      remeasureNow.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, measure, update, scrollTo]);
 
@@ -164,7 +201,12 @@ export function useVirtualRows<T extends { path: string }>(
     const onScroll = () => {
       if (!frame) frame = requestAnimationFrame(() => {
         frame = 0;
-        update();
+        const now = layout.current;
+        if (!now) return;
+        const { items: all, shown: current } = latest.current;
+        const next = windowOf(now, all.length, element.scrollTop, element.clientHeight, OVERSCAN);
+        if (next.start === current.start && next.end === current.end && next.before === current.before && next.after === current.after) return;
+        flushSync(() => update());
       });
     };
     element.addEventListener("scroll", onScroll, { passive: true });
@@ -203,6 +245,7 @@ export function useVirtualRows<T extends { path: string }>(
         return all.flatMap((item, index) => (can(item) ? [{ path: item.path, ...placeOf(now, index) }] : []));
       },
       reveal: (path) => scrollTo(latest.current.items.findIndex((item) => item.path === path)),
+      settle: () => flushSync(() => remeasureNow.current?.()),
     });
     return () => {
       virtualViews.delete(element);

@@ -1,4 +1,5 @@
 import { prefersReducedMotion } from "./motion";
+import { isResizing } from "./resizing";
 
 const SHOW_DELAY_MS = 500;
 const WARM_MS = 400;
@@ -116,7 +117,7 @@ export function installTooltips() {
 
   const look = () => {
     looking = 0;
-    if (document.documentElement.hasAttribute("data-resizing")) {
+    if (isResizing()) {
       hide(false);
       anchor = null;
       quiet = false;

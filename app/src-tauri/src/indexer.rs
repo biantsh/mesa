@@ -40,15 +40,18 @@ pub fn work(shared: &Shared, jobs: Receiver<Message>) {
                 }
                 let next = lock(&shared.quiet).next();
                 if let Some(path) = next {
+                    power::keep_pace(true);
                     check(shared, &path);
                     continue;
                 }
+                power::keep_pace(false);
                 match jobs.recv() {
                     Ok(message) => message,
                     Err(_) => break,
                 }
             }
         };
+        power::keep_pace(true);
         let Message::Job(job) = message else { continue };
         let _ = shared
             .urgent
@@ -444,12 +447,7 @@ impl<'a> Walker<'a> {
                         shared.finished_new.fetch_add(1, Ordering::SeqCst);
                     }
                     batch.finished.push(items[i].path.clone());
-                    batch.scans.push(ScannedDir {
-                        path: folders[folder].path.clone(),
-                        files: vec![file],
-                        complete: false,
-                        subfolders: None,
-                    });
+                    batch.add_file(&folders[folder].path, file);
                     batch.files += 1;
                     batch.processed_in(shared, 1, &folders[folder].path);
                     finished[i] = true;
@@ -510,6 +508,24 @@ impl Batch {
             tracking,
             marked: HashSet::new(),
         }
+    }
+
+    fn add_file(&mut self, folder: &Path, file: ScannedFile) {
+        if let Some(last) = self.scans.last_mut()
+            && !last.complete
+            && last.subfolders.is_none()
+            && last.path == folder
+            && !last.files.iter().any(|kept| kept.name == file.name)
+        {
+            last.files.push(file);
+            return;
+        }
+        self.scans.push(ScannedDir {
+            path: folder.to_owned(),
+            files: vec![file],
+            complete: false,
+            subfolders: None,
+        });
     }
 
     fn release(&mut self, shared: &Shared, path: &Path) {
@@ -711,6 +727,7 @@ mod tests {
     };
 
     use super::*;
+
     use crate::{
         embed::{Embedder, Error},
         index::{Control, Pending},

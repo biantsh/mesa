@@ -8,6 +8,7 @@
   padding: 12px 2px var(--chip-room, 12px) 12px;
   /* Always show the scrollbar so the tiles don't shift. scrollbar-gutter: stable reserves the system scrollbar's width in WebKit, not ours. */
   overflow-y: scroll;
+  overflow-x: hidden;
   transition: opacity 120ms ease;
 }
 
@@ -111,11 +112,20 @@
   display: grid;
 }
 
+.covered {
+  visibility: hidden;
+}
+
 .badgeCorner {
   position: absolute;
   right: -6px;
   bottom: -2px;
   display: flex;
+}
+
+.waiting > .badgeCorner {
+  right: calc(50% - 20px - 6px);
+  bottom: calc(4px - 2px);
 }
 
 .add {
@@ -124,9 +134,6 @@
   width: 20px;
   height: 20px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease;
-  will-change: opacity;
 }
 
 .addDisc {
@@ -135,26 +142,43 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
+  background: transparent;
+  color: transparent;
+  box-shadow: 0 0 0 2px transparent;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.tile:hover .addDisc {
   background: var(--color-primary);
   color: var(--color-on-primary);
   box-shadow: 0 0 0 2px var(--color-on-primary);
-  transition: background-color 120ms ease;
 }
 
-.tile:hover .add {
-  opacity: 1;
-}
-
-.add:hover .addDisc {
+.tile:hover .add:hover .addDisc {
   background: var(--color-primary-hover);
+}
+
+.addDisc {
+  animation: addComes 120ms ease;
+}
+
+@keyframes addComes {
+  from {
+    background-color: transparent;
+    color: transparent;
+    box-shadow: 0 0 0 2px transparent;
+  }
 }
 
 .addOff {
   cursor: default;
 }
 
-.addOff .addDisc,
-.addOff:hover .addDisc {
+.tile:hover .addOff .addDisc,
+.tile:hover .addOff:hover .addDisc {
   background: var(--color-paused);
 }
 
@@ -178,6 +202,20 @@
   opacity: 0;
   transition: opacity 120ms ease;
   will-change: opacity;
+}
+
+.stop {
+  animation: stopComes 120ms ease;
+}
+
+.engaged .stop {
+  animation: none;
+}
+
+@keyframes stopComes {
+  from {
+    opacity: 0;
+  }
 }
 
 .stopDisc {

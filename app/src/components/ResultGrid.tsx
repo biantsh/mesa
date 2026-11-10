@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject, type UIEvent, type WheelEvent } from "react";
 import { Check, FileText, Film, Image as ImageIcon, Music, X, type LucideProps } from "lucide-react";
-import { previewUrl, type Category, type SearchHit } from "../api";
+import { type Category, type SearchHit } from "../api";
 import { cx } from "../cx";
 import { formatMonth, formatSize } from "../format";
 import type { ResultActions } from "../resultMenu";
@@ -228,7 +228,7 @@ interface ResultProps {
 
 function Result({ hit, index, selected, onSelect, onOpen, onContextMenu }: ResultProps) {
   const Icon = CATEGORY_ICONS[hit.category];
-  const { wanted, loaded, onLoad, onError } = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
+  const { wanted, src, loaded, onLoad, onError } = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
   return (
     <button
       type="button"
@@ -241,7 +241,7 @@ function Result({ hit, index, selected, onSelect, onOpen, onContextMenu }: Resul
         {wanted && (
           <img
             className={cx(styles.thumb, loaded && styles.loaded, hit.category === "document" && styles.contain)}
-            src={previewUrl(hit.path)}
+            src={src}
             alt=""
             draggable={false}
             loading="lazy"

@@ -1,6 +1,6 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { previewUrl, type Entry } from "../api";
+import { type Entry, type PreviewBox } from "../api";
 import { cx } from "../cx";
 import { nameParts } from "../format";
 import { SELECTING_FROM } from "../selection";
@@ -82,6 +82,9 @@ export const FileGrid = memo(function FileGrid({
 });
 
 const isReadable = (entry: Entry) => entry.readable;
+
+const PICTURE_BOX: PreviewBox = { width: 76, height: 44, fit: "cover" };
+const PAGE_BOX: PreviewBox = { ...PICTURE_BOX, fit: "contain" };
 const columns = (grid: HTMLElement) => getComputedStyle(grid).gridTemplateColumns.split(" ").length;
 
 interface TileProps {
@@ -144,31 +147,41 @@ function StoppableCorner({ entry, onStop }: { entry: Entry; onStop: (entry: Entr
   });
   const corner = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
+    if (!engaged) return;
     const box = corner.current?.getBoundingClientRect();
     const over = box && pointer.x >= box.left && pointer.x <= box.right && pointer.y >= box.top && pointer.y <= box.bottom;
     if (!over) setEngaged(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const [pointedAt, setPointedAt] = useState(false);
   useEffect(() => {
     if (!engaged) return;
     const timer = setTimeout(() => setEngaged(false), ENGAGED_MS);
     return () => clearTimeout(timer);
   }, [engaged]);
   return (
-    <span ref={corner} className={cx(styles.stoppable, engaged && styles.engaged)} onMouseLeave={() => setEngaged(false)}>
+    <span
+      ref={corner}
+      className={cx(styles.stoppable, engaged && styles.engaged)}
+      onMouseLeave={() => setEngaged(false)}
+      onPointerEnter={pointedAt ? undefined : () => setPointedAt(true)}
+    >
       <span className={styles.status}>
         <StatusBadge entry={entry} />
       </span>
-      <StopCorner entry={entry} onStop={onStop} />
+      {(pointedAt || engaged) && <StopCorner entry={entry} onStop={onStop} />}
     </span>
   );
 }
 
 function Corner({
   entry,
+  pointedAt,
   onAdd,
   onStop,
 }: {
   entry: Entry;
+  pointedAt: boolean;
   onAdd: (entry: Entry) => void;
   onStop: (entry: Entry) => void;
 }) {
@@ -180,7 +193,7 @@ function Corner({
       ) : (
         <StatusBadge entry={entry} />
       )}
-      <AddCorner entry={entry} onAdd={onAdd} />
+      {pointedAt && <AddCorner entry={entry} onAdd={onAdd} />}
     </>
   );
 }
@@ -221,7 +234,9 @@ const Tile = memo(function Tile({
 }: TileProps) {
   const usable = entry.readable;
 
-  const { wanted: hasImage, loaded: showingImage, onLoad, onError } = usePreview(entry);
+  const { wanted: hasImage, src, loaded: showingImage, onLoad, onError } = usePreview(entry, entry.category === "document" ? PAGE_BOX : PICTURE_BOX);
+  const [pointedAt, setPointedAt] = useState(false);
+  const corner = <Corner entry={entry} pointedAt={pointedAt} onAdd={onAdd} onStop={onStop} />;
 
   return (
     <button
@@ -229,37 +244,29 @@ const Tile = memo(function Tile({
       className={cx(styles.tile, selected && styles.selected, selected && leader && styles.leader, !usable && styles.unreadable)}
       data-slide="tile"
       {...entryProps(entry, { selected, onSelect, onOpen, onContextMenu })}
+      onPointerEnter={pointedAt ? undefined : () => setPointedAt(true)}
     >
       <span className={styles.preview}>
-        <span className={styles.iconBox}>
+        <span className={cx(styles.iconBox, showingImage && styles.covered)}>
           <EntryIcon entry={entry} size={40} />
-          {!showingImage && (
-            <span className={styles.badgeCorner}>
-              <Corner entry={entry} onAdd={onAdd} onStop={onStop} />
-            </span>
-          )}
+          {!hasImage && <span className={styles.badgeCorner}>{corner}</span>}
         </span>
         {hasImage && (
-          <span className={styles.picture}>
+          <span className={cx(styles.picture, !showingImage && styles.waiting)}>
             <img
               className={cx(
                 styles.thumb,
                 showingImage && styles.loaded,
                 entry.category === "document" && styles.contain,
               )}
-              src={previewUrl(entry.path)}
+              src={src}
               alt=""
               draggable={false}
-              loading="lazy"
               decoding="async"
               onLoad={onLoad}
               onError={onError}
             />
-            {showingImage && (
-              <span className={styles.badgeCorner}>
-                <Corner entry={entry} onAdd={onAdd} onStop={onStop} />
-              </span>
-            )}
+            <span className={styles.badgeCorner}>{corner}</span>
           </span>
         )}
       </span>

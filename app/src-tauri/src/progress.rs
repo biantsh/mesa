@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    ops::Bound,
+    path::{Path, PathBuf},
+};
 
 use serde::Serialize;
 
@@ -70,6 +74,49 @@ pub struct ProgressState {
     jobs: Vec<ActiveJob>,
     finished: u64,
     released: bool,
+    waiting: Roots,
+    asked: Roots,
+}
+
+#[derive(Default)]
+struct Roots(BTreeMap<PathBuf, usize>);
+
+impl Roots {
+    fn add(&mut self, path: &Path) {
+        *self.0.entry(path.to_owned()).or_default() += 1;
+    }
+
+    fn remove(&mut self, path: &Path) {
+        if let Some(count) = self.0.get_mut(path) {
+            *count -= 1;
+            if *count == 0 {
+                self.0.remove(path);
+            }
+        }
+    }
+
+    fn contains(&self, path: &Path) -> bool {
+        self.0.contains_key(path)
+    }
+
+    fn at_or_above(&self, path: &Path) -> bool {
+        path.ancestors().any(|above| self.0.contains_key(above))
+    }
+
+    fn at_or_below(&self, path: &Path) -> bool {
+        self.0
+            .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
+            .next()
+            .is_some_and(|(below, _)| below.starts_with(path))
+    }
+
+    fn under(&self, path: &Path) -> Vec<PathBuf> {
+        self.0
+            .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
+            .take_while(|(below, _)| below.starts_with(path))
+            .flat_map(|(below, &count)| std::iter::repeat_n(below.clone(), count))
+            .collect()
+    }
 }
 
 impl ProgressState {
@@ -86,7 +133,7 @@ impl ProgressState {
         self.next_ticket += 1;
         let mut job = ActiveJob::new(self.next_ticket, id, root, false);
         job.already = already;
-        self.jobs.push(job);
+        self.push_job(job);
         (self.next_ticket, first)
     }
 
@@ -96,7 +143,7 @@ impl ProgressState {
         }
         self.released = true;
         self.next_ticket += 1;
-        self.jobs.push(ActiveJob::new(self.next_ticket, 0, root, true));
+        self.push_job(ActiveJob::new(self.next_ticket, 0, root, true));
         self.next_ticket
     }
 
@@ -112,28 +159,46 @@ impl ProgressState {
     }
 
     pub fn drop_job(&mut self, root: &Path) -> Option<i64> {
+        if !self.asked.contains(root) {
+            return None;
+        }
         let position = self.jobs.iter().position(|job| !job.quiet && job.root == root)?;
-        let job = self.jobs.remove(position);
+        let job = self.remove_job(position);
         self.forget_if_over();
         Some(job.id)
     }
 
+    fn push_job(&mut self, job: ActiveJob) {
+        if !job.started {
+            self.waiting.add(&job.root);
+        }
+        if !job.quiet {
+            self.asked.add(&job.root);
+        }
+        self.jobs.push(job);
+    }
+
+    fn remove_job(&mut self, position: usize) -> ActiveJob {
+        let job = self.jobs.remove(position);
+        if !job.started {
+            self.waiting.remove(&job.root);
+        }
+        if !job.quiet {
+            self.asked.remove(&job.root);
+        }
+        job
+    }
+
     pub fn roots_under(&self, path: &Path) -> Vec<PathBuf> {
-        self.jobs
-            .iter()
-            .filter(|job| !job.quiet && job.root.starts_with(path))
-            .map(|job| job.root.clone())
-            .collect()
+        self.asked.under(path)
     }
 
     pub fn is_job_root(&self, root: &Path) -> bool {
-        self.jobs.iter().any(|job| !job.quiet && job.root == root)
+        self.asked.contains(root)
     }
 
     pub fn is_waiting(&self, path: &Path) -> bool {
-        self.jobs
-            .iter()
-            .any(|job| !job.started && (path.starts_with(&job.root) || job.root.starts_with(path)))
+        self.waiting.at_or_above(path) || self.waiting.at_or_below(path)
     }
 
     pub fn is_active(&self) -> bool {
@@ -143,6 +208,8 @@ impl ProgressState {
     #[cfg(test)]
     pub fn cancel_all(&mut self) -> Vec<(i64, PathBuf)> {
         self.new_run();
+        self.waiting = Roots::default();
+        self.asked = Roots::default();
         self.jobs
             .drain(..)
             .filter(|job| !job.quiet)
@@ -155,7 +222,7 @@ impl ProgressState {
         if !self.jobs.first().is_some_and(|job| job.quiet) {
             return false;
         }
-        self.jobs.remove(0);
+        self.remove_job(0);
         self.forget_if_over();
         true
     }
@@ -183,7 +250,11 @@ impl ProgressState {
         if !self.is_current(ticket) {
             return false;
         }
-        self.jobs[0].started = true;
+        if !self.jobs[0].started {
+            self.jobs[0].started = true;
+            let root = self.jobs[0].root.clone();
+            self.waiting.remove(&root);
+        }
         true
     }
 
@@ -241,7 +312,7 @@ impl ProgressState {
         let Some(position) = self.jobs.iter().position(|job| job.ticket == ticket) else {
             return false;
         };
-        let job = self.jobs.remove(position);
+        let job = self.remove_job(position);
         self.finished += job.total.unwrap_or(0);
         self.forget_if_over();
         true
