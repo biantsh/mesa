@@ -1,3 +1,5 @@
+import type { Platform } from "./platform";
+
 export interface Held {
   ctrl: boolean;
   alt: boolean;
@@ -27,8 +29,8 @@ export function shortcutString(held: Held, code: string): string {
 const SYMBOLS = { ctrl: "⌃", alt: "⌥", shift: "⇧", meta: "⌘" } as const;
 const WORDS = { ctrl: "Ctrl", alt: "Alt", shift: "Shift", meta: "Win" } as const;
 
-export function modifierLabels(held: Held, mac: boolean): string[] {
-  const names = mac ? SYMBOLS : WORDS;
+export function modifierLabels(held: Held, platform: Platform): string[] {
+  const names = platform === "mac" ? SYMBOLS : platform === "linux" ? { ...WORDS, meta: "Super" } : WORDS;
   return (["ctrl", "alt", "shift", "meta"] as const).filter((modifier) => held[modifier]).map((modifier) => names[modifier]);
 }
 

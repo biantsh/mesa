@@ -1,7 +1,7 @@
 import { useId, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { modifierLabels, keyLabel } from "../hotkey";
-import { isMac } from "../platform";
+import { isMac, platform } from "../platform";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useSearchHotkey } from "../useSearchHotkey";
 import { useTheme } from "../theme";
@@ -101,7 +101,7 @@ function ThemeRow() {
 
 function HotkeyRow({ status, recording, held, refused, error, saving, field, start, cancel }: ReturnType<typeof useSearchHotkey>) {
   const active = status?.active ?? null;
-  const live = [...modifierLabels(held, isMac), ...(refused ? [keyLabel(refused)] : [])];
+  const live = [...modifierLabels(held, platform), ...(refused ? [keyLabel(refused)] : [])];
 
   return (
     <>

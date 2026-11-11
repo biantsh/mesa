@@ -53,6 +53,9 @@ const flags = [
         '-DCMAKE_INSTALL_RPATH=@loader_path',
       ]
     : []),
+  ...(process.platform === 'linux'
+    ? ['-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON', '-DCMAKE_INSTALL_RPATH=$ORIGIN']
+    : []),
 ];
 const LAYOUT = 3;
 const signer = process.platform === 'darwin' ? process.env.APPLE_SIGNING_IDENTITY ?? '' : '';

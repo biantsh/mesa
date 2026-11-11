@@ -399,7 +399,7 @@ function indexTotal(survey: Survey, estimate: Estimate | null, types: Category[]
       node: (
         <span className={styles.total}>
           {files}
-          {measuring && <span data-counting="">, working out how long…</span>}
+          {measuring && <span data-counting="">, estimating…</span>}
         </span>
       ),
     };

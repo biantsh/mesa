@@ -223,6 +223,11 @@
   margin-top: auto;
 }
 
+.actions > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .total {
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
@@ -231,6 +236,9 @@
 .swap {
   display: inline-block;
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .fadeIn {

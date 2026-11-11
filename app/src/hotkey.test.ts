@@ -16,8 +16,9 @@ describe("keys", () => {
 describe("keycaps", () => {
   it("orders modifiers like Rust", () => {
     const all = held("meta", "shift", "alt", "ctrl");
-    expect(modifierLabels(all, false)).toEqual(["Ctrl", "Alt", "Shift", "Win"]);
-    expect(modifierLabels(all, true)).toEqual(["⌃", "⌥", "⇧", "⌘"]);
-    expect(modifierLabels(NONE_HELD, true)).toEqual([]);
+    expect(modifierLabels(all, "windows")).toEqual(["Ctrl", "Alt", "Shift", "Win"]);
+    expect(modifierLabels(all, "linux")).toEqual(["Ctrl", "Alt", "Shift", "Super"]);
+    expect(modifierLabels(all, "mac")).toEqual(["⌃", "⌥", "⇧", "⌘"]);
+    expect(modifierLabels(NONE_HELD, "mac")).toEqual([]);
   });
 });

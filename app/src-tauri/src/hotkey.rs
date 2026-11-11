@@ -249,9 +249,9 @@ fn validate(shortcut: &Shortcut) -> Result<(), String> {
         return Err(format!(
             "{key} on its own would stop you typing it anywhere. Hold {} with it.",
             if cfg!(target_os = "macos") {
-                "Ctrl, Option or Cmd"
+                "Ctrl, Option or Cmd".to_owned()
             } else {
-                "Ctrl, Alt or Win"
+                format!("Ctrl, Alt or {SUPER_WORD}")
             }
         ));
     }
@@ -285,6 +285,14 @@ fn validate(shortcut: &Shortcut) -> Result<(), String> {
     Ok(())
 }
 
+const SUPER_WORD: &str = if cfg!(target_os = "macos") {
+    "Cmd"
+} else if cfg!(windows) {
+    "Win"
+} else {
+    "Super"
+};
+
 pub fn parts(shortcut: &Shortcut) -> Parts {
     let mac = cfg!(target_os = "macos");
     let mut keys = Vec::new();
@@ -293,7 +301,7 @@ pub fn parts(shortcut: &Shortcut) -> Parts {
         (Modifiers::CONTROL, "⌃", "Ctrl"),
         (Modifiers::ALT, "⌥", if mac { "Option" } else { "Alt" }),
         (Modifiers::SHIFT, "⇧", "Shift"),
-        (Modifiers::SUPER, "⌘", if mac { "Cmd" } else { "Win" }),
+        (Modifiers::SUPER, "⌘", SUPER_WORD),
     ] {
         if shortcut.mods.contains(modifier) {
             keys.push(if mac { symbol } else { word }.to_owned());
