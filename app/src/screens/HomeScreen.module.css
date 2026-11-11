@@ -91,6 +91,7 @@
     height var(--focus-time) var(--focus-ease),
     border-radius var(--focus-time) var(--focus-ease);
   --results-delay: calc(var(--focus-time) * 0.7);
+  --open-with-status: calc(var(--open-height) + var(--status-gap) + var(--status-height) - var(--status-below-text));
 }
 
 :global(:root[data-theme="dark"]) .asWidget {
@@ -108,7 +109,11 @@
 }
 
 .asWidget.indexing.dim:not(.results) .spot {
-  height: calc(var(--open-height) + var(--status-gap) + var(--status-height) - var(--status-below-text) - 2 * var(--inset));
+  height: calc(var(--open-with-status) - 2 * var(--inset));
+}
+
+.asWidget.indexing.dim:not(.results) .backdrop {
+  height: calc(var(--open-with-status) - 2 * var(--widget-inset));
 }
 
 .asWidget .spot,

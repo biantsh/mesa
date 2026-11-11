@@ -26,7 +26,8 @@ import { useIndexLists } from "../useIndexLists";
 import { useLatest } from "../useLatest";
 import { useListMenu } from "../useListMenu";
 import { useLiveIndexStatus } from "../useLiveIndexStatus";
-import { mergeListing, useFolderChanges } from "../useFolderChanges";
+import { entriesWith, shapeOf } from "../entriesShape";
+import { useFolderChanges } from "../useFolderChanges";
 import { usePageSelection } from "../usePageSelection";
 import { usePanelLayout } from "../usePanelLayout";
 import { useSortedEntries } from "../useSortedEntries";
@@ -123,11 +124,13 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
     onPointerDown: onMarqueePointerDown,
   } = useMarquee({ regions: marqueeRegions, onBackground: clear });
 
-  const selectedEntries = useMemo(() => entries.filter((entry) => selected.has(entry.path)), [entries, selected]);
+  const selectedEntries = useMemo(() => entriesWith(entries, selected), [entries, selected]);
   const explorer = useRef<HTMLElement>(null);
   useDefaultScroll(active, () => explorer.current?.querySelector<HTMLElement>("[data-scroller]") ?? null);
 
-  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress, active && progress !== null);
+  const readAgainLater = useRef<() => void>(() => {});
+  const readAgain = useCallback(() => readAgainLater.current(), []);
+  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress, active && progress !== null, readAgain);
   const refreshAll = async () => {
     await refreshStatuses();
     await refreshProgress();
@@ -184,9 +187,20 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
     if (!shown || loadsUnderway.current > 0) return;
     const request = ++latestRequest.current;
     try {
-      const next = await api.listDir(shown.path);
-      if (request !== latestRequest.current) return;
-      setListing((current) => (current && current.path === next.path ? mergeListing(current, next) : next));
+      let base = shown;
+      for (let attempt = 0; ; attempt++) {
+        const { listing: next, whole } = await api.refreshFolder(base);
+        if (request !== latestRequest.current) return;
+        const now = shownListing.current;
+        if (whole || now === base) return setListing(next);
+        if (!now || now.path !== base.path) return;
+        if (attempt > 0) {
+          const read = await api.listDir(base.path);
+          if (request === latestRequest.current) setListing(read);
+          return;
+        }
+        base = now;
+      }
     } catch {
       if (request !== latestRequest.current) return;
       const above = shown.breadcrumbs.map((crumb) => crumb.path).filter((path) => path !== shown.path).reverse();
@@ -201,9 +215,12 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
       }
     }
   }, [shownListing]);
+  readAgainLater.current = () => void refreshFolder();
   useFolderChanges(listing?.path ?? null, active, refreshFolder);
 
-  const hasPrivacyLocked = listing?.entries.some((entry) => entry.privacy) ?? false;
+  const listedShape = listing ? shapeOf(listing.entries) : null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const hasPrivacyLocked = useMemo(() => listing?.entries.some((entry) => entry.privacy) ?? false, [listedShape]);
   useEffect(() => {
     if (!active || !hasPrivacyLocked) return;
     const onFocus = () => void refreshFolder();
@@ -228,7 +245,7 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
-  const { actionsFor, addEntry, stopEntry, undoRecentAdd, undoRecentStop, listActions, askAboutIndexAll, confirmation, confirm, dismiss } = useIndexActions({
+  const { actionsFor, addEntry, stopEntry, undoRecentAdd, undoRecentStop, listActions, askAboutIndexAll, confirmation, confirm, chooseAlternative, dismiss } = useIndexActions({
     folder: listing?.path ?? null,
     entries,
     rereadFolder: refreshFolder,
@@ -486,6 +503,8 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
         danger={confirmation?.danger}
         onCancel={dismiss}
         onConfirm={confirm}
+        alternative={confirmation?.alternative ? { label: confirmation.alternative.label, onChoose: chooseAlternative } : undefined}
+        cancel={!confirmation?.noCancel}
       >
         {confirmation?.message.map((paragraph, i) =>
           typeof paragraph === "string" ? (

@@ -4,7 +4,7 @@ import { previewUrl, type Entry, type PreviewBox } from "./api";
 
 type Previewable = Pick<Entry, "path" | "modified" | "kind" | "readable" | "category">;
 
-function wantsPreview(entry: Previewable): boolean {
+export function wantsPreview(entry: Previewable): boolean {
   return (
     entry.kind === "file" &&
     entry.readable &&
@@ -78,6 +78,6 @@ const ratio = (() => {
   };
 })();
 
-function usePixelRatio(): number {
+export function usePixelRatio(): number {
   return useSyncExternalStore(ratio.subscribe, ratio.get);
 }

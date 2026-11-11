@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Entry } from "./api";
+import { shapeOf } from "./entriesShape";
 import { everything, howToPick, NOTHING_PICKED, pick, type Pick, type Picked } from "./selection";
 import { useLatest } from "./useLatest";
 
@@ -7,7 +8,9 @@ export function useSelection(folder: string, entries: Entry[], enabled = true, o
   const [selection, setSelection] = useState({ folder, ...NOTHING_PICKED });
   if (selection.folder !== folder) setSelection({ folder, ...NOTHING_PICKED });
   const current: Picked = selection.folder === folder ? selection : NOTHING_PICKED;
-  const order = useMemo(() => entries.filter((entry) => entry.readable).map((entry) => entry.path), [entries]);
+  const shape = shapeOf(entries);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const order = useMemo(() => entries.filter((entry) => entry.readable).map((entry) => entry.path), [shape]);
   const orderNow = useLatest(order);
 
   const pickPath = useCallback(

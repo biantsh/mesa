@@ -6,6 +6,7 @@ import { nameParts } from "../format";
 import { SELECTING_FROM } from "../selection";
 import { useArrowKeys } from "../useArrowKeys";
 import { usePreview } from "../usePreview";
+import { usePreviewOrder } from "../usePreviewOrder";
 import { useVirtualRows } from "../virtual";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
@@ -46,10 +47,13 @@ export const FileGrid = memo(function FileGrid({
   });
 
   const grid = useRef<HTMLDivElement>(null);
+  const onSeen = usePreviewOrder(entries, PICTURE_BOX);
+  const [shownFirst] = useState(() => (selected.size === 0 ? null : (entries.find((entry) => selected.has(entry.path))?.path ?? null)));
   const { start, end, before, after } = useVirtualRows(grid, entries, {
+    onSeen,
     selectable: isReadable,
     columns,
-    reveal: entries.find((entry) => selected.has(entry.path))?.path ?? null,
+    reveal: shownFirst,
   });
 
   return (

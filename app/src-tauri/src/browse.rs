@@ -314,28 +314,80 @@ pub fn listing_order(entry: &Entry) -> (bool, String) {
     (entry.kind == Kind::File, entry.name.to_lowercase())
 }
 
-fn read_entries(dir: &Path) -> io::Result<Vec<Entry>> {
-    let mut entries = Vec::new();
-    for item in fs::read_dir(dir)? {
-        let Ok(item) = item else { continue };
-        let Some((name, shown)) = classify(&item) else { continue };
-        let path = item.path();
-        let facts = indexer::facts(&item);
-        let modified = facts.map(|(modified, _)| modified);
-        entries.push(match shown {
-            Shown::Folder => Entry {
-                modified,
-                ..Entry::folder(name, &path)
-            },
-            Shown::File(category) => Entry {
-                modified,
-                size: facts.map(|(_, size)| size),
-                ..Entry::file(name, &path, category)
-            },
-        });
+const PARALLEL_FROM: usize = 2_000;
+
+pub fn map_in_parallel<T: Sync, R: Send>(items: &[T], f: impl Fn(usize, &T) -> R + Sync) -> Vec<R> {
+    if items.len() < PARALLEL_FROM {
+        return items.iter().enumerate().map(|(at, item)| f(at, item)).collect();
     }
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(2, 8);
+    let run = items.len().div_ceil(threads);
+    let f = &f;
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = items
+            .chunks(run)
+            .enumerate()
+            .map(|(n, chunk)| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .enumerate()
+                        .map(|(at, item)| f(n * run + at, item))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        runs.into_iter()
+            .flat_map(|run| run.join().unwrap_or_default())
+            .collect()
+    })
+}
+
+fn read_entries(dir: &Path) -> io::Result<Vec<Entry>> {
+    let items: Vec<fs::DirEntry> = fs::read_dir(dir)?.flatten().collect();
+    let mut entries: Vec<Entry> = map_in_parallel(&items, |_, item| entry_of(item))
+        .into_iter()
+        .flatten()
+        .collect();
     entries.sort_by_cached_key(listing_order);
     Ok(entries)
+}
+
+fn entry_of(item: &fs::DirEntry) -> Option<Entry> {
+    let name = item.file_name().to_string_lossy().into_owned();
+    if name.starts_with('.') {
+        return None;
+    }
+    let file_type = item.file_type().ok()?;
+    let followed = if file_type.is_symlink() {
+        Some(fs::metadata(item.path()).ok()?)
+    } else {
+        None
+    };
+    let is_dir = followed.as_ref().map_or(file_type.is_dir(), fs::Metadata::is_dir);
+    let shown = if is_dir {
+        Shown::Folder
+    } else {
+        Shown::File(category_of(&name)?)
+    };
+    let own = item.metadata().ok();
+    if is_hidden_entry(&name, || own.clone()) {
+        return None;
+    }
+    let facts = followed.as_ref().or(own.as_ref()).and_then(indexer::facts_of);
+    let modified = facts.map(|(modified, _)| modified);
+    let path = item.path();
+    Some(match shown {
+        Shown::Folder => Entry {
+            modified,
+            ..Entry::folder(name, &path)
+        },
+        Shown::File(category) => Entry {
+            modified,
+            size: facts.map(|(_, size)| size),
+            ..Entry::file(name, &path, category)
+        },
+    })
 }
 
 pub enum Shown {

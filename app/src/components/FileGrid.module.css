@@ -89,13 +89,19 @@
   margin-inline: auto;
 }
 
+.picture:not(.waiting) {
+  border-radius: var(--radius-sm);
+  background: var(--color-preview-bg);
+}
+
+/* Own layer: drawing thumbnails into the grid's layers halved the frame rate when scrolling full screen. */
 .thumb {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
   border-radius: var(--radius-sm);
-  background: var(--color-preview-bg);
+  will-change: transform;
   opacity: 0;
 }
 

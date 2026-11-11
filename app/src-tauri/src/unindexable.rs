@@ -73,6 +73,30 @@ pub fn could_be_unindexable(name: &str) -> bool {
     }
 }
 
+pub fn children_may_differ(folder: &Path) -> bool {
+    if is_photos_library(folder) {
+        return true;
+    }
+    let depth = folder.components().count();
+    #[cfg(windows)]
+    {
+        system_folders()
+            .iter()
+            .any(|system| system.components().count() > depth)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        MACOS_FOLDERS
+            .iter()
+            .any(|system| Path::new(system).components().count() > depth)
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = depth;
+        false
+    }
+}
+
 #[cfg_attr(not(any(windows, target_os = "macos", test)), allow(dead_code))]
 fn is_inside(path: &Path, folder: &Path) -> bool {
     let mut below = path.components();

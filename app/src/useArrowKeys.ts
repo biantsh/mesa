@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from "react";
-import { NAV_KEYS, navigate, type NavKey } from "./navigation";
+import { placesOf } from "./entriesShape";
+import { NAV_KEYS, navigateAmong, type NavKey } from "./navigation";
 import { scrollByKey } from "./scrollKeys";
 import { virtualViews } from "./virtual";
 
@@ -15,7 +16,8 @@ export function focusItem(container: HTMLElement, path: string) {
   const find = () => Array.from(container.querySelectorAll<HTMLElement>("[data-path]")).find((item) => item.dataset.path === path);
   const item = find();
   if (item) return item.focus();
-  const virtual = virtualViews.get(container);
+  const scroller = container.matches("[data-scroller]") ? container : container.querySelector<HTMLElement>("[data-scroller]");
+  const virtual = scroller && virtualViews.get(scroller);
   if (!virtual) return;
   virtual.reveal(path);
   let tries = 3;
@@ -35,7 +37,8 @@ export function useArrowKeys<T extends { path: string }>({ items, selectable, ac
     if (!wide && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
 
     const focused = e.target instanceof HTMLElement ? e.target.closest<HTMLElement>("[data-path]")?.dataset.path : null;
-    const known = (path: string | null | undefined) => (path != null && items.some((item) => item.path === path) ? path : null);
+    const places = placesOf(items);
+    const known = (path: string | null | undefined) => (path != null && places.has(path) ? path : null);
     const fromPath = known(active) ?? known(focused);
     if (fromPath === null) {
       const view = container.matches("[data-scroller]") ? container : container.querySelector<HTMLElement>("[data-scroller]");
@@ -43,9 +46,9 @@ export function useArrowKeys<T extends { path: string }>({ items, selectable, ac
       return;
     }
     e.preventDefault();
-    const from = items.findIndex((item) => item.path === fromPath);
+    const from = places.get(fromPath) ?? -1;
 
-    const to = navigate(items.map(selectable), from, e.key as NavKey, columns(container));
+    const to = navigateAmong(items.length, (at) => selectable(items[at]), from, e.key as NavKey, columns(container));
     if (to === null) return;
     const path = items[to].path;
     onMove(path, e.shiftKey);

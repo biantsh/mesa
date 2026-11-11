@@ -50,29 +50,28 @@ function compareColumn(a: Entry, b: Entry, column: SortColumn): number | null {
   }
 }
 
-export function sortEntries(entries: Entry[], { column, direction }: Sort): Entry[] {
+export function sortEntries(entries: Entry[], sort: Sort): Entry[] {
+  return sortedOrder(entries, sort).map((at) => entries[at]);
+}
+
+export function sortedOrder(entries: readonly Entry[], { column, direction }: Sort): number[] {
   const sign = direction === "asc" ? 1 : -1;
   const isFile = (entry: Entry) => entry.kind === "file";
-  const position = new Map(entries.map((entry, i) => [entry.path, i]));
-  const byName = (a: Entry, b: Entry) => (position.get(a.path) ?? 0) - (position.get(b.path) ?? 0);
-
-  return [...entries].sort((a, b) => {
+  const order = entries.map((_, at) => at);
+  return order.sort((i, j) => {
+    const [a, b] = [entries[i], entries[j]];
     if (isFile(a) !== isFile(b)) return isFile(a) ? 1 : -1;
-    if (column === "name") return sign * byName(a, b);
+    if (column === "name") return sign * (i - j);
     const difference = compareColumn(a, b, column);
     if (difference === null) {
       const [aMissing, bMissing] = [missing(a, column), missing(b, column)];
       if (aMissing !== bMissing) return aMissing ? 1 : -1;
-      return byName(a, b);
+      return i - j;
     }
-    return difference === 0 ? byName(a, b) : sign * difference;
+    return difference === 0 ? i - j : sign * difference;
   });
 }
 
 function missing(entry: Entry, column: SortColumn): boolean {
   return (column === "size" && entry.size === null) || (column === "modified" && entry.modified === null);
-}
-
-export function samePaths(a: Entry[], b: Entry[]): boolean {
-  return a === b || (a.length === b.length && a.every((entry, i) => entry.path === b[i].path));
 }

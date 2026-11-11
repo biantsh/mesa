@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { X } from "lucide-react";
 import type { Listed } from "../api";
 import { cx } from "../cx";
@@ -7,6 +7,7 @@ import { parentOf } from "../paths";
 import { EntryIcon } from "./EntryIcon";
 import { pressProps } from "./entryProps";
 import { useArrowKeys } from "../useArrowKeys";
+import { useVirtualRows, virtualViews } from "../virtual";
 import type { Arrival } from "../useFirstArrival";
 import { IconButton } from "./IconButton";
 import { StatusBadge } from "./StatusBadge";
@@ -38,6 +39,12 @@ interface Props {
 const OPENING_MS = 300;
 const ROW_IN_MS = 280;
 const ROW_OUT_MS = 220;
+
+// Virtualize past this many rows: 5,000 rendered rows made the grid scroll at a few frames a second.
+const LONG_LIST = 100;
+
+const always = () => true;
+const oneColumn = () => 1;
 const seenRows = new WeakSet<HTMLElement>();
 
 function bringIn(row: HTMLElement | null, animate: boolean) {
@@ -77,7 +84,7 @@ function showRows(list: HTMLElement | null, paths: string[]) {
   );
   const first = rows.get(paths[0])?.closest<HTMLElement>("[data-row]");
   const last = rows.get(paths[paths.length - 1])?.closest<HTMLElement>("[data-row]");
-  if (!first || !last) return;
+  if (!first || !last) return virtualViews.get(list)?.reveal(paths[0]);
 
   const origin = list.getBoundingClientRect().top - list.scrollTop;
   const top = first.getBoundingClientRect().top - origin;
@@ -147,6 +154,8 @@ export const ItemsPanel = memo(function ItemsPanel({
   const list = useRef<HTMLDivElement>(null);
   const [before, setBefore] = useState(items);
   const [ghosts, setGhosts] = useState<Ghost[]>([]);
+  const [fresh, setFresh] = useState<ReadonlySet<string>>(() => new Set());
+  const long = items.length > LONG_LIST;
   const [wasCollapsed, setWasCollapsed] = useState(collapsed);
   const [justOpened, setJustOpened] = useState(false);
   if (collapsed !== wasCollapsed) {
@@ -158,8 +167,10 @@ export const ItemsPanel = memo(function ItemsPanel({
     setBefore(items);
     setJustOpened(false);
     const left = new Set(items.map((item) => item.path));
+    const had = new Set(before.map((item) => item.path));
+    setFresh(new Set(items.filter((item) => !had.has(item.path)).map((item) => item.path)));
     const going =
-      animate && !collapsed && !prefersReducedMotion()
+      animate && !collapsed && !prefersReducedMotion() && !long && before.length <= LONG_LIST
         ? before.flatMap((item, index) => (left.has(item.path) ? [] : [{ item, index }]))
         : [];
     setGhosts([...ghosts.filter((ghost) => !left.has(ghost.item.path)), ...going]);
@@ -190,6 +201,41 @@ export const ItemsPanel = memo(function ItemsPanel({
     );
     return () => clearTimeout(timer);
   }, [items, collapsed, animate]);
+
+  const row = (item: Listed) => (
+    <div
+      key={item.path}
+      ref={(element) => bringIn(element, animate && !long && fresh.has(item.path))}
+      data-row
+      className={cx(
+        styles.row,
+        selected.has(item.path) && styles.selected,
+        selected.has(item.path) && item.path === active && styles.leader,
+        item.missing && styles.missing,
+      )}
+    >
+      <button
+        type="button"
+        className={styles.main}
+        {...pressProps(item, true, item.path, {
+          selected: selected.has(item.path),
+          onSelect,
+          onOpen,
+          onContextMenu,
+        })}
+      >
+        <RowText item={item} />
+      </button>
+      {isBusy(item) && (
+        <span className={styles.busy}>
+          <StatusBadge entry={item} />
+        </span>
+      )}
+      <IconButton className={styles.remove} label={removeLabel} tone="danger" onClick={() => onRemove([item])}>
+        <X size={14} aria-hidden />
+      </IconButton>
+    </div>
+  );
 
   return (
     <section
@@ -248,6 +294,8 @@ export const ItemsPanel = memo(function ItemsPanel({
           <span>{empty}</span>
           <span className={styles.emptyHint}>{emptyHint}</span>
         </div>
+      ) : long ? (
+        <LongList listRef={list} items={items} region={region} collapsed={collapsed} reveal={chosen[0]?.path ?? null} row={row} />
       ) : (
         <div ref={list} className={styles.list} data-scroller data-region={region} inert={collapsed}>
           {shown.map(({ item, ghost }) =>
@@ -264,38 +312,7 @@ export const ItemsPanel = memo(function ItemsPanel({
                 </div>
               </div>
             ) : (
-            <div
-              key={item.path}
-              ref={(row) => bringIn(row, animate)}
-              data-row
-              className={cx(
-                styles.row,
-                selected.has(item.path) && styles.selected,
-                selected.has(item.path) && item.path === active && styles.leader,
-                item.missing && styles.missing,
-              )}
-            >
-              <button
-                type="button"
-                className={styles.main}
-                {...pressProps(item, true, item.path, {
-                  selected: selected.has(item.path),
-                  onSelect,
-                  onOpen,
-                  onContextMenu,
-                })}
-              >
-                <RowText item={item} />
-              </button>
-              {isBusy(item) && (
-                <span className={styles.busy}>
-                  <StatusBadge entry={item} />
-                </span>
-              )}
-              <IconButton className={styles.remove} label={removeLabel} tone="danger" onClick={() => onRemove([item])}>
-                <X size={14} aria-hidden />
-              </IconButton>
-            </div>
+              row(item)
             ),
           )}
         </div>
@@ -303,3 +320,28 @@ export const ItemsPanel = memo(function ItemsPanel({
     </section>
   );
 });
+
+function LongList({
+  listRef,
+  items,
+  region,
+  collapsed,
+  reveal,
+  row,
+}: {
+  listRef: RefObject<HTMLDivElement | null>;
+  items: Listed[];
+  region: string;
+  collapsed: boolean;
+  reveal: string | null;
+  row: (item: Listed) => ReactNode;
+}) {
+  const { start, end, before, after } = useVirtualRows(listRef, items, { selectable: always, columns: oneColumn, reveal });
+  return (
+    <div ref={listRef} className={styles.list} data-scroller data-region={region} inert={collapsed}>
+      {before > 0 && <div style={{ height: before }} aria-hidden />}
+      {items.slice(start, end).map(row)}
+      {after > 0 && <div style={{ height: after }} aria-hidden />}
+    </div>
+  );
+}

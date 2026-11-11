@@ -1,57 +1,33 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
-import { api, type Entry, type IndexState, type Listing } from "./api";
+import type { Dispatch, SetStateAction } from "react";
+import { api, type Listing } from "./api";
+import { sameShape } from "./entriesShape";
+import { withStatusChanges } from "./listingColumns";
 import { usePoll } from "./usePoll";
-
-const isUnfinished = (entry: Entry) => entry.index === "indexing" || entry.index === "paused" || entry.droppable;
-
-const mayStart = (entry: Entry) =>
-  (entry.kind === "folder" || entry.kind === "drive") && (entry.index === "indexed" || entry.index === "partlyIndexed");
-
-const mayStartIn = (entry: Entry) => entry.kind === "file" && entry.index === "indexed";
-
-const inProgress = (state: IndexState | undefined) => state?.status === "indexing" || state?.status === "paused";
-
-const sameState = (entry: Entry, state: IndexState) =>
-  entry.index === state.status &&
-  entry.droppable === state.droppable &&
-  entry.excludedHere === state.excludedHere &&
-  entry.removable === state.removable;
 
 export function useLiveIndexStatus(
   listing: Listing | null,
   setListing: Dispatch<SetStateAction<Listing | null>>,
   refreshProgress: () => Promise<void>,
   busy: boolean,
+  onStale: () => void,
 ) {
-  const [folderBusy, setFolderBusy] = useState(false);
-  const watched = useMemo(
-    () =>
-      listing?.entries.filter(
-        (entry) => isUnfinished(entry) || (busy && mayStart(entry)) || (busy && folderBusy && mayStartIn(entry)),
-      ) ?? [],
-    [listing, busy, folderBusy],
-  );
-
   const update = async () => {
     if (!listing) return;
-    const all = await api.indexStatuses([...watched.map((entry) => entry.path), listing.path]);
+    const told = await api.folderStatuses(listing.generation);
     await refreshProgress();
-    const states = all.slice(0, watched.length);
-    setFolderBusy(inProgress(all[watched.length]));
-    const stateOf = new Map(watched.map((entry, i) => [entry.path, states[i]]));
+    if (told.stale) return onStale();
     setListing((current) => {
-      if (current !== listing) return current;
-      let changed = false;
-      const entries = current.entries.map((entry) => {
-        const state = stateOf.get(entry.path);
-        if (!state || sameState(entry, state)) return entry;
-        changed = true;
-        return { ...entry, index: state.status, droppable: state.droppable, excludedHere: state.excludedHere, removable: state.removable };
-      });
-      return changed ? { ...current, entries } : current;
+      if (!current || current.generation !== told.base) return current;
+      const entries = withStatusChanges(current.entries, told.changes);
+      if (!entries) {
+        return current.generation === told.generation && current.unfinished === told.unfinished
+          ? current
+          : { ...current, generation: told.generation, unfinished: told.unfinished };
+      }
+      return { ...current, entries: sameShape(entries, current.entries), generation: told.generation, unfinished: told.unfinished };
     });
   };
 
-  usePoll(update, { active: watched.length > 0 || busy });
+  usePoll(update, { active: listing !== null && (listing.unfinished || busy) });
   return update;
 }

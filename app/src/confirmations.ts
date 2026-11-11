@@ -1,6 +1,7 @@
 import { api } from "./api";
+import { nameOf } from "./paths";
 
-export type Confirmation = "indexAll" | "removeFromIndex" | "excludeFromIndex";
+export type Confirmation = "indexAll" | "removeFromIndex" | "excludeFromIndex" | "indexFolderInstead";
 
 export interface ConfirmationText {
   title: string;
@@ -9,6 +10,8 @@ export interface ConfirmationText {
   stopsIndexing: boolean;
   message: (string | { note: string })[];
   run: () => Promise<void>;
+  alternative?: { label: string; run: () => Promise<void> };
+  noCancel?: boolean;
 }
 
 export interface ConfirmContext {
@@ -17,6 +20,9 @@ export interface ConfirmContext {
   withData: number;
   stops: boolean;
   dropping: string[];
+  folder: string;
+  completing: boolean;
+  everything: boolean;
 }
 
 export async function removeItems(paths: string[], dropping: string[]): Promise<void> {
@@ -60,4 +66,21 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     ],
     run: () => api.excludeFromIndex(paths),
   }),
+  indexFolderInstead: (_, { paths, folder, completing, everything: all }) => {
+    const name = nameOf(folder);
+    return {
+      title: `Index “${name}” instead?`,
+      confirmLabel: "Index the folder",
+      danger: false,
+      stopsIndexing: false,
+      noCancel: true,
+      message: [
+        all
+          ? `You selected everything in “${name}”. Indexing the folder covers all of it, and also whatever is put in it later.`
+          : `You selected ${paths.length.toLocaleString()} items in “${name}”. Indexing the folder covers them and everything else in it, and also whatever is put in it later.`,
+      ],
+      run: () => (completing ? api.addToIndex(paths, folder) : api.addToIndex([folder])),
+      alternative: { label: paths.length === 1 ? "Only this one" : `Only these ${paths.length.toLocaleString()}`, run: () => api.addToIndex(paths) },
+    };
+  },
 };

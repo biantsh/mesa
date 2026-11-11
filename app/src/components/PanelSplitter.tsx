@@ -77,6 +77,13 @@ function hold(files: HTMLElement, width: number | null) {
   }
 }
 
+function pinTiles(files: HTMLElement): (() => void) | null {
+  const grid = files.querySelector<HTMLElement>("[data-scroller]");
+  if (!grid) return null;
+  grid.style.gridTemplateColumns = getComputedStyle(grid).gridTemplateColumns;
+  return () => grid.style.removeProperty("grid-template-columns");
+}
+
 function settle(files: HTMLElement) {
   const view = files.querySelector<HTMLElement>("[data-scroller]");
   if (view) virtualViews.get(view)?.settle();
@@ -136,7 +143,7 @@ export function PanelSplitter() {
     release: () => void;
     frame: number;
     pending: number | null;
-    held: HTMLElement | null;
+    held: { files: HTMLElement; unpin: () => void } | null;
   } | null>(null);
   const easing = useRef<(() => void) | null>(null);
   const sliding = useRef<Animation[]>([]);
@@ -180,16 +187,16 @@ export function PanelSplitter() {
     () => () => {
       easing.current?.();
       const ended = endDrag();
-      if (ended?.held) hold(ended.held, null);
+      ended?.held?.unpin();
       stopSliding();
     },
     [],
   );
 
-  const letGo = (files: HTMLElement) => {
+  const letGo = ({ files, unpin }: { files: HTMLElement; unpin: () => void }) => {
     const animate = !prefersReducedMotion();
     const before = animate ? capture(files) : [];
-    hold(files, null);
+    unpin();
     settle(files);
     if (!animate) return;
     sliding.current = slides(files, before, capture(files));
@@ -216,8 +223,13 @@ export function PanelSplitter() {
     e.currentTarget.setPointerCapture(e.pointerId);
     const side = column()!;
     const files = filesBeside(side);
-    const changing = files && !showsTiles(files) && side.parentElement ? side.parentElement : side;
-    drag.current = { x: e.clientX, width: current(), moved: false, release: holdStill(changing), frame: 0, pending: null, held: null };
+    const changing: Element[] =
+      files && showsTiles(files)
+        ? [side, ...Array.from(files.children).filter((child) => !child.matches("[data-scroller]"))]
+        : [files && side.parentElement ? side.parentElement : side];
+    const releases = changing.map((element) => holdStill(element));
+    const release = () => releases.forEach((releaseOne) => releaseOne());
+    drag.current = { x: e.clientX, width: current(), moved: false, release, frame: 0, pending: null, held: null };
     setDragging(true);
   };
 
@@ -229,8 +241,8 @@ export function PanelSplitter() {
     now.moved ||= next !== now.width;
     const files = filesBeside(side);
     if (now.moved && !now.held && files && showsTiles(files)) {
-      hold(files, files.clientWidth);
-      now.held = files;
+      const unpin = pinTiles(files);
+      if (unpin) now.held = { files, unpin };
     }
     cancelAnimationFrame(now.frame);
     now.pending = next;

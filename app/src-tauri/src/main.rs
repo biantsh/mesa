@@ -16,11 +16,13 @@ mod index;
 mod indexer;
 mod main_window;
 mod power;
+mod preview_queue;
 mod progress;
 mod reclaim;
 mod rules;
 mod settings;
 mod shown_folder;
+mod shown_listing;
 mod startup;
 mod store;
 mod surface;
@@ -125,6 +127,7 @@ fn main() {
     main_window::keep_hidden_at_start(startup::starts_without_window());
     let previews = thumbnail::PreviewServer::start();
     let kept_previews = previews.clone();
+    let managed_previews = previews.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -186,6 +189,7 @@ fn main() {
             index.start_watching();
             app.manage(index);
             app.manage(shown_folder::ShownFolder::default());
+            app.manage(shown_listing::ShownListing::default());
             surface::start(app.handle().clone(), dir.clone());
             if let Err(e) = startup::register(app.handle()) {
                 eprintln!("Mesa: {e}");
@@ -204,13 +208,18 @@ fn main() {
             main_window::show_if_the_page_does_not(app);
             Ok(())
         })
+        .manage(managed_previews)
         .register_asynchronous_uri_scheme_protocol("thumb", move |_ctx, request, responder| {
             previews.handle(request, responder)
         })
         .invoke_handler(tauri::generate_handler![
             commands::home_dir,
             commands::list_dir,
+            commands::refresh_folder,
+            commands::folder_statuses,
             commands::watch_shown_folder,
+            commands::show_folder_previews,
+            commands::show_preview_window,
             commands::index_statuses,
             commands::index_progress,
             commands::index_overview,
@@ -228,8 +237,9 @@ fn main() {
             commands::stop_excluding,
             commands::count_with_data,
             commands::exclusion_count,
-            commands::indexed_items,
-            commands::excluded_items,
+            commands::index_lists,
+            commands::index_list_states,
+            commands::queued_roots,
             commands::open_file,
             commands::copy_files,
             commands::open_project_page,

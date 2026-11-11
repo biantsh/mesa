@@ -34,4 +34,6 @@
 .actions button {
   padding-block: 5px;
   font-size: 13px;
+  flex: none;
+  white-space: nowrap;
 }

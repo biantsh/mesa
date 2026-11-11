@@ -1,7 +1,6 @@
 .list {
   flex: 1;
   min-height: 0;
-  container-type: inline-size;
   overflow-y: scroll;
   padding: 0 2px var(--chip-room, 12px) 12px;
   transition: opacity 120ms ease;
@@ -207,61 +206,54 @@
   opacity: 0.5;
 }
 
+/* Columns are hidden by width via data-narrow rather than @container: WebKit scrolls a container back to the top when its contents change a lot. */
 .statusText,
 .sortLabel {
   transition: opacity 160ms ease;
 }
 
-@container (max-width: 760px) {
-  .header,
-  .row {
-    grid-template-columns: minmax(0, 1fr) 12px 152px 0 0 12px 80px 12px 168px;
-  }
-
-  .type {
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 160ms ease, visibility 0s linear 160ms;
-  }
+.list[data-narrow~="760"] .header,
+.list[data-narrow~="760"] .row {
+  grid-template-columns: minmax(0, 1fr) 12px 152px 0 0 12px 80px 12px 168px;
 }
 
-@container (max-width: 652px) {
-  .header,
-  .row {
-    grid-template-columns: minmax(0, 1fr) 12px 152px 0 0 0 0 12px 168px;
-  }
-
-  .size {
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 160ms ease, visibility 0s linear 160ms;
-  }
+.list[data-narrow~="760"] .type {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 160ms ease, visibility 0s linear 160ms;
 }
 
-@container (max-width: 560px) {
-  .header,
-  .row {
-    grid-template-columns: minmax(0, 1fr) 12px 152px 0 0 0 0 0 0;
-  }
-
-  .modified {
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 160ms ease, visibility 0s linear 160ms;
-  }
+.list[data-narrow~="652"] .header,
+.list[data-narrow~="652"] .row {
+  grid-template-columns: minmax(0, 1fr) 12px 152px 0 0 0 0 12px 168px;
 }
 
-@container (max-width: 380px) {
-  .header,
-  .row {
-    grid-template-columns: minmax(0, 1fr) 12px 28px 0 0 0 0 0 0;
-  }
+.list[data-narrow~="652"] .size {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 160ms ease, visibility 0s linear 160ms;
+}
 
-  .statusText,
-  .status .sortLabel {
-    opacity: 0;
-    transition: opacity 160ms ease;
-  }
+.list[data-narrow~="560"] .header,
+.list[data-narrow~="560"] .row {
+  grid-template-columns: minmax(0, 1fr) 12px 152px 0 0 0 0 0 0;
+}
+
+.list[data-narrow~="560"] .modified {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 160ms ease, visibility 0s linear 160ms;
+}
+
+.list[data-narrow~="380"] .header,
+.list[data-narrow~="380"] .row {
+  grid-template-columns: minmax(0, 1fr) 12px 28px 0 0 0 0 0 0;
+}
+
+.list[data-narrow~="380"] .statusText,
+.list[data-narrow~="380"] .status .sortLabel {
+  opacity: 0;
+  transition: opacity 160ms ease;
 }
 
 @media (prefers-reduced-motion: reduce) {

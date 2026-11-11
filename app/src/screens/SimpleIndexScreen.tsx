@@ -151,9 +151,9 @@ export function SimpleIndexScreen({
     if (!queueKey || !active) return;
     let cancelled = false;
     api
-      .indexedItems()
-      .then((items) => {
-        if (!cancelled) setQueuedRoots(items.filter((item) => item.droppable).map((item) => item.path));
+      .queuedRoots()
+      .then((roots) => {
+        if (!cancelled) setQueuedRoots(roots);
       })
       .catch(() => {});
     return () => {
@@ -168,7 +168,7 @@ export function SimpleIndexScreen({
       const dropping =
         queuedRoots.length > 0
           ? queuedRoots
-          : (await api.indexedItems()).filter((item) => item.droppable).map((item) => item.path);
+          : await api.queuedRoots();
       await removeItems(dropping, dropping);
       await Promise.all([refreshProgress(), onRefreshOverview().catch(() => {})]);
     } catch (e) {

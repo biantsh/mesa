@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type Listed } from "./api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, type ListStates, type Listed } from "./api";
 import { usePoll } from "./usePoll";
 
 const NOTHING: Listed[] = [];
@@ -14,48 +14,80 @@ export function useIndexLists(trigger: string, active: boolean) {
   const [loaded, setLoaded] = useState(false);
   const asked = useRef(0);
   const applied = useRef(0);
+  const version = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     const mine = ++asked.current;
     try {
-      const [indexed, excluded] = await Promise.all([api.indexedItems(), api.excludedItems()]);
+      const read = await api.indexLists();
       if (mine < applied.current) return;
       applied.current = mine;
+      version.current = read.version;
       setLists((current) => ({
-        indexed: same(current.indexed, indexed) ? current.indexed : indexed,
-        excluded: same(current.excluded, excluded) ? current.excluded : excluded,
+        indexed: sameItems(current.indexed, read.indexed) ? current.indexed : read.indexed,
+        excluded: sameItems(current.excluded, read.excluded) ? current.excluded : read.excluded,
       }));
       setLoaded(true);
     } catch {
     }
   }, []);
 
+  const syncStates = useCallback(async () => {
+    const known = version.current;
+    if (known === null) return;
+    let answer: ListStates;
+    try {
+      answer = await api.indexListStates(known);
+    } catch {
+      return;
+    }
+    if (version.current !== known) return;
+    if (answer.states === null) return void refresh();
+    const states = answer.states;
+    setLists((current) => {
+      const indexed = withStates(current.indexed, states);
+      return indexed === current.indexed ? current : { ...current, indexed };
+    });
+  }, [refresh]);
+
   useEffect(() => {
     if (active) void refresh();
-  }, [active, trigger, refresh]);
+  }, [active, refresh]);
 
-  const unfinished = useMemo(() => lists.indexed.filter(isUnfinished).map((item) => item.path), [lists.indexed]);
-  usePoll(
-    async () => {
-      const states = await api.indexStatuses(unfinished);
-      setLists((current) => {
-        const byPath = new Map(unfinished.map((path, i) => [path, states[i]]));
-        let changed = false;
-        const indexed = current.indexed.map((item) => {
-          const state = byPath.get(item.path);
-          if (!state || (item.index === state.status && item.droppable === state.droppable)) return item;
-          changed = true;
-          return { ...item, index: state.status, droppable: state.droppable };
-        });
-        return changed ? { ...current, indexed } : current;
-      });
-    },
-    { active: active && unfinished.length > 0 },
-  );
+  useEffect(() => {
+    if (active) void syncStates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trigger]);
+
+  usePoll(syncStates, { active: active && lists.indexed.some(isUnfinished) });
 
   return { ...lists, loaded, refresh };
 }
 
+export function withStates(indexed: Listed[], states: ListStates["states"] & object): Listed[] {
+  let changed = false;
+  const next = indexed.map((item) => {
+    const state = states[item.slot];
+    if (!state) return item;
+    const [index, droppable, removable] = state;
+    if (item.index === index && item.droppable === droppable && item.removable === removable) return item;
+    changed = true;
+    return { ...item, index, droppable, removable };
+  });
+  return changed ? next : indexed;
+}
+
 const isUnfinished = (item: Listed) => item.index === "indexing" || item.index === "paused" || item.droppable;
 
-const same = (a: Listed[], b: Listed[]) => JSON.stringify(a) === JSON.stringify(b);
+export function sameItems(a: readonly Listed[], b: readonly Listed[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] as unknown as Record<string, unknown>;
+    const y = b[i] as unknown as Record<string, unknown>;
+    if (x === y) continue;
+    const keys = Object.keys(x);
+    if (keys.length !== Object.keys(y).length) return false;
+    for (const key of keys) if (x[key] !== y[key]) return false;
+  }
+  return true;
+}

@@ -11,6 +11,8 @@ interface Props {
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  alternative?: { label: string; onChoose: () => void };
+  cancel?: boolean;
   children: ReactNode;
 }
 
@@ -21,6 +23,8 @@ export function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  alternative,
+  cancel = true,
   children,
 }: Props) {
   const titleId = useId();
@@ -33,9 +37,16 @@ export function ConfirmDialog({
         </h2>
         <div className={styles.body}>{children}</div>
         <div className={styles.actions}>
-          <Button variant="secondary" onClick={onCancel}>
-            Cancel
-          </Button>
+          {cancel && (
+            <Button variant="secondary" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+          {alternative && (
+            <Button variant="secondary" onClick={alternative.onChoose}>
+              {alternative.label}
+            </Button>
+          )}
           <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>
             {confirmLabel}
           </Button>

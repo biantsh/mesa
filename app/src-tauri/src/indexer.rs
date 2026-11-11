@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     fs, io, mem,
     path::{Path, PathBuf},
     sync::{
@@ -16,7 +16,7 @@ use crate::{
     browse::{self, Categories, Category, Shown},
     crawl::crawl,
     embed::{Item, Outcome},
-    index::{Message, Shared, lock},
+    index::{Job, Message, Shared, lock},
     power,
     store::{ScannedDir, ScannedFile},
     unindexable,
@@ -25,12 +25,14 @@ use crate::{
 const BATCH_FILES: usize = 2000;
 const BATCH_AGE: Duration = Duration::from_millis(250);
 const CHUNK_FILES: usize = 512;
+const RUN_MOST: usize = 512;
 const LISTED_AHEAD: usize = 1024;
 
 pub fn work(shared: &Shared, jobs: Receiver<Message>) {
+    let mut held: VecDeque<Message> = VecDeque::new();
     loop {
         power::follow(shared.is_gentle());
-        let message = match jobs.try_recv() {
+        let message = match held.pop_front().map(Ok).unwrap_or_else(|| jobs.try_recv()) {
             Ok(message) => message,
             Err(TryRecvError::Disconnected) => break,
             Err(TryRecvError::Empty) => {
@@ -53,35 +55,133 @@ pub fn work(shared: &Shared, jobs: Receiver<Message>) {
         };
         power::keep_pace(true);
         let Message::Job(job) = message else { continue };
-        let _ = shared
-            .urgent
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)));
-        if job.waiting {
-            lock(&shared.pending).add(job.root.clone());
-        }
-        if !lock(&shared.progress).begin(job.ticket) {
-            lock(&shared.pending).release(&job.root);
-            end_pause_if_idle(shared);
+        took_urgent(shared);
+        if job.root.is_dir() {
+            work_on(shared, job);
             continue;
         }
-        shared.wait_while_paused_for(Some(job.ticket));
-        await_counts(shared, job.ticket);
-        let stored = walk(shared, job.ticket, &job.root);
-        let wanted = lock(&shared.progress).finish_job(job.ticket);
-
-        let store = lock(&shared.store);
-        if wanted
-            && stored
-            && let Err(e) = store.finish_job(job.id)
-        {
-            eprintln!("Mesa: couldn't mark indexing of {} as done: {e}", job.root.display());
+        let mut run = vec![job];
+        while run.len() < RUN_MOST {
+            match held.pop_front().map(Ok).unwrap_or_else(|| jobs.try_recv()) {
+                Ok(Message::Job(next)) if !next.root.is_dir() => {
+                    took_urgent(shared);
+                    run.push(next);
+                }
+                Ok(other) => {
+                    held.push_front(other);
+                    break;
+                }
+                Err(_) => break,
+            }
         }
-
-        if shared.control.is_paused() && !lock(&shared.progress).is_active() {
-            let _ = shared.set_paused(&store, false);
+        if run.len() == 1 {
+            work_on(shared, run.remove(0));
+            continue;
         }
-        drop(store);
+        for job in walk_files(shared, run).into_iter().rev() {
+            shared.urgent.fetch_add(1, Ordering::SeqCst);
+            held.push_front(Message::Job(job));
+        }
     }
+}
+
+fn took_urgent(shared: &Shared) {
+    let _ = shared
+        .urgent
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)));
+}
+
+fn work_on(shared: &Shared, job: Job) {
+    if job.waiting {
+        lock(&shared.pending).add(job.root.clone());
+    }
+    if !lock(&shared.progress).begin(job.ticket) {
+        lock(&shared.pending).release(&job.root);
+        end_pause_if_idle(shared);
+        return;
+    }
+    shared.wait_while_paused_for(Some(job.ticket));
+    await_counts(shared, job.ticket);
+    let stored = walk(shared, job.ticket, &job.root);
+    let wanted = lock(&shared.progress).finish_job(job.ticket);
+
+    let store = lock(&shared.store);
+    if wanted
+        && stored
+        && let Err(e) = store.finish_job(job.id)
+    {
+        eprintln!("Mesa: couldn't mark indexing of {} as done: {e}", job.root.display());
+    }
+
+    if shared.control.is_paused() && !lock(&shared.progress).is_active() {
+        let _ = shared.set_paused(&store, false);
+    }
+    drop(store);
+}
+
+fn walk_files(shared: &Shared, run: Vec<Job>) -> Vec<Job> {
+    {
+        let mut pending = lock(&shared.pending);
+        run.iter()
+            .filter(|job| job.waiting)
+            .for_each(|job| pending.add(job.root.clone()));
+    }
+    let tickets: Vec<u64> = run.iter().map(|job| job.ticket).collect();
+    let begun: HashSet<u64> = lock(&shared.progress).begin_together(&tickets).into_iter().collect();
+    debug_assert!(
+        !begun.is_empty() || !tickets.iter().any(|&ticket| lock(&shared.progress).has(ticket)),
+        "a run of jobs of a file each none of which is next"
+    );
+    let (mine, rest): (Vec<Job>, Vec<Job>) = run.into_iter().partition(|job| begun.contains(&job.ticket));
+    let mut after = Vec::new();
+    for job in rest {
+        let queued = lock(&shared.progress).has(job.ticket);
+        if job.waiting || !queued {
+            lock(&shared.pending).release(&job.root);
+        }
+        if queued {
+            after.push(job);
+        }
+    }
+    let Some(first) = mine.first() else {
+        end_pause_if_idle(shared);
+        return after;
+    };
+    shared.wait_while_paused_for(Some(first.ticket));
+    for job in &mine {
+        await_counts(shared, job.ticket);
+    }
+
+    let folder = first.root.parent().unwrap_or(&first.root).to_owned();
+    let mut walker = Walker::new(shared, Tracking::Run, &folder);
+    for job in &mine {
+        walker
+            .batch
+            .owners
+            .entry(job.root.clone())
+            .or_default()
+            .push((job.ticket, job.id));
+    }
+    for job in &mine {
+        power::follow(shared.is_gentle());
+        walker.stored &= walker.batch.pause_point(shared);
+        match scan_file(&job.root, shared.types()).filter(|_| shared.is_indexed(&job.root)) {
+            Some(scan) => walker.add(scan),
+            None => walker.release(&job.root),
+        }
+        if walker.waiting() >= CHUNK_FILES {
+            walker.embed_waiting();
+        }
+        if walker.batch.due() {
+            walker.stored &= walker.batch.store(shared);
+        }
+    }
+    walker.embed_waiting();
+    let stored = walker.stored & walker.batch.store(shared);
+    walker.batch.finish_left(shared, stored);
+    drop(walker);
+    end_pause_if_idle(shared);
+    after
 }
 
 fn end_pause_if_idle(shared: &Shared) {
@@ -267,17 +367,18 @@ enum Tracking {
     Job(u64),
     Unseen,
     Seen(u64),
+    Run,
 }
 
 impl Tracking {
     fn is_in_progress(self) -> bool {
-        matches!(self, Tracking::Job(_))
+        matches!(self, Tracking::Job(_) | Tracking::Run)
     }
 
     fn ticket(self) -> Option<u64> {
         match self {
             Tracking::Job(ticket) | Tracking::Seen(ticket) => Some(ticket),
-            Tracking::Unseen => None,
+            Tracking::Unseen | Tracking::Run => None,
         }
     }
 }
@@ -322,7 +423,7 @@ impl<'a> Walker<'a> {
         let ticket = match self.batch.tracking {
             Tracking::Seen(ticket) => ticket,
             Tracking::Unseen => progress.add_quiet(self.root.clone()),
-            Tracking::Job(_) => return,
+            Tracking::Job(_) | Tracking::Run => return,
         };
         self.batch.tracking = Tracking::Seen(ticket);
         progress.add_total(ticket, files as u64);
@@ -353,7 +454,11 @@ impl<'a> Walker<'a> {
                 .as_ref()
                 .is_some_and(|changes| !changes.changed.contains(&file.name))
             {
-                self.batch.finished.push(scan.path.join(&file.name));
+                let path = scan.path.join(&file.name);
+                if self.batch.tracking == Tracking::Run {
+                    self.batch.processed_file(self.shared, &path, &scan.path);
+                }
+                self.batch.finished.push(path);
                 up_to_date += 1;
             } else {
                 if changes.as_ref().is_some_and(|changes| changes.new.contains(&file.name)) {
@@ -414,7 +519,11 @@ impl<'a> Walker<'a> {
             }
             if self.failed {
                 for &n in &left {
-                    self.release(&path_of(&folders, places[n]));
+                    let path = path_of(&folders, places[n]);
+                    self.release(&path);
+                    if self.batch.tracking == Tracking::Run {
+                        self.batch.processed_file(shared, &path, &folders[places[n].0].path);
+                    }
                 }
                 self.batch.processed(shared, left.len() as u64);
                 break;
@@ -449,7 +558,7 @@ impl<'a> Walker<'a> {
                     batch.finished.push(items[i].path.clone());
                     batch.add_file(&folders[folder].path, file);
                     batch.files += 1;
-                    batch.processed_in(shared, 1, &folders[folder].path);
+                    batch.processed_file(shared, &items[i].path, &folders[folder].path);
                     finished[i] = true;
                     if batch.due() {
                         *stored &= batch.store(shared);
@@ -495,6 +604,7 @@ struct Batch {
     started: Instant,
     tracking: Tracking,
     marked: HashSet<PathBuf>,
+    owners: HashMap<PathBuf, Vec<(u64, i64)>>,
 }
 
 impl Batch {
@@ -507,6 +617,7 @@ impl Batch {
             started: Instant::now(),
             tracking,
             marked: HashSet::new(),
+            owners: HashMap::new(),
         }
     }
 
@@ -545,6 +656,38 @@ impl Batch {
         }
     }
 
+    fn processed_file(&self, shared: &Shared, file: &Path, folder: &Path) {
+        if self.tracking != Tracking::Run {
+            return self.processed_in(shared, 1, folder);
+        }
+        if let Some(&(ticket, _)) = self.owners.get(file).and_then(|jobs| jobs.first()) {
+            lock(&shared.progress).processed(ticket, 1);
+        }
+    }
+
+    fn finish(shared: &Shared, jobs: Vec<(u64, i64)>, stored: bool) {
+        if jobs.is_empty() {
+            return;
+        }
+        let ids: Vec<i64> = {
+            let mut progress = lock(&shared.progress);
+            jobs.into_iter()
+                .filter(|&(ticket, _)| progress.finish_job(ticket) && stored)
+                .map(|(_, id)| id)
+                .collect()
+        };
+        if !ids.is_empty()
+            && let Err(e) = lock(&shared.store).finish_jobs(&ids)
+        {
+            eprintln!("Mesa: couldn't mark indexing as done: {e}");
+        }
+    }
+
+    fn finish_left(&mut self, shared: &Shared, stored: bool) {
+        let left: Vec<(u64, i64)> = self.owners.drain().flat_map(|(_, jobs)| jobs).collect();
+        Self::finish(shared, left, stored);
+    }
+
     fn processed_in(&self, shared: &Shared, files: u64, folder: &Path) {
         if let Some(ticket) = self.tracking.ticket() {
             lock(&shared.progress).processed_in(ticket, files, folder);
@@ -578,12 +721,17 @@ impl Batch {
             drop(store);
         }
         let mut pending = lock(&shared.pending);
+        let mut done = Vec::new();
         for path in self.finished.drain(..) {
             if self.tracking.is_in_progress() || self.marked.remove(&path) {
                 pending.release(&path);
             }
+            if let Some(jobs) = self.owners.remove(&path) {
+                done.extend(jobs);
+            }
         }
         drop(pending);
+        Self::finish(shared, done, stored);
         self.scans.clear();
         self.files = 0;
         self.started = Instant::now();
@@ -704,7 +852,7 @@ pub fn facts(item: &fs::DirEntry) -> Option<(i64, u64)> {
     facts_of(&metadata)
 }
 
-fn facts_of(metadata: &fs::Metadata) -> Option<(i64, u64)> {
+pub fn facts_of(metadata: &fs::Metadata) -> Option<(i64, u64)> {
     Some((unix_millis(metadata.modified().ok()?), metadata.len()))
 }
 

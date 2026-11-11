@@ -60,3 +60,17 @@ export function wholeFolderAdd(
   if (!everythingChosen || !everythingAccountedFor) return null;
   return entries.some((entry) => entry.index === "indexed") ? "completing" : "folder";
 }
+
+export const MANY_TO_ADD = 500;
+
+export function whenAdding(
+  folderPath: string,
+  entries: Entry[],
+  targets: Entry[],
+  add: Entry[],
+): { instead: "folder" | "completing"; everything: boolean } | null {
+  if (folderPath === "" || add.length === 0) return null;
+  const whole = wholeFolderAdd(folderPath, entries, targets, add);
+  if (whole !== null) return { instead: whole, everything: true };
+  return add.length >= MANY_TO_ADD ? { instead: "folder", everything: false } : null;
+}

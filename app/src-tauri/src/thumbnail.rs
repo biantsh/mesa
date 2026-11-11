@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, HashMap, HashSet, hash_map::Entry},
     fs, panic,
     path::{Path, PathBuf},
     sync::{
@@ -7,10 +7,12 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use sha2::{Digest, Sha256};
+
+use crate::preview_queue::{Folder, Job, Queue};
 
 use tauri::{
     UriSchemeResponder,
@@ -22,35 +24,48 @@ const MAX_BOX_SIDE: u32 = 512;
 const JPEG_QUALITY: u8 = 90;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-enum Shape {
+pub(crate) enum Shape {
     Whole,
     Box { width: u32, height: u32, fit: Fit },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-enum Fit {
+pub(crate) enum Fit {
     Cover,
     Contain,
 }
 
-const CACHE_BYTES: usize = 128 * 1024 * 1024;
+const TILE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const WHOLE_CACHE_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct PreviewServer {
     shared: Arc<Shared>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct FolderPreviews {
+    pub shape: u64,
+    pub order: Option<Vec<u32>>,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub type PreviewEntries = Vec<Option<(String, bool)>>;
+
 struct Shared {
-    cache: Mutex<Cache>,
+    caches: Caches,
     waiting: Mutex<HashMap<Key, Waiting>>,
     lookups: Stack<Asked>,
-    jobs: Stack<Key>,
+    jobs: Queue,
     disk: OnceLock<Disk>,
+    failed: Mutex<HashSet<Key>>,
 }
 
 struct Waiting {
     replies: Vec<Reply>,
     begun: bool,
+    asked: Instant,
 }
 
 type Reply = Box<dyn FnOnce(Option<Vec<u8>>) + Send>;
@@ -62,15 +77,18 @@ struct Asked {
 }
 
 const LOOKERS: usize = 2;
+const GONE_AFTER: Duration = Duration::from_secs(2);
+const FAILED_MOST: usize = 50_000;
 
 impl PreviewServer {
     pub fn start() -> Self {
         let shared = Arc::new(Shared {
-            cache: Mutex::new(Cache::new(CACHE_BYTES)),
+            caches: Caches::new(),
             waiting: Mutex::default(),
             lookups: Stack::default(),
-            jobs: Stack::default(),
+            jobs: Queue::default(),
             disk: OnceLock::new(),
+            failed: Mutex::default(),
         });
         for _ in 0..LOOKERS {
             let shared = Arc::clone(&shared);
@@ -80,7 +98,7 @@ impl PreviewServer {
                     let Asked { path, shape, reply } = shared.lookups.pop();
                     let changed = modified(&path);
                     let key = (path, changed, shape);
-                    let kept = shared.lock_cache().get(&key);
+                    let kept = shared.caches.get(&key);
                     if let Some(kept) = kept {
                         reply(Some(kept));
                         continue;
@@ -90,10 +108,13 @@ impl PreviewServer {
                     }
                     match shared.disk.get().and_then(|disk| disk.get(&key)) {
                         Some(kept) => {
-                            shared.lock_cache().put(key.clone(), kept.clone());
+                            shared.caches.put(key.clone(), kept.clone());
                             shared.answer(&key, Some(kept));
                         }
-                        None => shared.jobs.push(key),
+                        None => {
+                            let given_back = shared.jobs.push(key);
+                            shared.let_go(given_back);
+                        }
                     }
                 }
             });
@@ -104,14 +125,17 @@ impl PreviewServer {
             thread::spawn(move || {
                 crate::power::below_the_page();
                 loop {
-                    let key = shared.jobs.pop();
-                    if !shared.begin(&key) {
-                        continue;
+                    match shared.jobs.pop() {
+                        Job::Asked(key) => {
+                            if !shared.begin(&key) {
+                                continue;
+                            }
+                            let (caches, disk) = (&shared.caches, shared.disk.get());
+                            let preview = panic::catch_unwind(|| make(caches, disk, &key, true)).ok().flatten();
+                            shared.answer(&key, preview);
+                        }
+                        Job::Warm(path, shape) => shared.warm(path, shape),
                     }
-                    let preview = panic::catch_unwind(|| make(&shared.cache, shared.disk.get(), &key))
-                        .ok()
-                        .flatten();
-                    shared.answer(&key, preview);
                 }
             });
         }
@@ -137,27 +161,56 @@ impl PreviewServer {
     fn ask(&self, path: String, shape: Shape, reply: Reply) {
         self.shared.lookups.push(Asked { path, shape, reply });
     }
+
+    pub fn show_folder(&self, generation: u64, folder: Option<(PreviewEntries, u32, u32)>) {
+        let folder = folder.map(|(entries, width, height)| {
+            let sized = (1..=MAX_BOX_SIDE).contains(&width) && (1..=MAX_BOX_SIDE).contains(&height);
+            let entries = entries
+                .into_iter()
+                .map(|entry| {
+                    let (path, page) = entry.filter(|_| sized)?;
+                    Some((
+                        path,
+                        Shape::Box {
+                            width,
+                            height,
+                            fit: if page { Fit::Contain } else { Fit::Cover },
+                        },
+                    ))
+                })
+                .collect();
+            Folder::new(entries)
+        });
+        self.shared.jobs.set_folder(generation, folder);
+    }
+
+    pub fn show_window(&self, generation: u64, start: usize, end: usize, warm: bool) {
+        self.shared.jobs.set_window(generation, start, end, warm);
+    }
 }
 
 impl Shared {
-    fn lock_cache(&self) -> MutexGuard<'_, Cache> {
-        self.cache.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
     fn lock_waiting(&self) -> MutexGuard<'_, HashMap<Key, Waiting>> {
         self.waiting.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_failed(&self) -> MutexGuard<'_, HashSet<Key>> {
+        self.failed.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn wait_for(&self, key: Key, reply: Reply) -> bool {
         match self.lock_waiting().entry(key) {
             Entry::Occupied(mut waiting) => {
-                waiting.get_mut().replies.push(reply);
-                !waiting.get().begun
+                let waiting = waiting.get_mut();
+                waiting.replies.push(reply);
+                waiting.asked = Instant::now();
+                !waiting.begun
             }
             Entry::Vacant(waiting) => {
                 waiting.insert(Waiting {
                     replies: vec![reply],
                     begun: false,
+                    asked: Instant::now(),
                 });
                 true
             }
@@ -174,23 +227,120 @@ impl Shared {
         }
     }
 
+    fn begin_ahead(&self, key: &Key) -> bool {
+        match self.lock_waiting().entry(key.clone()) {
+            Entry::Occupied(_) => false,
+            Entry::Vacant(waiting) => {
+                waiting.insert(Waiting {
+                    replies: Vec::new(),
+                    begun: true,
+                    asked: Instant::now(),
+                });
+                true
+            }
+        }
+    }
+
     fn answer(&self, key: &Key, preview: Option<Vec<u8>>) {
         let waiting = self.lock_waiting().remove(key);
         for reply in waiting.into_iter().flat_map(|waiting| waiting.replies) {
             reply(preview.clone());
         }
     }
+
+    fn let_go(&self, given_back: Vec<Key>) {
+        if given_back.is_empty() {
+            return;
+        }
+        let mut kept = Vec::new();
+        let mut gone = Vec::new();
+        {
+            let mut waiting = self.lock_waiting();
+            for key in given_back {
+                match waiting.get(&key) {
+                    Some(asked) if !asked.begun && asked.asked.elapsed() >= GONE_AFTER => {
+                        gone.extend(waiting.remove(&key))
+                    }
+                    Some(asked) if !asked.begun => kept.push(key),
+                    _ => {}
+                }
+            }
+        }
+        for reply in gone.into_iter().flat_map(|waiting| waiting.replies) {
+            reply(None);
+        }
+        self.jobs.keep_parked(kept);
+    }
+
+    fn warm(&self, path: String, shape: Shape) {
+        let changed = modified(&path);
+        let key = (path, changed, shape);
+        let disk = self.disk.get();
+        if self.caches.has(&key)
+            || self.lock_failed().contains(&key)
+            || disk.is_some_and(|disk| disk.has(&key))
+            || !self.begin_ahead(&key)
+        {
+            return;
+        }
+        let caches = &self.caches;
+        let preview = panic::catch_unwind(|| make(caches, disk, &key, false)).ok().flatten();
+        if preview.is_none() {
+            let mut failed = self.lock_failed();
+            if failed.len() >= FAILED_MOST {
+                failed.clear();
+            }
+            failed.insert(key.clone());
+        }
+        self.answer(&key, preview);
+    }
 }
 
-fn make(cache: &Mutex<Cache>, disk: Option<&Disk>, key: &Key) -> Option<Vec<u8>> {
-    let lock = || cache.lock().unwrap_or_else(PoisonError::into_inner);
+struct Caches {
+    tiles: Mutex<Cache>,
+    wholes: Mutex<Cache>,
+}
+
+impl Caches {
+    fn new() -> Self {
+        Self {
+            tiles: Mutex::new(Cache::new(TILE_CACHE_BYTES)),
+            wholes: Mutex::new(Cache::new(WHOLE_CACHE_BYTES)),
+        }
+    }
+
+    fn of(&self, key: &Key) -> MutexGuard<'_, Cache> {
+        let cache = if key.2 == Shape::Whole {
+            &self.wholes
+        } else {
+            &self.tiles
+        };
+        cache.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn get(&self, key: &Key) -> Option<Vec<u8>> {
+        self.of(key).get(key)
+    }
+
+    fn has(&self, key: &Key) -> bool {
+        self.of(key).entries.contains_key(key)
+    }
+
+    fn put(&self, key: Key, bytes: Vec<u8>) {
+        self.of(&key).put(key, bytes);
+    }
+}
+
+fn make(caches: &Caches, disk: Option<&Disk>, key: &Key, keep_whole: bool) -> Option<Vec<u8>> {
     let whole_key = (key.0.clone(), key.1, Shape::Whole);
-    let kept = lock().get(&whole_key);
+    let kept = caches.get(&whole_key);
     let whole = match kept {
         Some(png) => png,
         None => {
             let png = render(&key.0, PREVIEW_SIZE)?;
-            lock().put(whole_key, png.clone());
+            if keep_whole || key.2 == Shape::Whole {
+                caches.put(whole_key, png.clone());
+            }
             png
         }
     };
@@ -198,7 +348,7 @@ fn make(cache: &Mutex<Cache>, disk: Option<&Disk>, key: &Key) -> Option<Vec<u8>>
         return Some(whole);
     };
     let made = boxed(&whole, width, height, fit)?;
-    lock().put(key.clone(), made.clone());
+    caches.put(key.clone(), made.clone());
     if let Some(disk) = disk {
         disk.put(key, &made);
     }
@@ -257,6 +407,10 @@ impl Disk {
         hash.update(format!("{:?}", key.2).as_bytes());
         let name: String = hash.finalize()[..16].iter().map(|byte| format!("{byte:02x}")).collect();
         self.dir.join(&name[..2]).join(name)
+    }
+
+    fn has(&self, key: &Key) -> bool {
+        self.file_of(key).exists()
     }
 
     fn get(&self, key: &Key) -> Option<Vec<u8>> {
@@ -432,7 +586,7 @@ impl<T> Stack<T> {
     }
 }
 
-type Key = (String, Option<SystemTime>, Shape);
+pub(crate) type Key = (String, Option<SystemTime>, Shape);
 
 struct Cache {
     limit: usize,

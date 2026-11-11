@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { api, errorText, type Entry, type Listed } from "./api";
 import { CONFIRMATIONS, removeItems, type Confirmation, type ConfirmContext } from "./confirmations";
-import { describeKinds, excludeLabel, menuTargets, wholeFolderAdd } from "./menuTargets";
+import { describeKinds, excludeLabel, menuTargets, whenAdding } from "./menuTargets";
 
 interface Inputs {
   folder: string | null;
@@ -80,12 +80,19 @@ export function useIndexActions({
       excludeLabel: excludeLabel(targets, exclude),
       stop: stop.length,
       doAdd: () => {
-        const whole = folder === null ? null : wholeFolderAdd(folder, entries, targets, add);
-        return changeSelection(() =>
-          whole === "folder" && folder !== null
-            ? api.addToIndex([folder])
-            : api.addToIndex(paths(add), whole === "completing" && folder !== null ? folder : undefined),
-        );
+        const instead = folder === null ? null : whenAdding(folder, entries, targets, add);
+        if (instead && folder !== null) {
+          setAsking({
+            which: "indexFolderInstead",
+            subject: describeKinds(add),
+            paths: paths(add),
+            folder,
+            completing: instead.instead === "completing",
+            everything: instead.everything,
+          });
+          return Promise.resolve();
+        }
+        return changeSelection(() => api.addToIndex(paths(add)));
       },
       doDrop: () => {
         markStopped();
@@ -186,6 +193,9 @@ export function useIndexActions({
         withData: asking.withData ?? 0,
         stops: asking.stops ?? false,
         dropping: asking.dropping ?? [],
+        folder: asking.folder ?? "",
+        completing: asking.completing ?? false,
+        everything: asking.everything ?? false,
       })
     : null;
 
@@ -193,8 +203,14 @@ export function useIndexActions({
     if (!asking || !confirmation) return;
     setAsking(null);
     if (confirmation.stopsIndexing) markStopped();
-    const ofSelection = asking.which === "removeFromIndex" || asking.which === "excludeFromIndex";
-    changeIndex(confirmation.run, ofSelection ? clearSelection : undefined);
+    changeIndex(confirmation.run, ofSelection(asking.which) ? clearSelection : undefined);
+  };
+
+  const chooseAlternative = () => {
+    const alternative = confirmation?.alternative;
+    if (!asking || !alternative) return;
+    setAsking(null);
+    changeIndex(alternative.run, ofSelection(asking.which) ? clearSelection : undefined);
   };
 
   return {
@@ -207,6 +223,9 @@ export function useIndexActions({
     askAboutIndexAll,
     confirmation,
     confirm,
+    chooseAlternative,
     dismiss: () => setAsking(null),
   };
 }
+
+const ofSelection = (which: Confirmation) => which === "removeFromIndex" || which === "excludeFromIndex" || which === "indexFolderInstead";

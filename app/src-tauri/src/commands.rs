@@ -9,18 +9,20 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::{
-    browse::{self, Categories, Category, Listing},
+    browse::{self, Categories, Category},
     embed::ModelStatus,
     estimate::{Estimate, Estimator},
     folder_access::{FolderAccess, Pane},
     hotkey::{self, Hotkey},
-    index::{Index, IndexState, Page, Stats},
+    index::{Index, IndexState, IndexStatus, Page, Stats},
     main_window,
     progress::Progress,
     settings::{Settings, SettingsStore},
     shown_folder::{self, ShownFolder},
+    shown_listing::{self, ShownListing},
     store::{Filter, Hit},
     survey::{self, Survey},
+    thumbnail::{FolderPreviews, PreviewServer},
 };
 
 #[tauri::command]
@@ -32,27 +34,33 @@ pub fn home_dir(app: AppHandle) -> String {
 }
 
 #[tauri::command]
-pub async fn list_dir(
-    path: String,
+pub async fn list_dir(path: String, app: AppHandle) -> Result<shown_listing::Said, String> {
+    app.state::<FolderAccess>().reading(Path::new(&path));
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<ShownListing>()
+            .read(&path, &app.state::<Index>(), &app.state::<FolderAccess>())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn refresh_folder(path: String, generation: u64, app: AppHandle) -> Result<shown_listing::Refreshed, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<ShownListing>()
+            .refresh(&path, generation, &app.state::<Index>(), &app.state::<FolderAccess>())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(async)]
+pub fn folder_statuses(
+    generation: u64,
     index: State<'_, Index>,
-    access: State<'_, FolderAccess>,
-) -> Result<Listing, String> {
-    access.reading(Path::new(&path));
-    let mut listing = tauri::async_runtime::spawn_blocking(move || browse::list(&path))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| browse::explain(&e))?;
-    for entry in &mut listing.entries {
-        let state = index.state(Path::new(&entry.path));
-        entry.index = state.status;
-        entry.droppable = state.droppable;
-        entry.excluded_here = state.excluded_here;
-        entry.removable = state.removable;
-        if !entry.readable {
-            entry.privacy = access.pane_for(Path::new(&entry.path));
-        }
-    }
-    Ok(listing)
+    shown: State<'_, ShownListing>,
+) -> shown_listing::Statuses {
+    shown.statuses(generation, &index)
 }
 
 #[tauri::command]
@@ -68,7 +76,8 @@ pub fn watch_shown_folder(path: Option<String>, app: AppHandle, shown: State<'_,
 
 #[tauri::command(async)]
 pub fn index_statuses(paths: Vec<String>, index: State<'_, Index>) -> Vec<IndexState> {
-    paths.iter().map(|path| index.state(Path::new(path))).collect()
+    let paths: Vec<(&Path, Option<bool>)> = paths.iter().map(|path| (Path::new(path.as_str()), None)).collect();
+    index.states_of(&paths)
 }
 
 #[tauri::command(async)]
@@ -288,26 +297,29 @@ pub struct Listed {
     #[serde(flatten)]
     pub entry: browse::Entry,
     pub missing: bool,
+    pub slot: usize,
 }
 
 async fn listed(items: Vec<PathBuf>, index: &Index) -> Result<Vec<Listed>, String> {
     let described = tauri::async_runtime::spawn_blocking(move || {
-        let mut described: Vec<Listed> = items
-            .into_iter()
-            .map(|path| {
-                let (entry, missing) = browse::describe(&path);
-                Listed { entry, missing }
-            })
-            .collect();
+        let mut described: Vec<Listed> = browse::map_in_parallel(&items, |slot, path| {
+            let (entry, missing) = browse::describe(path);
+            Listed { entry, missing, slot }
+        });
         described.sort_by_cached_key(|item| (browse::listing_order(&item.entry), item.entry.path.clone()));
         described
     })
     .await
     .map_err(|e| e.to_string())?;
+    let asked: Vec<(&Path, Option<bool>)> = described
+        .iter()
+        .map(|item| (Path::new(&item.entry.path), Some(item.entry.kind == browse::Kind::File)))
+        .collect();
+    let states = index.states_of(&asked);
     Ok(described
         .into_iter()
-        .map(|mut item| {
-            let state = index.state(Path::new(&item.entry.path));
+        .zip(states)
+        .map(|(mut item, state)| {
             item.entry.index = state.status;
             item.entry.droppable = state.droppable;
             item.entry.excluded_here = state.excluded_here;
@@ -317,14 +329,70 @@ async fn listed(items: Vec<PathBuf>, index: &Index) -> Result<Vec<Listed>, Strin
         .collect())
 }
 
-#[tauri::command]
-pub async fn indexed_items(index: State<'_, Index>) -> Result<Vec<Listed>, String> {
-    listed(index.indexed_roots(), &index).await
+#[derive(Serialize)]
+pub struct Lists {
+    version: u64,
+    indexed: ListedColumns,
+    excluded: ListedColumns,
+}
+
+#[derive(Serialize)]
+pub struct ListedColumns {
+    #[serde(flatten)]
+    entries: shown_listing::Columns,
+    missing: String,
+    slots: Vec<usize>,
+}
+
+impl ListedColumns {
+    fn of(items: &[Listed]) -> Self {
+        Self {
+            entries: shown_listing::columns_of(&items.iter().map(|item| &item.entry).collect::<Vec<_>>()),
+            missing: items.iter().map(|item| if item.missing { '1' } else { '0' }).collect(),
+            slots: items.iter().map(|item| item.slot).collect(),
+        }
+    }
 }
 
 #[tauri::command]
-pub async fn excluded_items(index: State<'_, Index>) -> Result<Vec<Listed>, String> {
-    listed(index.excluded_paths(), &index).await
+pub async fn index_lists(index: State<'_, Index>) -> Result<Lists, String> {
+    let version = index.lists_version();
+    let indexed = listed(index.indexed_roots_of_now().to_vec(), &index).await?;
+    let excluded = listed(index.excluded_paths(), &index).await?;
+    Ok(Lists {
+        version,
+        indexed: ListedColumns::of(&indexed),
+        excluded: ListedColumns::of(&excluded),
+    })
+}
+
+#[derive(Serialize)]
+pub struct ListStates {
+    version: u64,
+    states: Option<Vec<(IndexStatus, bool, bool)>>,
+}
+
+#[tauri::command(async)]
+pub fn index_list_states(version: u64, index: State<'_, Index>) -> ListStates {
+    let now = index.lists_version();
+    let states = (now == version).then(|| {
+        index
+            .indexed_states()
+            .into_iter()
+            .map(|s| (s.status, s.droppable, s.removable))
+            .collect()
+    });
+    let states = states.filter(|_| index.lists_version() == now);
+    ListStates { version: now, states }
+}
+
+#[tauri::command(async)]
+pub fn queued_roots(index: State<'_, Index>) -> Vec<String> {
+    index
+        .queued_roots()
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect()
 }
 
 fn to_paths(paths: Vec<String>) -> Vec<PathBuf> {
@@ -576,4 +644,27 @@ pub fn set_widget_box(window: tauri::WebviewWindow, left: f64, top: f64, right: 
 #[tauri::command]
 pub fn show_main(app: AppHandle) {
     crate::main_window::page_is_ready(&app);
+}
+
+#[tauri::command(async)]
+pub fn show_folder_previews(
+    generation: u64,
+    folder: Option<FolderPreviews>,
+    previews: State<'_, PreviewServer>,
+    shown: State<'_, ShownListing>,
+) {
+    let folder = folder.and_then(
+        |FolderPreviews {
+             shape,
+             order,
+             width,
+             height,
+         }| Some((shown.previews(shape, order.as_deref())?, width, height)),
+    );
+    previews.show_folder(generation, folder);
+}
+
+#[tauri::command(async)]
+pub fn show_preview_window(generation: u64, start: usize, end: usize, warm: bool, previews: State<'_, PreviewServer>) {
+    previews.show_window(generation, start, end, warm);
 }

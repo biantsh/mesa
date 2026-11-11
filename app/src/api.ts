@@ -1,4 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { withShape, sameShape } from "./entriesShape";
+import { applyRuns, entriesOf, listedOf, type Columns, type ListedColumns, type Run, type StatusChange } from "./listingColumns";
 
 export type Kind = "drive" | "folder" | "file";
 export type Category = "image" | "video" | "audio" | "document";
@@ -32,6 +34,24 @@ export type PrivacyPane = "filesAndFolders" | "photos" | "media";
 
 export interface Listed extends Entry {
   missing: boolean;
+  slot: number;
+}
+
+export interface Lists {
+  version: number;
+  indexed: Listed[];
+  excluded: Listed[];
+}
+
+interface SaidLists {
+  version: number;
+  indexed: ListedColumns;
+  excluded: ListedColumns;
+}
+
+export interface ListStates {
+  version: number;
+  states: [IndexStatus, boolean, boolean][] | null;
 }
 
 export interface IndexState {
@@ -51,6 +71,41 @@ export interface Listing {
   parent: string | null;
   breadcrumbs: Crumb[];
   entries: Entry[];
+  generation: number;
+  shape: number;
+  unfinished: boolean;
+}
+
+interface SaidListing extends Omit<Listing, "entries"> {
+  entries: Columns;
+}
+
+function listingOf(said: SaidListing): Listing {
+  const entries = withShape(entriesOf(said.entries), { rust: said.shape, order: null });
+  return { ...said, entries };
+}
+
+type Refreshed =
+  | ({ kind: "whole" } & SaidListing)
+  | {
+      kind: "changes";
+      base: number;
+      generation: number;
+      shape: number;
+      unfinished: boolean;
+      runs: Run[];
+      fresh: Columns;
+      parent: string | null;
+      breadcrumbs: Crumb[];
+    };
+
+export interface FolderStatuses {
+  stale: boolean;
+  base: number;
+  generation: number;
+  changes: StatusChange[];
+  folder: IndexState | null;
+  unfinished: boolean;
 }
 
 export interface Progress {
@@ -157,8 +212,28 @@ export type ModelStatus =
 
 export const api = {
   homeDir: () => invoke<string>("home_dir"),
-  listDir: (path: string) => invoke<Listing>("list_dir", { path }),
+  listDir: async (path: string): Promise<Listing> => listingOf(await invoke<SaidListing>("list_dir", { path })),
+  refreshFolder: async (shown: Listing): Promise<{ listing: Listing; whole: boolean }> => {
+    const said = await invoke<Refreshed>("refresh_folder", { path: shown.path, generation: shown.generation });
+    if (said.kind === "whole") return { listing: listingOf(said), whole: true };
+    const entries = applyRuns(shown.entries, said.runs, entriesOf(said.fresh));
+    if (!entries) return { listing: listingOf(await invoke<SaidListing>("list_dir", { path: shown.path })), whole: true };
+    const { generation, shape, unfinished, parent, breadcrumbs } = said;
+    return { whole: false, listing: {
+      ...shown,
+      parent,
+      breadcrumbs,
+      generation,
+      shape,
+      unfinished,
+      entries: shape === shown.shape ? sameShape(entries, shown.entries) : withShape(entries, { rust: shape, order: null }),
+    } };
+  },
+  folderStatuses: (generation: number) => invoke<FolderStatuses>("folder_statuses", { generation }),
   watchShownFolder: (path: string | null) => invoke<void>("watch_shown_folder", { path }),
+  showFolderPreviews: (generation: number, folder: FolderPreviews | null) => invoke<void>("show_folder_previews", { generation, folder }),
+  showPreviewWindow: (generation: number, start: number, end: number, warm: boolean) =>
+    invoke<void>("show_preview_window", { generation, start, end, warm }),
   indexStatuses: (paths: string[]) => invoke<IndexState[]>("index_statuses", { paths }),
   indexProgress: () => invoke<Progress | null>("index_progress"),
   indexOverview: () => invoke<Overview>("index_overview"),
@@ -182,8 +257,12 @@ export const api = {
   stopExcluding: (paths: string[]) => invoke<void>("stop_excluding", { paths }),
   countWithData: (paths: string[]) => invoke<number>("count_with_data", { paths }),
   exclusionCount: () => invoke<number>("exclusion_count"),
-  indexedItems: () => invoke<Listed[]>("indexed_items"),
-  excludedItems: () => invoke<Listed[]>("excluded_items"),
+  indexLists: async (): Promise<Lists> => {
+    const said = await invoke<SaidLists>("index_lists");
+    return { version: said.version, indexed: listedOf(said.indexed), excluded: listedOf(said.excluded) };
+  },
+  indexListStates: (version: number) => invoke<ListStates>("index_list_states", { version }),
+  queuedRoots: () => invoke<string[]>("queued_roots"),
   indexEverything: () => invoke<void>("index_everything"),
   surveyUserFiles: (includeProtected: boolean) => invoke<Survey>("survey_user_files", { includeProtected }),
   indexEstimate: () => invoke<Estimate>("index_estimate"),
@@ -210,8 +289,20 @@ export const api = {
 export function previewUrl(path: string, box?: PreviewBox, scale = 1): string {
   const url = convertFileSrc(path, "thumb");
   if (!box) return url;
+  const { width, height } = previewPixels(box, scale);
+  return `${url}?w=${width}&h=${height}&fit=${box.fit}`;
+}
+
+export function previewPixels(box: PreviewBox, scale: number): { width: number; height: number } {
   const pixels = (n: number) => Math.max(1, Math.round(n * scale));
-  return `${url}?w=${pixels(box.width)}&h=${pixels(box.height)}&fit=${box.fit}`;
+  return { width: pixels(box.width), height: pixels(box.height) };
+}
+
+export interface FolderPreviews {
+  shape: number;
+  order: readonly number[] | null;
+  width: number;
+  height: number;
 }
 
 export interface PreviewBox {

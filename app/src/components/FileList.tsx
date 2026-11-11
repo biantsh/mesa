@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { type Entry, type PreviewBox } from "../api";
 import { cx } from "../cx";
@@ -6,6 +6,7 @@ import { formatModified, formatSize, typeLabel } from "../format";
 import type { Sort, SortColumn } from "../sort";
 import { useArrowKeys } from "../useArrowKeys";
 import { usePreview } from "../usePreview";
+import { usePreviewOrder } from "../usePreviewOrder";
 import { useVirtualRows } from "../virtual";
 import { EntryIcon } from "./EntryIcon";
 import { entryProps } from "./entryProps";
@@ -49,10 +50,14 @@ export const FileList = memo(function FileList({
   });
 
   const list = useRef<HTMLDivElement>(null);
+  useNarrowAt(list);
+  const onSeen = usePreviewOrder(entries, PICTURE_BOX);
+  const [shownFirst] = useState(() => (selected.size === 0 ? null : (entries.find((entry) => selected.has(entry.path))?.path ?? null)));
   const { start, end, before, after } = useVirtualRows(list, entries, {
+    onSeen,
     selectable: isReadable,
     columns: oneColumn,
-    reveal: entries.find((entry) => selected.has(entry.path))?.path ?? null,
+    reveal: shownFirst,
   });
 
   return (
@@ -88,6 +93,28 @@ export const FileList = memo(function FileList({
     </div>
   );
 });
+
+const NARROW_AT = [760, 652, 560, 380];
+
+function useNarrowAt(list: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    const style = getComputedStyle(element);
+    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const apply = () => {
+      const width = element.getBoundingClientRect().width - (element.offsetWidth - element.clientWidth) - padding;
+      const narrow = NARROW_AT.filter((at) => width <= at).join(" ");
+      if ((element.dataset.narrow ?? "") === narrow) return;
+      if (narrow) element.dataset.narrow = narrow;
+      else delete element.dataset.narrow;
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [list]);
+}
 
 const isReadable = (entry: Entry) => entry.readable;
 const oneColumn = () => 1;

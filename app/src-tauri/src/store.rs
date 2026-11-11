@@ -180,6 +180,7 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    #[cfg(test)]
     pub fn save_rules(&mut self, rules: &HashSet<PathBuf>) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM rules", [])?;
@@ -192,22 +193,30 @@ impl Store {
         Ok(tx.commit()?)
     }
 
+    pub fn save_rules_changes(&mut self, before: &HashSet<PathBuf>, after: &HashSet<PathBuf>) -> Result<()> {
+        save_changes(
+            &mut self.conn,
+            "rules",
+            "INSERT INTO rules (path, indexed) VALUES (?1, 1)",
+            before,
+            after,
+        )
+    }
+
+    pub fn save_exclusions_changes(&mut self, before: &HashSet<PathBuf>, after: &HashSet<PathBuf>) -> Result<()> {
+        save_changes(
+            &mut self.conn,
+            "exclusions",
+            "INSERT INTO exclusions (path) VALUES (?1)",
+            before,
+            after,
+        )
+    }
+
     pub fn load_exclusions(&self) -> Result<HashSet<PathBuf>> {
         let mut statement = self.conn.prepare("SELECT path FROM exclusions")?;
         let rows = statement.query_map([], |r| Ok(PathBuf::from(r.get::<_, String>(0)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
-    }
-
-    pub fn save_exclusions(&mut self, exclusions: &HashSet<PathBuf>) -> Result<()> {
-        let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM exclusions", [])?;
-        {
-            let mut insert = tx.prepare("INSERT INTO exclusions (path) VALUES (?1)")?;
-            for path in exclusions {
-                insert.execute(params![path.to_string_lossy()])?;
-            }
-        }
-        Ok(tx.commit()?)
     }
 
     pub fn is_paused(&self) -> Result<bool> {
@@ -291,7 +300,7 @@ impl Store {
         for scan in scans {
             let mut dir_id = find_dir(&tx, &scan.path)?;
             let existing = match dir_id {
-                Some(id) => existing_files(&tx, id)?,
+                Some(id) => existing_of(&tx, id, scan)?,
                 None => HashMap::new(),
             };
             let mut seen = HashSet::with_capacity(scan.files.len());
@@ -356,28 +365,42 @@ impl Store {
         Ok(lost)
     }
 
-    pub fn files_under(&self, root: &Path) -> Result<u64> {
-        if let Some(dir) = find_dir(&self.conn, root)? {
-            return Ok(self.conn.query_row(
+    pub fn files_under_each(&self, roots: &[PathBuf]) -> Result<Vec<u64>> {
+        let mut folders = Folders::default();
+        roots
+            .iter()
+            .map(|root| match folders.find_child(&self.conn, root)? {
+                Some(dir) => self.files_in_tree(dir),
+                None => {
+                    let (Some(parent), Some(name)) = (root.parent(), root.file_name()) else {
+                        return Ok(0);
+                    };
+                    let Some(dir) = folders.find(&self.conn, parent)? else {
+                        return Ok(0);
+                    };
+                    self.files_named(dir, &name.to_string_lossy())
+                }
+            })
+            .collect()
+    }
+
+    fn files_in_tree(&self, dir: i64) -> Result<u64> {
+        Ok(self
+            .conn
+            .prepare_cached(
                 "WITH RECURSIVE tree(id) AS (
-                     SELECT ?1 UNION ALL SELECT d.id FROM dirs d JOIN tree t ON d.parent_id = t.id WHERE d.id != 0
-                 )
-                 SELECT COUNT(*) FROM files WHERE embedded_with = ?2 AND dir_id IN (SELECT id FROM tree)",
-                params![dir, CONFIG_ID],
-                |r| r.get(0),
-            )?);
-        }
-        let (Some(parent), Some(name)) = (root.parent(), root.file_name()) else {
-            return Ok(0);
-        };
-        let Some(dir) = find_dir(&self.conn, parent)? else {
-            return Ok(0);
-        };
-        Ok(self.conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE dir_id = ?1 AND name = ?2 AND embedded_with = ?3",
-            params![dir, name.to_string_lossy(), CONFIG_ID],
-            |r| r.get(0),
-        )?)
+                 SELECT ?1 UNION ALL SELECT d.id FROM dirs d JOIN tree t ON d.parent_id = t.id WHERE d.id != 0
+             )
+             SELECT COUNT(*) FROM files WHERE embedded_with = ?2 AND dir_id IN (SELECT id FROM tree)",
+            )?
+            .query_row(params![dir, CONFIG_ID], |r| r.get(0))?)
+    }
+
+    fn files_named(&self, dir: i64, name: &str) -> Result<u64> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT COUNT(*) FROM files WHERE dir_id = ?1 AND name = ?2 AND embedded_with = ?3")?
+            .query_row(params![dir, name, CONFIG_ID], |r| r.get(0))?)
     }
 
     pub fn has_stale_files(&self) -> Result<bool> {
@@ -390,7 +413,7 @@ impl Store {
 
     pub fn changes(&self, scan: &ScannedDir) -> Result<Changes> {
         let existing = match find_dir(&self.conn, &scan.path)? {
-            Some(dir) => existing_files(&self.conn, dir)?,
+            Some(dir) => existing_of(&self.conn, dir, scan)?,
             None => HashMap::new(),
         };
         let mut changes = Changes::default();
@@ -488,18 +511,45 @@ impl Store {
     }
 
     pub fn remove_paths(&mut self, paths: &[PathBuf]) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        let mut by_folder: Vec<(&Path, Vec<String>)> = Vec::new();
+        let mut places: HashMap<&Path, usize> = HashMap::new();
+        let mut tops = Vec::new();
         for path in paths {
-            if let Some(id) = find_dir(&tx, path)? {
-                tx.execute("DELETE FROM dirs WHERE id = ?1", [id])?;
+            match (path.parent(), path.components().next_back()) {
+                (Some(parent), Some(Component::Normal(name))) if !segments(parent).is_empty() => {
+                    let at = *places.entry(parent).or_insert_with(|| {
+                        by_folder.push((parent, Vec::new()));
+                        by_folder.len() - 1
+                    });
+                    by_folder[at].1.push(name.to_string_lossy().into_owned());
+                }
+                _ => tops.push(path),
             }
-            if let (Some(parent), Some(name)) = (path.parent(), path.file_name())
-                && let Some(dir) = find_dir(&tx, parent)?
-            {
-                tx.execute(
-                    "DELETE FROM files WHERE dir_id = ?1 AND name = ?2",
-                    params![dir, name.to_string_lossy()],
-                )?;
+        }
+        let tx = self.conn.transaction()?;
+        for path in tops {
+            if let Some(id) = find_dir(&tx, path)? {
+                tx.prepare_cached("DELETE FROM dirs WHERE id = ?1")?.execute([id])?;
+            }
+        }
+        let mut folders = Folders::default();
+        for (parent, names) in by_folder {
+            let Some(dir) = folders.find(&tx, parent)? else {
+                continue;
+            };
+            let inside: HashMap<String, i64> = tx
+                .prepare_cached("SELECT name, id FROM dirs WHERE parent_id = ?1 AND id != 0")?
+                .query_map([dir], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            for name in &names {
+                if let Some(id) = inside.get(name) {
+                    tx.prepare_cached("DELETE FROM dirs WHERE id = ?1")?.execute([id])?;
+                }
+            }
+            for some in names.chunks(500) {
+                let names = serde_json::to_string(some).map_err(|e| Error::Io(io::Error::other(e)))?;
+                tx.prepare_cached("DELETE FROM files WHERE dir_id = ?1 AND name IN (SELECT value FROM json_each(?2))")?
+                    .execute(params![dir, names])?;
             }
         }
         Ok(tx.commit()?)
@@ -934,6 +984,53 @@ fn child_dir(conn: &Connection, parent: i64, name: &str) -> Result<Option<i64>> 
         .optional()?)
 }
 
+fn save_changes(
+    conn: &mut Connection,
+    table: &str,
+    insert: &str,
+    before: &HashSet<PathBuf>,
+    after: &HashSet<PathBuf>,
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut delete = tx.prepare(&format!("DELETE FROM {table} WHERE path = ?1"))?;
+        for path in before.difference(after) {
+            delete.execute(params![path.to_string_lossy()])?;
+        }
+        let mut insert = tx.prepare(insert)?;
+        for path in after.difference(before) {
+            insert.execute(params![path.to_string_lossy()])?;
+        }
+    }
+    Ok(tx.commit()?)
+}
+
+#[derive(Default)]
+struct Folders(HashMap<PathBuf, Option<i64>>);
+
+impl Folders {
+    fn find(&mut self, conn: &Connection, path: &Path) -> Result<Option<i64>> {
+        if let Some(&found) = self.0.get(path) {
+            return Ok(found);
+        }
+        let found = find_dir(conn, path)?;
+        self.0.insert(path.to_owned(), found);
+        Ok(found)
+    }
+
+    fn find_child(&mut self, conn: &Connection, path: &Path) -> Result<Option<i64>> {
+        match (path.parent(), path.components().next_back()) {
+            (Some(parent), Some(Component::Normal(name))) if !segments(parent).is_empty() => {
+                match self.find(conn, parent)? {
+                    Some(dir) => child_dir(conn, dir, &name.to_string_lossy()),
+                    None => Ok(None),
+                }
+            }
+            _ => find_dir(conn, path),
+        }
+    }
+}
+
 fn find_dir(conn: &Connection, path: &Path) -> Result<Option<i64>> {
     let names = segments(path);
     if names.is_empty() {
@@ -990,6 +1087,31 @@ fn is_current(stored: &StoredFile, file: &ScannedFile) -> bool {
     stored.modified_ms == file.modified_ms
         && stored.size == file.size as i64
         && stored.embedded_with == i64::from(CONFIG_ID)
+}
+
+fn existing_of(conn: &Connection, dir_id: i64, scan: &ScannedDir) -> Result<HashMap<String, StoredFile>> {
+    if scan.complete {
+        return existing_files(conn, dir_id);
+    }
+    let mut statement =
+        conn.prepare_cached("SELECT id, modified_ms, size, embedded_with FROM files WHERE dir_id = ?1 AND name = ?2")?;
+    let mut found = HashMap::with_capacity(scan.files.len());
+    for file in &scan.files {
+        let stored = statement
+            .query_row(params![dir_id, file.name], |r| {
+                Ok(StoredFile {
+                    id: r.get(0)?,
+                    modified_ms: r.get(1)?,
+                    size: r.get(2)?,
+                    embedded_with: r.get(3)?,
+                })
+            })
+            .optional()?;
+        if let Some(stored) = stored {
+            found.insert(file.name.clone(), stored);
+        }
+    }
+    Ok(found)
 }
 
 fn existing_files(conn: &Connection, dir_id: i64) -> Result<HashMap<String, StoredFile>> {

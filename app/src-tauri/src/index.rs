@@ -1,5 +1,6 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    ffi::{OsStr, OsString},
     ops::Bound,
     path::{Path, PathBuf},
     sync::{
@@ -278,12 +279,15 @@ impl Shared {
 pub struct Index {
     shared: Arc<Shared>,
     queue: Mutex<Sender<Message>>,
+    queueing: Mutex<()>,
     counter: Mutex<Sender<()>>,
     counted: Mutex<Option<Counted>>,
     latest_search: Mutex<Option<Arc<Ranking>>>,
     search_ids: AtomicU64,
     watching: Mutex<Option<crate::watch::Watching>>,
     examples: crate::examples::Examples,
+    lists_version: AtomicU64,
+    roots: Mutex<Option<(u64, Arc<Vec<PathBuf>>)>>,
 }
 
 #[derive(Clone, Copy)]
@@ -326,10 +330,8 @@ impl Index {
                 }
             }
         }
-        let already: Vec<u64> = unfinished
-            .iter()
-            .map(|(_, root)| store.files_under(root).unwrap_or(0))
-            .collect();
+        let roots: Vec<PathBuf> = unfinished.iter().map(|(_, root)| root.clone()).collect();
+        let already = store.files_under_each(&roots).unwrap_or_else(|_| vec![0; roots.len()]);
         let paused = store.is_paused()?;
         if paused && unfinished.is_empty() {
             store.set_paused(false)?;
@@ -367,12 +369,15 @@ impl Index {
         let index = Self {
             shared,
             queue: Mutex::new(sender),
+            queueing: Mutex::new(()),
             counter: Mutex::new(wake),
             counted: Mutex::new(None),
             latest_search: Mutex::new(None),
             search_ids: AtomicU64::new(0),
             watching: Mutex::new(None),
             examples: Default::default(),
+            lists_version: AtomicU64::new(0),
+            roots: Mutex::new(None),
         };
         for ((id, root), already) in unfinished.into_iter().zip(already) {
             index.queue_job_having_done(id, root, already);
@@ -437,27 +442,45 @@ impl Index {
         }
     }
 
-    fn drop_jobs_under(&self, paths: &[PathBuf]) -> Vec<i64> {
-        let mut ids = Vec::new();
-        for path in paths {
-            let roots = lock(&self.shared.progress).roots_under(path);
-            for root in roots {
-                let id = lock(&self.shared.progress).drop_job(&root);
-                ids.extend(id);
+    pub fn states_of(&self, paths: &[(&Path, Option<bool>)]) -> Vec<IndexState> {
+        let mut states: Vec<Option<IndexState>> = vec![None; paths.len()];
+        let mut folders: HashMap<&Path, Vec<usize>> = HashMap::new();
+        for (at, (path, _)) in paths.iter().enumerate() {
+            match (path.parent(), path.file_name()) {
+                (Some(folder), Some(_)) => folders.entry(folder).or_default().push(at),
+                _ => states[at] = Some(self.state(path)),
             }
         }
-        ids
+        for (folder, members) in folders {
+            if members.len() < CHILDREN_TOGETHER {
+                for at in members {
+                    states[at] = Some(self.state(paths[at].0));
+                }
+                continue;
+            }
+            let children = Children::of(self, folder);
+            for at in members {
+                states[at] = Some(children.state(paths[at].0, paths[at].1));
+            }
+        }
+        states
+            .into_iter()
+            .map(|state| state.expect("every path is looked at"))
+            .collect()
+    }
+
+    pub fn folder_states(&self, folder: &Path) -> FolderStates {
+        FolderStates(Children::of(self, folder))
+    }
+
+    fn drop_jobs_under(&self, paths: &[PathBuf]) -> Vec<i64> {
+        let mut progress = lock(&self.shared.progress);
+        let roots: Vec<PathBuf> = paths.iter().flat_map(|path| progress.roots_under(path)).collect();
+        progress.drop_jobs(&roots).into_iter().map(|(_, id)| id).collect()
     }
 
     pub fn drop_jobs(&self, paths: &[PathBuf]) -> Result<(), String> {
-        let (mut dropped, mut ids) = (Vec::new(), Vec::new());
-        for path in paths {
-            let id = lock(&self.shared.progress).drop_job(path);
-            if let Some(id) = id {
-                ids.push(id);
-                dropped.push(path.clone());
-            }
-        }
+        let (dropped, ids): (Vec<PathBuf>, Vec<i64>) = lock(&self.shared.progress).drop_jobs(paths).into_iter().unzip();
         if dropped.is_empty() {
             return Ok(());
         }
@@ -550,7 +573,8 @@ impl Index {
         let mut store = lock(&self.shared.store);
         store.finish_jobs(&ids)?;
         let mut rules = lock(&self.shared.rules).clone();
-        let mut excluded = lock(&self.shared.excluded).clone();
+        let before = lock(&self.shared.excluded).clone();
+        let mut excluded = before.clone();
         rules::drop_under(&mut rules, paths);
         let covered: HashSet<&Path> = paths.iter().map(PathBuf::as_path).collect();
         excluded.retain(|e| !e.ancestors().any(|above| covered.contains(above)));
@@ -559,8 +583,9 @@ impl Index {
                 excluded.insert(path.clone());
             }
         }
-        store.save_exclusions(&excluded)?;
+        store.save_exclusions_changes(&before, &excluded)?;
         *lock(&self.shared.excluded) = excluded;
+        self.lists_changed();
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
         let removed = store.remove_paths(paths);
@@ -572,13 +597,15 @@ impl Index {
     pub fn stop_excluding_many(&self, paths: &[PathBuf]) -> Result<(), String> {
         let mut store = lock(&self.shared.store);
         let rules = lock(&self.shared.rules).clone();
-        let mut excluded = lock(&self.shared.excluded).clone();
+        let before = lock(&self.shared.excluded).clone();
+        let mut excluded = before.clone();
         let ended: Vec<&PathBuf> = paths.iter().filter(|path| excluded.remove(*path)).collect();
         if ended.is_empty() {
             return Ok(());
         }
-        store.save_exclusions(&excluded)?;
+        store.save_exclusions_changes(&before, &excluded)?;
         *lock(&self.shared.excluded) = excluded;
+        self.lists_changed();
         self.shared.control.poke();
         let to_index: Vec<PathBuf> = ended
             .into_iter()
@@ -625,6 +652,35 @@ impl Index {
             .collect();
         roots.sort();
         roots
+    }
+
+    fn lists_changed(&self) {
+        self.lists_version.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn lists_version(&self) -> u64 {
+        self.lists_version.load(Ordering::SeqCst)
+    }
+
+    pub fn indexed_states(&self) -> Vec<IndexState> {
+        let roots = self.indexed_roots_of_now();
+        self.states_of(&roots.iter().map(|root| (root.as_path(), None)).collect::<Vec<_>>())
+    }
+
+    pub fn indexed_roots_of_now(&self) -> Arc<Vec<PathBuf>> {
+        let version = self.lists_version();
+        if let Some((kept, roots)) = &*lock(&self.roots)
+            && *kept == version
+        {
+            return Arc::clone(roots);
+        }
+        let roots = Arc::new(self.indexed_roots());
+        *lock(&self.roots) = Some((version, Arc::clone(&roots)));
+        roots
+    }
+
+    pub fn queued_roots(&self) -> Vec<PathBuf> {
+        lock(&self.shared.progress).job_roots()
     }
 
     pub fn excluded_paths(&self) -> Vec<PathBuf> {
@@ -916,9 +972,11 @@ impl Index {
     }
 
     fn replace_rules(&self, store: &mut Store, rules: Rules) -> Result<(), String> {
-        store.save_rules(&rules)?;
+        let before = lock(&self.shared.rules).clone();
+        store.save_rules_changes(&before, &rules)?;
         *lock(&self.shared.included) = rules.iter().cloned().collect();
         *lock(&self.shared.rules) = rules;
+        self.lists_changed();
         Ok(())
     }
 
@@ -939,8 +997,8 @@ impl Index {
         if !lock(&self.shared.progress).is_active() {
             self.shared.set_paused(store, false)?;
         }
-        for (id, root) in ids.into_iter().zip(roots) {
-            let already = store.files_under(root).unwrap_or(0);
+        let already = store.files_under_each(roots).unwrap_or_else(|_| vec![0; roots.len()]);
+        for ((id, root), already) in ids.into_iter().zip(roots).zip(already) {
             self.queue_job_counted(id, root.clone(), already, counted(root));
         }
         Ok(())
@@ -951,6 +1009,7 @@ impl Index {
     }
 
     fn queue_job_counted(&self, id: i64, root: PathBuf, already: u64, counted: Option<u64>) {
+        let _in_order = lock(&self.queueing);
         let (ticket, first) = {
             let mut progress = lock(&self.shared.progress);
             let (ticket, first) = progress.add_job_having_done(id, root.clone(), already);
@@ -1044,6 +1103,164 @@ impl Drop for Index {
     }
 }
 
+const CHILDREN_TOGETHER: usize = 32;
+
+#[derive(PartialEq)]
+struct Children {
+    unindexable: bool,
+    each_may_be_unindexable: bool,
+    excluded_above: bool,
+    excluded: HashSet<OsString>,
+    types: Categories,
+    indexed_above: bool,
+    roots: HashSet<OsString>,
+    roots_below: HashSet<OsString>,
+    pending_above: bool,
+    pending: HashSet<OsString>,
+    waiting_above: bool,
+    waiting: HashSet<OsString>,
+    job_roots: HashSet<OsString>,
+    paused: bool,
+}
+
+#[derive(PartialEq)]
+pub struct FolderStates(Children);
+
+impl FolderStates {
+    pub fn state(&self, path: &Path, is_file: Option<bool>) -> IndexState {
+        self.0.state(path, is_file)
+    }
+}
+
+impl Children {
+    fn of(index: &Index, folder: &Path) -> Self {
+        let shared = &index.shared;
+        let unindexable = unindexable::is_unindexable(folder);
+        let excluded_above = shared.is_excluded(folder);
+        let excluded = lock(&shared.excluded)
+            .iter()
+            .filter(|path| path.parent() == Some(folder))
+            .filter_map(|path| path.file_name().map(OsStr::to_owned))
+            .collect();
+        let indexed_above = effective(&lock(&shared.rules), folder);
+        let (roots, deeper): (Vec<PathBuf>, Vec<PathBuf>) = {
+            let included = lock(&shared.included);
+            included
+                .range::<Path, _>((Bound::Excluded(folder), Bound::Unbounded))
+                .take_while(|path| path.starts_with(folder))
+                .cloned()
+                .partition(|path| path.parent() == Some(folder))
+        };
+        let roots = roots
+            .iter()
+            .filter_map(|path| path.file_name().map(OsStr::to_owned))
+            .collect();
+        let deeper: Vec<&PathBuf> = deeper
+            .iter()
+            .filter(|path| !unindexable::is_unindexable(path) && !shared.is_excluded(path))
+            .collect();
+        let roots_below = children_with_something(deeper.into_iter(), folder);
+        let (pending_above, pending) = lock(&shared.pending).touching_children(folder);
+        let (waiting_above, waiting, job_roots) = {
+            let progress = lock(&shared.progress);
+            let (above, waiting) = progress.waiting_children(folder);
+            (above, waiting, progress.job_root_children(folder))
+        };
+        Self {
+            unindexable,
+            each_may_be_unindexable: !unindexable && unindexable::children_may_differ(folder),
+            excluded_above,
+            excluded,
+            types: shared.types(),
+            indexed_above,
+            roots,
+            roots_below,
+            pending_above,
+            pending,
+            waiting_above,
+            waiting,
+            job_roots,
+            paused: shared.control.is_paused(),
+        }
+    }
+
+    fn status(&self, path: &Path, name: &OsStr, is_file: Option<bool>) -> IndexStatus {
+        if self.unindexable || (self.each_may_be_unindexable && unindexable::is_unindexable(path)) {
+            return IndexStatus::Unindexable;
+        }
+        if self.excluded_above || self.excluded.contains(name) {
+            return IndexStatus::Excluded;
+        }
+        if self.types.is_empty() {
+            return IndexStatus::TypeNotIndexed;
+        }
+        let kind = browse::category_of(&name.to_string_lossy());
+        if kind.is_some_and(|kind| !self.types.contains(kind)) && is_file.unwrap_or_else(|| path.is_file()) {
+            return IndexStatus::TypeNotIndexed;
+        }
+        if !(self.indexed_above || self.roots.contains(name)) {
+            return if self.roots_below.contains(name) {
+                IndexStatus::PartlyIndexed
+            } else {
+                IndexStatus::NotIndexed
+            };
+        }
+        let working = self.pending_above || self.pending.contains(name);
+        if working || self.waiting_above || self.waiting.contains(name) {
+            if self.paused {
+                IndexStatus::Paused
+            } else {
+                IndexStatus::Indexing
+            }
+        } else {
+            IndexStatus::Indexed
+        }
+    }
+
+    fn state(&self, path: &Path, is_file: Option<bool>) -> IndexState {
+        let name = path.file_name().expect("an entry of a folder has a name");
+        let status = self.status(path, name, is_file);
+        let removable = match status {
+            IndexStatus::Indexed => !self.indexed_above,
+            IndexStatus::PartlyIndexed => true,
+            _ => false,
+        };
+        IndexState {
+            status,
+            droppable: self.job_roots.contains(name),
+            excluded_here: self.excluded.contains(name),
+            removable,
+        }
+    }
+}
+
+pub(crate) fn strictly_below<'a, V>(
+    map: &'a BTreeMap<PathBuf, V>,
+    folder: &'a Path,
+) -> impl Iterator<Item = &'a PathBuf> + 'a {
+    map.range::<Path, _>((Bound::Excluded(folder), Bound::Unbounded))
+        .take_while(move |(path, _)| path.starts_with(folder))
+        .map(|(path, _)| path)
+}
+
+pub(crate) fn children_with_something<'a>(
+    below: impl Iterator<Item = &'a PathBuf>,
+    folder: &Path,
+) -> HashSet<OsString> {
+    below
+        .filter_map(|path| {
+            Some(
+                path.strip_prefix(folder)
+                    .ok()?
+                    .components()
+                    .next()?
+                    .as_os_str()
+                    .to_owned(),
+            )
+        })
+        .collect()
+}
+
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -1074,6 +1291,14 @@ impl Pending {
                 .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
                 .next()
                 .is_some_and(|(below, _)| below.starts_with(path))
+    }
+
+    pub fn touching_children(&self, folder: &Path) -> (bool, HashSet<OsString>) {
+        let above = folder.ancestors().any(|above| self.paths.contains_key(above));
+        (
+            above,
+            children_with_something(strictly_below(&self.paths, folder), folder),
+        )
     }
 
     #[cfg(test)]

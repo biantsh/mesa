@@ -1,5 +1,6 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    ffi::{OsStr, OsString},
     ops::Bound,
     path::{Path, PathBuf},
 };
@@ -71,7 +72,9 @@ impl ActiveJob {
 #[derive(Default)]
 pub struct ProgressState {
     next_ticket: u64,
-    jobs: Vec<ActiveJob>,
+    jobs: VecDeque<ActiveJob>,
+    count_from: u64,
+    untotalled: usize,
     finished: u64,
     released: bool,
     waiting: Roots,
@@ -108,6 +111,21 @@ impl Roots {
             .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
             .next()
             .is_some_and(|(below, _)| below.starts_with(path))
+    }
+
+    fn of_children(&self, folder: &Path) -> (bool, HashSet<OsString>) {
+        let above = folder.ancestors().any(|above| self.0.contains_key(above));
+        (
+            above,
+            crate::index::children_with_something(crate::index::strictly_below(&self.0, folder), folder),
+        )
+    }
+
+    fn children(&self, folder: &Path) -> HashSet<OsString> {
+        crate::index::strictly_below(&self.0, folder)
+            .filter(|path| path.parent() == Some(folder))
+            .filter_map(|path| path.file_name().map(OsStr::to_owned))
+            .collect()
     }
 
     fn under(&self, path: &Path) -> Vec<PathBuf> {
@@ -151,21 +169,48 @@ impl ProgressState {
         if !self.is_current(ticket) {
             return;
         }
-        self.jobs[0].total = Some(self.jobs[0].total.unwrap_or(0) + files);
+        let total = self.jobs[0].total.unwrap_or(0) + files;
+        self.set_total(0, total);
     }
 
     pub fn has(&self, ticket: u64) -> bool {
-        self.jobs.iter().any(|job| job.ticket == ticket)
+        self.position_of(ticket).is_some()
     }
 
+    #[cfg(test)]
     pub fn drop_job(&mut self, root: &Path) -> Option<i64> {
-        if !self.asked.contains(root) {
-            return None;
+        self.drop_jobs(&[root.to_owned()]).pop().map(|(_, id)| id)
+    }
+
+    pub fn drop_jobs(&mut self, roots: &[PathBuf]) -> Vec<(PathBuf, i64)> {
+        let mut wanted: HashMap<&Path, usize> = HashMap::new();
+        for root in roots.iter().filter(|root| self.asked.contains(root)) {
+            *wanted.entry(root.as_path()).or_default() += 1;
         }
-        let position = self.jobs.iter().position(|job| !job.quiet && job.root == root)?;
-        let job = self.remove_job(position);
+        if wanted.is_empty() {
+            return Vec::new();
+        }
+        let positions: Vec<usize> = (0..self.jobs.len())
+            .filter(|&at| {
+                let job = &self.jobs[at];
+                !job.quiet
+                    && wanted.get_mut(job.root.as_path()).is_some_and(|left| {
+                        *left > 0 && {
+                            *left -= 1;
+                            true
+                        }
+                    })
+            })
+            .collect();
+        let mut dropped: Vec<(PathBuf, i64)> = positions
+            .into_iter()
+            .rev()
+            .map(|at| self.remove_job(at))
+            .map(|job| (job.root, job.id))
+            .collect();
+        dropped.reverse();
         self.forget_if_over();
-        Some(job.id)
+        dropped
     }
 
     fn push_job(&mut self, job: ActiveJob) {
@@ -175,11 +220,17 @@ impl ProgressState {
         if !job.quiet {
             self.asked.add(&job.root);
         }
-        self.jobs.push(job);
+        if job.total.is_none() {
+            self.untotalled += 1;
+        }
+        self.jobs.push_back(job);
     }
 
     fn remove_job(&mut self, position: usize) -> ActiveJob {
-        let job = self.jobs.remove(position);
+        let job = self.jobs.remove(position).expect("a job that is there");
+        if job.total.is_none() {
+            self.untotalled -= 1;
+        }
         if !job.started {
             self.waiting.remove(&job.root);
         }
@@ -197,6 +248,18 @@ impl ProgressState {
         self.asked.contains(root)
     }
 
+    pub fn waiting_children(&self, folder: &Path) -> (bool, HashSet<OsString>) {
+        self.waiting.of_children(folder)
+    }
+
+    pub fn job_root_children(&self, folder: &Path) -> HashSet<OsString> {
+        self.asked.children(folder)
+    }
+
+    pub fn job_roots(&self) -> Vec<PathBuf> {
+        self.asked.0.keys().cloned().collect()
+    }
+
     pub fn is_waiting(&self, path: &Path) -> bool {
         self.waiting.at_or_above(path) || self.waiting.at_or_below(path)
     }
@@ -210,6 +273,7 @@ impl ProgressState {
         self.new_run();
         self.waiting = Roots::default();
         self.asked = Roots::default();
+        self.untotalled = 0;
         self.jobs
             .drain(..)
             .filter(|job| !job.quiet)
@@ -219,7 +283,7 @@ impl ProgressState {
 
     #[cfg(test)]
     pub fn cancel_check(&mut self) -> bool {
-        if !self.jobs.first().is_some_and(|job| job.quiet) {
+        if !self.jobs.front().is_some_and(|job| job.quiet) {
             return false;
         }
         self.remove_job(0);
@@ -228,11 +292,24 @@ impl ProgressState {
     }
 
     fn job_mut(&mut self, ticket: u64) -> Option<&mut ActiveJob> {
-        self.jobs.iter_mut().find(|job| job.ticket == ticket)
+        let position = self.position_of(ticket)?;
+        self.jobs.get_mut(position)
+    }
+
+    fn position_of(&self, ticket: u64) -> Option<usize> {
+        self.jobs.binary_search_by_key(&ticket, |job| job.ticket).ok()
+    }
+
+    fn set_total(&mut self, position: usize, total: u64) {
+        let job = &mut self.jobs[position];
+        if job.total.is_none() {
+            self.untotalled -= 1;
+        }
+        job.total = Some(total);
     }
 
     fn is_current(&self, ticket: u64) -> bool {
-        self.jobs.first().is_some_and(|job| job.ticket == ticket)
+        self.jobs.front().is_some_and(|job| job.ticket == ticket)
     }
 
     fn new_run(&mut self) {
@@ -258,15 +335,41 @@ impl ProgressState {
         true
     }
 
+    pub fn begin_together(&mut self, tickets: &[u64]) -> Vec<u64> {
+        let mut begun = Vec::new();
+        for &ticket in tickets {
+            let Some(position) = self.position_of(ticket) else {
+                continue;
+            };
+            if position != begun.len() {
+                break;
+            }
+            let job = &mut self.jobs[position];
+            if !job.started {
+                job.started = true;
+                let root = job.root.clone();
+                self.waiting.remove(&root);
+            }
+            begun.push(ticket);
+        }
+        begun
+    }
+
     pub fn next_to_count(&mut self) -> Option<(u64, PathBuf)> {
-        let job = self.jobs.iter_mut().find(|job| !job.count_taken)?;
+        let from = self.jobs.partition_point(|job| job.ticket < self.count_from);
+        let Some(position) = (from..self.jobs.len()).find(|&at| !self.jobs[at].count_taken) else {
+            self.count_from = self.next_ticket + 1;
+            return None;
+        };
+        let job = &mut self.jobs[position];
         job.count_taken = true;
+        self.count_from = job.ticket + 1;
         Some((job.ticket, job.root.clone()))
     }
 
     pub fn ready(&self, ticket: u64) -> Option<bool> {
-        let job = self.jobs.iter().find(|job| job.ticket == ticket)?;
-        Some(job.total.is_some() && (self.released || self.jobs.iter().all(|job| job.total.is_some())))
+        let job = &self.jobs[self.position_of(ticket)?];
+        Some(job.total.is_some() && (self.released || self.untotalled == 0))
     }
 
     pub fn release(&mut self) {
@@ -280,16 +383,18 @@ impl ProgressState {
     }
 
     pub fn counted_already(&mut self, ticket: u64, total: u64) {
-        if let Some(job) = self.job_mut(ticket) {
+        if let Some(position) = self.position_of(ticket) {
+            let job = &mut self.jobs[position];
             job.count_taken = true;
             job.found = total;
-            job.total = Some(total);
+            self.set_total(position, total);
         }
     }
 
     pub fn finish_counting(&mut self, ticket: u64) {
-        if let Some(job) = self.job_mut(ticket) {
-            job.total = Some(job.found);
+        if let Some(position) = self.position_of(ticket) {
+            let found = self.jobs[position].found;
+            self.set_total(position, found);
         }
     }
 
@@ -309,7 +414,7 @@ impl ProgressState {
     }
 
     pub fn finish_job(&mut self, ticket: u64) -> bool {
-        let Some(position) = self.jobs.iter().position(|job| job.ticket == ticket) else {
+        let Some(position) = self.position_of(ticket) else {
             return false;
         };
         let job = self.remove_job(position);
@@ -319,9 +424,9 @@ impl ProgressState {
     }
 
     pub fn snapshot(&self, paused: bool) -> Option<Progress> {
-        let current = self.jobs.first()?;
+        let current = self.jobs.front()?;
         let counted: u64 = self.jobs.iter().filter_map(|job| job.total).sum();
-        let counting = current.total.is_none() || (!self.released && self.jobs.iter().any(|job| job.total.is_none()));
+        let counting = current.total.is_none() || (!self.released && self.untotalled > 0);
         let done: u64 = self
             .jobs
             .iter()

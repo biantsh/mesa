@@ -81,8 +81,7 @@ export function useMarquee({ regions, onBackground }: Options) {
     };
 
     const place = (view: HTMLElement): Placed[] => {
-      const virtual = virtualViews.get(view);
-      if (virtual) return virtual.place();
+      if (virtualViews.has(view)) return [];
       const origin = originOf(view);
       return Array.from(view.querySelectorAll<HTMLElement>("[data-path]"))
         .filter((el) => el.getAttribute("aria-disabled") !== "true")
@@ -167,7 +166,9 @@ export function useMarquee({ regions, onBackground }: Options) {
           x: Math.max(seen.left, Math.min(seen.right, last.x)) - o.x,
           y: Math.max(seen.top, Math.min(seen.bottom, last.y)) - o.y,
         };
-        const paths = touching(items, boxBetween(corner, pointer));
+        const swept = boxBetween(corner, pointer);
+        const virtual = virtualViews.get(now.view);
+        const paths = virtual ? virtual.touching(swept) : touching(items, swept);
         const key = paths.join("\n");
         if (key !== shown) {
           shown = key;
