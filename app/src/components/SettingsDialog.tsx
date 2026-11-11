@@ -1,7 +1,9 @@
 import { useId, type ReactNode } from "react";
 import { X } from "lucide-react";
+import { cx } from "../cx";
 import { modifierLabels, keyLabel } from "../hotkey";
-import { isMac, platform } from "../platform";
+import { isWebKit, platform } from "../platform";
+import type { HotkeyParts } from "../api";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useSearchHotkey } from "../useSearchHotkey";
 import { useTheme } from "../theme";
@@ -25,7 +27,7 @@ export function SettingsDialog({ open, onClose }: Props) {
     if (!hotkey.isRecording()) onClose();
   };
   return (
-    <Modal open={open} onClose={close} className={styles.dialog} labelledBy={titleId} focusCard={isMac} modeless>
+    <Modal open={open} onClose={close} className={styles.dialog} labelledBy={titleId} focusCard={isWebKit} modeless>
       {open && (
         <div className={styles.content}>
           <header className={styles.header}>
@@ -67,13 +69,14 @@ interface RowProps {
   description?: string;
   note?: ReactNode;
   control: (ids: { labelledBy: string; describedBy: string }) => ReactNode;
+  disabled?: boolean;
 }
 
-function Row({ title, description, note, control }: RowProps) {
+function Row({ title, description, note, control, disabled }: RowProps) {
   const titleId = useId();
   const textId = useId();
   return (
-    <div className={styles.row} data-setting-row>
+    <div className={cx(styles.row, disabled && styles.disabled)} data-setting-row>
       <div className={styles.text}>
         <div id={titleId} className={styles.rowTitle}>
           {title}
@@ -99,7 +102,51 @@ function ThemeRow() {
   );
 }
 
-function HotkeyRow({ status, recording, held, refused, error, saving, field, start, cancel }: ReturnType<typeof useSearchHotkey>) {
+function HotkeyRow(hotkey: ReturnType<typeof useSearchHotkey>) {
+  const chosenIn = hotkey.status?.chosenIn;
+  if (chosenIn?.kind === "desktop") return <DesktopHotkeyRow active={hotkey.status?.active ?? null} />;
+  if (chosenIn?.kind === "unavailable") return <UnavailableHotkeyRow desktop={chosenIn.desktop} />;
+  return <RecordedHotkeyRow {...hotkey} />;
+}
+
+function DesktopHotkeyRow({ active }: { active: HotkeyParts | null }) {
+  return (
+    <Row
+      title="Open search"
+      description="Search from anywhere on your computer."
+      note="Change it in your desktop's keyboard settings."
+      control={() => (active ? <Keycaps keys={active.keys} /> : <span className={styles.none}>None</span>)}
+    />
+  );
+}
+
+function UnavailableHotkeyRow({ desktop }: { desktop: string | null }) {
+  const why = desktop ? `Mesa can't set shortcuts in ${desktop} on Wayland.` : "Mesa can't set shortcuts in this Wayland session.";
+  return (
+    <Row
+      title="Open search"
+      note={why}
+      disabled
+      control={(ids) => (
+        <ShortcutField
+          listening={false}
+          live={[]}
+          refusedLast={false}
+          prompt=""
+          disabled
+          label={`Search shortcut: none. ${why}`}
+          describedBy={ids.describedBy}
+          tooltip={why}
+          onClick={() => {}}
+        >
+          <span className={styles.none}>None</span>
+        </ShortcutField>
+      )}
+    />
+  );
+}
+
+function RecordedHotkeyRow({ status, recording, held, refused, error, saving, field, start, cancel }: ReturnType<typeof useSearchHotkey>) {
   const active = status?.active ?? null;
   const live = [...modifierLabels(held, platform), ...(refused ? [keyLabel(refused)] : [])];
 

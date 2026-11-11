@@ -42,7 +42,14 @@ fn is_system(path: &Path) -> bool {
     {
         MACOS_FOLDERS.iter().any(|folder| is_inside(path, Path::new(folder)))
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        LINUX_FOLDERS.iter().any(|folder| is_inside(path, Path::new(folder)))
+            && !LINUX_EXCEPTIONS
+                .iter()
+                .any(|exception| is_inside(path, Path::new(exception)))
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = path;
         false
@@ -66,7 +73,13 @@ pub fn could_be_unindexable(name: &str) -> bool {
                 .is_some_and(|called| called.eq_ignore_ascii_case(name))
         })
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        LINUX_FOLDERS
+            .iter()
+            .any(|folder| Path::new(folder).file_name().is_some_and(|called| called == name))
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = name;
         false
@@ -90,22 +103,62 @@ pub fn children_may_differ(folder: &Path) -> bool {
             .iter()
             .any(|system| Path::new(system).components().count() > depth)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        LINUX_FOLDERS
+            .iter()
+            .any(|system| Path::new(system).components().count() > depth)
+            || LINUX_EXCEPTIONS
+                .iter()
+                .any(|exception| Path::new(exception).starts_with(folder) && Path::new(exception) != folder)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = depth;
         false
     }
 }
 
-#[cfg_attr(not(any(windows, target_os = "macos", test)), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux", test)), allow(dead_code))]
 fn is_inside(path: &Path, folder: &Path) -> bool {
     let mut below = path.components();
-    folder.components().all(|part| {
-        below
-            .next()
-            .is_some_and(|c| c.as_os_str().eq_ignore_ascii_case(part.as_os_str()))
-    })
+    let same = |a: &std::ffi::OsStr, b: &std::ffi::OsStr| {
+        if cfg!(target_os = "linux") {
+            a == b
+        } else {
+            a.eq_ignore_ascii_case(b)
+        }
+    };
+    folder
+        .components()
+        .all(|part| below.next().is_some_and(|c| same(c.as_os_str(), part.as_os_str())))
 }
+
+#[cfg(target_os = "linux")]
+const LINUX_FOLDERS: &[&str] = &[
+    "/proc",
+    "/sys",
+    "/dev",
+    "/run",
+    "/boot",
+    "/efi",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/libx32",
+    "/etc",
+    "/var",
+    "/opt",
+    "/snap",
+    "/nix",
+    "/lost+found",
+];
+
+#[cfg(target_os = "linux")]
+const LINUX_EXCEPTIONS: &[&str] = &["/run/media", "/var/home", "/var/mnt"];
 
 #[cfg(target_os = "macos")]
 const MACOS_FOLDERS: &[&str] = &[
@@ -146,7 +199,11 @@ mod portable_tests {
         let system = Path::new("/System");
         assert!(is_inside(Path::new("/System"), system));
         assert!(is_inside(Path::new("/System/Library/CoreServices"), system));
-        assert!(is_inside(Path::new("/SYSTEM/library"), system));
+        if cfg!(target_os = "linux") {
+            assert!(!is_inside(Path::new("/SYSTEM/library"), system));
+        } else {
+            assert!(is_inside(Path::new("/SYSTEM/library"), system));
+        }
         assert!(!is_inside(Path::new("/Systems"), system));
         assert!(!is_inside(Path::new("/Users/me/System"), system));
         assert!(!is_inside(Path::new("/"), system));

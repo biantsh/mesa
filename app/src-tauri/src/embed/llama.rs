@@ -50,14 +50,19 @@ pub struct Locations {
 impl Locations {
     pub fn new(data_dir: &Path, resource_dir: Option<&Path>) -> Self {
         let from_env = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
-        let mut candidates: Vec<PathBuf> = resource_dir.into_iter().map(|dir| dir.join("llama")).collect();
+        let built = Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime").join("llama");
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if cfg!(all(debug_assertions, target_os = "linux")) {
+            candidates.push(built.clone());
+        }
+        candidates.extend(resource_dir.map(|dir| dir.join("llama")));
         candidates.extend(
             std::env::current_exe()
                 .ok()
                 .and_then(|exe| exe.parent().map(|dir| dir.join("llama"))),
         );
-        if cfg!(any(debug_assertions, test)) {
-            candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("runtime").join("llama"));
+        if cfg!(any(debug_assertions, test)) && !candidates.contains(&built) {
+            candidates.push(built);
         }
         let runtime = from_env("MESA_LLAMA_DIR")
             .or_else(|| choose_runtime(&candidates))
@@ -466,8 +471,25 @@ fn parse_gpu(listing: &str) -> Option<String> {
             return None;
         }
         let name = rest.rfind(" (").map_or(rest, |end| &rest[..end]).trim();
-        (!name.is_empty()).then(|| name.to_owned())
+        (!name.is_empty()).then(|| tidy_gpu_name(name))
     })
+}
+
+fn tidy_gpu_name(name: &str) -> String {
+    let Some((product, chip)) = name.strip_suffix(')').and_then(|rest| rest.rsplit_once(" (RADV ")) else {
+        return name.to_owned();
+    };
+    let known: Vec<&str> = product.split_whitespace().filter(|word| *word != "Unknown").collect();
+    let is_named = product.split_whitespace().count() == known.len() && !known.is_empty();
+    if is_named {
+        return known.join(" ");
+    }
+    known
+        .into_iter()
+        .chain([chip.trim()])
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_embeddings(reply: &str, expected: usize) -> Result<Vec<Vec<f32>>, String> {
@@ -559,7 +581,7 @@ fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
         .map_err(|e| Error(format!("can't start {}: {e}", locations.server().display())))?;
     #[cfg(windows)]
     super::process_group::tie_to_app(&child);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     super::watchdog::tie_to_app(&child);
 
     let mut server = Running {

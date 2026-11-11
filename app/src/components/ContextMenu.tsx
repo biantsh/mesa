@@ -77,6 +77,7 @@ export function ContextMenu({ x, y, groups, onClose }: Props) {
       className={styles.menu}
       style={position}
       role="menu"
+      data-popup=""
       onKeyDown={onMenuKeyDown}
       onContextMenu={(e) => e.preventDefault()}
     >

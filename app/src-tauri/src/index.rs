@@ -913,11 +913,29 @@ impl Index {
     }
 
     pub fn start_watching(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            use crate::watch::{LOOK_AFTER_OPENING, LOOK_AT_MOST_EVERY, LOOK_EVERY};
+            self.start_looking_with(LOOK_EVERY, LOOK_AFTER_OPENING, LOOK_AT_MOST_EVERY);
+        }
+        #[cfg(not(target_os = "linux"))]
         self.start_watching_with(crate::watch::SETTLE);
     }
 
+    #[cfg_attr(all(target_os = "linux", not(test)), allow(dead_code))]
     pub fn start_watching_with(&self, settle: Duration) {
         *lock(&self.watching) = Some(crate::watch::start(self.chores(), settle));
+    }
+
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn start_looking_with(&self, every: Duration, after_asking: Duration, at_most_every: Duration) {
+        *lock(&self.watching) = Some(crate::watch::poll(self.chores(), every, after_asking, at_most_every));
+    }
+
+    pub fn look_soon(&self) {
+        if let Some(watching) = lock(&self.watching).as_ref() {
+            watching.look_soon();
+        }
     }
 
     pub fn set_paused(&self, paused: bool) -> Result<(), String> {

@@ -57,6 +57,12 @@ export default function Widget() {
 
   useEffect(() => {
     document.documentElement.dataset.widget = "";
+    api
+      .widgetFillsScreen()
+      .then((fills) => {
+        if (fills) document.documentElement.dataset.widgetFill = "";
+      })
+      .catch(() => {});
   }, []);
 
   useBlockContextMenu();

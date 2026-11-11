@@ -19,7 +19,16 @@ pub fn tie_to_app(child: &Child) {
         .process_group(0)
         .spawn();
     match spawned {
-        Ok(watchdog) => drop(watchdog),
+        Ok(mut watchdog) => {
+            let waiting = std::thread::Builder::new()
+                .name("watchdog-reaper".into())
+                .spawn(move || {
+                    let _ = watchdog.wait();
+                });
+            if let Err(e) = waiting {
+                eprintln!("Mesa: can't wait for the program that ends the embedding server: {e}");
+            }
+        }
         Err(e) => eprintln!("Mesa: can't start the program that ends the embedding server if Mesa is killed: {e}"),
     }
 }
@@ -38,6 +47,7 @@ pub fn run_if_asked() -> bool {
     true
 }
 
+#[cfg(target_os = "macos")]
 fn watch(app: c_int, server: c_int) {
     unsafe {
         let queue = libc::kqueue();
@@ -70,7 +80,7 @@ fn watch(app: c_int, server: c_int) {
         let mut ended = [event(0)];
         loop {
             let got = libc::kevent(queue, std::ptr::null(), 0, ended.as_mut_ptr(), 1, std::ptr::null());
-            if got < 0 && *libc::__error() == libc::EINTR {
+            if got < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR) {
                 continue;
             }
             if got > 0 && ended[0].ident == app as usize {
@@ -79,5 +89,79 @@ fn watch(app: c_int, server: c_int) {
             break;
         }
         libc::close(queue);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn watch(app: c_int, server: c_int) {
+    use std::{thread, time::Duration};
+
+    let errno = || std::io::Error::last_os_error().raw_os_error();
+    unsafe {
+        let open = |pid: c_int| libc::syscall(libc::SYS_pidfd_open, pid, 0) as c_int;
+        let server_fd = open(server);
+        if server_fd < 0 {
+            if errno() == Some(libc::ENOSYS) {
+                return poll_by_signal(app, server);
+            }
+            return;
+        }
+        let app_fd = open(app);
+        if app_fd < 0 {
+            if errno() == Some(libc::ESRCH) {
+                kill(server_fd);
+            }
+            libc::close(server_fd);
+            return;
+        }
+        let mut fds = [
+            libc::pollfd {
+                fd: app_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: server_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        loop {
+            let got = libc::poll(fds.as_mut_ptr(), 2, -1);
+            if got < 0 && errno() == Some(libc::EINTR) {
+                continue;
+            }
+            if got > 0 && fds[0].revents != 0 && fds[1].revents == 0 {
+                kill(server_fd);
+            }
+            break;
+        }
+        libc::close(app_fd);
+        libc::close(server_fd);
+    }
+
+    unsafe fn kill(fd: c_int) {
+        unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                fd,
+                libc::SIGKILL,
+                std::ptr::null::<libc::siginfo_t>(),
+                0,
+            )
+        };
+    }
+
+    fn poll_by_signal(app: c_int, server: c_int) {
+        let alive = |pid: c_int| unsafe {
+            libc::kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        };
+        while alive(server) {
+            if !alive(app) {
+                unsafe { libc::kill(server, libc::SIGKILL) };
+                return;
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
     }
 }

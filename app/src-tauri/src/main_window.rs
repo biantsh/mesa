@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow, Window};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, WebviewWindow, Window};
 
 pub const LABEL: &str = "main";
 const HIDDEN_EVENT: &str = "main-hidden";
@@ -147,6 +147,9 @@ pub fn show_at_start(window: &WebviewWindow) {
 }
 
 pub fn show(app: &AppHandle) {
+    if let Some(index) = app.try_state::<crate::index::Index>() {
+        index.look_soon();
+    }
     KEEP_HIDDEN.store(false, Ordering::SeqCst);
     SHOWN_ONCE.store(true, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(LABEL) {
@@ -174,16 +177,69 @@ pub fn closed(window: &Window) {
 
 fn reset(window: &WebviewWindow) {
     let _ = window.unmaximize();
+    if let Some((size, _)) = configured_size(window) {
+        let _ = window.set_size(size);
+    }
+    let _ = window.center();
+}
+
+fn configured_size(window: &WebviewWindow) -> Option<(LogicalSize<f64>, Option<LogicalSize<f64>>)> {
     let config = window.app_handle().config();
-    if let Some(first) = config
+    let first = config
         .app
         .windows
         .iter()
-        .find(|configured| configured.label == window.label())
-    {
-        let _ = window.set_size(tauri::LogicalSize::new(first.width, first.height));
+        .find(|configured| configured.label == window.label())?;
+    let factor = crate::page_scale::factor();
+    if factor == 1.0 {
+        let least = first
+            .min_width
+            .zip(first.min_height)
+            .map(|(width, height)| LogicalSize::new(width, height));
+        return Some((LogicalSize::new(first.width, first.height), least));
     }
-    let _ = window.center();
+    let room = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())
+        .map(|monitor| monitor.size().to_logical::<f64>(monitor.scale_factor()))
+        .map(|screen| (screen.width * 0.95, screen.height * 0.9));
+    let fit = |width: f64, height: f64| {
+        let (width, height) = (width * factor, height * factor);
+        let (width, height) = room.map_or((width, height), |(most_wide, most_high)| {
+            (width.min(most_wide), height.min(most_high))
+        });
+        LogicalSize::new(width, height)
+    };
+    Some((
+        fit(first.width, first.height),
+        first
+            .min_width
+            .zip(first.min_height)
+            .map(|(width, height)| fit(width, height)),
+    ))
+}
+
+pub fn fit_to_page_scale(app: &tauri::App) {
+    if crate::page_scale::factor() == 1.0 {
+        return;
+    }
+    for label in [LABEL, crate::widget::LABEL] {
+        let Some(window) = app.get_webview_window(label) else {
+            continue;
+        };
+        let Some((size, least)) = configured_size(&window) else {
+            continue;
+        };
+        if least.is_some() {
+            let _ = window.set_min_size(least);
+        }
+        let _ = window.set_size(size);
+        if label == LABEL {
+            let _ = window.center();
+        }
+    }
 }
 
 pub fn open_from_widget(app: &AppHandle, screen: String) {

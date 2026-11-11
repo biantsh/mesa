@@ -257,7 +257,94 @@ fn is_external_volume(path: &Path) -> bool {
     path.parent() == Some(Path::new("/Volumes"))
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+pub fn roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("/")];
+    roots.extend(mounted_disks());
+    roots
+}
+
+#[cfg(target_os = "linux")]
+fn mount_folders() -> Vec<PathBuf> {
+    let mut folders = vec![PathBuf::from("/mnt"), PathBuf::from("/media")];
+    if let Some(user) = user_name() {
+        folders.push(Path::new("/media").join(&user));
+        folders.push(Path::new("/run/media").join(&user));
+    }
+    folders
+}
+
+#[cfg(target_os = "linux")]
+fn user_name() -> Option<String> {
+    std::env::var("USER")
+        .ok()
+        .filter(|user| !user.is_empty() && !user.contains('/'))
+        .or_else(|| {
+            std::env::home_dir()?
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn mounted_disks() -> Vec<PathBuf> {
+    let mut disks: Vec<PathBuf> = mount_points()
+        .into_iter()
+        .filter(|point| is_placed_as_a_disk(point))
+        .collect();
+    disks.sort();
+    disks.dedup();
+    disks
+}
+
+#[cfg(target_os = "linux")]
+fn is_placed_as_a_disk(path: &Path) -> bool {
+    path == Path::new("/mnt")
+        || path
+            .parent()
+            .is_some_and(|parent| mount_folders().iter().any(|folder| folder == parent))
+}
+
+#[cfg(target_os = "linux")]
+fn mount_points() -> Vec<PathBuf> {
+    fs::read_to_string("/proc/self/mounts")
+        .map(|list| mount_points_in(&list))
+        .unwrap_or_default()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn mount_points_in(list: &str) -> Vec<PathBuf> {
+    list.lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .map(|written| {
+            let (mut bytes, raw) = (Vec::with_capacity(written.len()), written.as_bytes());
+            let mut at = 0;
+            while at < raw.len() {
+                let escape = raw
+                    .get(at + 1..at + 4)
+                    .filter(|digits| raw[at] == b'\\' && digits.iter().all(|d| (b'0'..=b'7').contains(d)));
+                match escape {
+                    Some(digits) => {
+                        bytes.push(digits.iter().fold(0u8, |n, d| n.wrapping_mul(8) + (d - b'0')));
+                        at += 4;
+                    }
+                    None => {
+                        bytes.push(raw[at]);
+                        at += 1;
+                    }
+                }
+            }
+            PathBuf::from(String::from_utf8_lossy(&bytes).into_owned())
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn is_external_volume(path: &Path) -> bool {
+    is_placed_as_a_disk(path) && mount_points().iter().any(|point| point == path)
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 pub fn roots() -> Vec<PathBuf> {
     vec![PathBuf::from("/")]
 }
@@ -301,7 +388,49 @@ fn known_folders() -> Vec<PathBuf> {
     .collect()
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn known_folders() -> Vec<PathBuf> {
+    let (Some(home), Some(config)) = (std::env::home_dir(), crate::xdg::base_dir("XDG_CONFIG_HOME", ".config")) else {
+        return Vec::new();
+    };
+    fs::read_to_string(config.join("user-dirs.dirs"))
+        .map(|text| user_dirs(&text, &home))
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+fn user_dirs(text: &str, home: &Path) -> Vec<PathBuf> {
+    const NAMES: &[&str] = &[
+        "XDG_DESKTOP_DIR",
+        "XDG_DOCUMENTS_DIR",
+        "XDG_DOWNLOAD_DIR",
+        "XDG_MUSIC_DIR",
+        "XDG_PICTURES_DIR",
+        "XDG_VIDEOS_DIR",
+    ];
+    text.lines()
+        .filter_map(|line| {
+            let (name, value) = line.trim().split_once('=')?;
+            if !NAMES.contains(&name.trim()) {
+                return None;
+            }
+            let quoted = value.trim().strip_prefix('"')?.strip_suffix('"')?;
+            let mut value = String::with_capacity(quoted.len());
+            let mut chars = quoted.chars();
+            while let Some(c) = chars.next() {
+                value.push(if c == '\\' { chars.next()? } else { c });
+            }
+            match value.strip_prefix("$HOME") {
+                Some("") => Some(home.to_owned()),
+                Some(rest) => Some(home.join(rest.strip_prefix('/')?)),
+                None if value.starts_with('/') => Some(PathBuf::from(value)),
+                None => None,
+            }
+        })
+        .collect()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn known_folders() -> Vec<PathBuf> {
     Vec::new()
 }
@@ -499,7 +628,7 @@ fn parent(path: &str) -> Option<String> {
     if path.is_empty() {
         return None;
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if is_external_volume(Path::new(path)) {
         return Some(String::new());
     }
@@ -517,7 +646,7 @@ fn breadcrumbs(path: &str) -> Vec<Crumb> {
             .ancestors()
             .filter(|p| !p.as_os_str().is_empty())
             .collect();
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if let Some(at) = chain.iter().position(|p| is_external_volume(p)) {
             chain.truncate(at + 1);
         }
@@ -530,11 +659,16 @@ fn breadcrumbs(path: &str) -> Vec<Crumb> {
     crumbs
 }
 
+#[cfg(target_os = "linux")]
+pub const LINUX_ROOT_NAME: &str = "File System";
+
 pub fn display_name(path: &Path) -> String {
     match path.file_name() {
         Some(name) => name.to_string_lossy().into_owned(),
         #[cfg(target_os = "macos")]
         None if path == Path::new("/") => startup_disk_name().unwrap_or_else(|| "/".to_owned()),
+        #[cfg(target_os = "linux")]
+        None if path == Path::new("/") => LINUX_ROOT_NAME.to_owned(),
         None => {
             let full = path.to_string_lossy();
             let trimmed = full.trim_end_matches(['\\', '/']);
@@ -571,6 +705,21 @@ mod tests {
         assert_eq!(names, ["Alpha", "zeta", "A.png", "b.png"]);
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn parses_escaped_mount_points() {
+        let list = "/dev/nvme0n1p2 / ext4 rw,relatime 0 0\n\
+            /dev/sda1 /media/me/USB\\040Stick vfat rw 0 0\n\
+            server:/share /mnt/back\\134slash nfs rw 0 0\n";
+        assert_eq!(
+            mount_points_in(list),
+            [
+                PathBuf::from("/"),
+                PathBuf::from("/media/me/USB Stick"),
+                PathBuf::from("/mnt/back\\slash")
+            ],
+        );
     }
 
     #[test]

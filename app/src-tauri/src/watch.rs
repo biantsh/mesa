@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{RecvTimeoutError, unbounded};
+use crossbeam_channel::{RecvTimeoutError, Sender, unbounded};
 use notify::{
     Event, EventKind, RecursiveMode, Watcher,
     event::{ModifyKind, RenameMode},
@@ -18,6 +18,7 @@ use notify::{
 
 use crate::{browse, index::Chores};
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub const SETTLE: Duration = Duration::from_secs(4);
 const MOST_DEFERRED: Duration = Duration::from_secs(60);
 const BULK: usize = 16;
@@ -27,8 +28,26 @@ const TRY_AGAIN_AFTER: Duration = Duration::from_secs(30);
 const RESCAN_EVERY: Duration = Duration::from_secs(60);
 const MOST_PATHS: usize = 100_000;
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const LOOK_EVERY: Duration = Duration::from_secs(5 * 60);
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const LOOK_AFTER_OPENING: Duration = Duration::from_millis(1500);
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const LOOK_AT_MOST_EVERY: Duration = Duration::from_secs(60);
+
 pub struct Watching {
     stop: Arc<AtomicBool>,
+    wake: Option<Sender<()>>,
+}
+
+impl Watching {
+    pub fn look_soon(&self) {
+        if let Some(wake) = &self.wake {
+            let _ = wake.send(());
+        }
+    }
 }
 
 impl Drop for Watching {
@@ -46,7 +65,41 @@ pub fn start(chores: Chores, settle: Duration) -> Watching {
     if let Err(e) = spawned {
         eprintln!("Mesa: can't watch for changes to what is indexed: {e}");
     }
-    Watching { stop }
+    Watching { stop, wake: None }
+}
+
+pub fn poll(chores: Chores, every: Duration, after_asking: Duration, at_most_every: Duration) -> Watching {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (wake, woken) = unbounded::<()>();
+    let spawned = thread::Builder::new().name("rescanner".into()).spawn({
+        let stop = stop.clone();
+        move || {
+            let mut last = Instant::now();
+            loop {
+                let asked = match woken.recv_timeout(every.saturating_sub(last.elapsed())) {
+                    Ok(()) => true,
+                    Err(RecvTimeoutError::Timeout) => false,
+                    Err(RecvTimeoutError::Disconnected) => break,
+                };
+                if asked {
+                    if last.elapsed() < at_most_every {
+                        continue;
+                    }
+                    thread::sleep(after_asking);
+                    while woken.try_recv().is_ok() {}
+                }
+                if stop.load(Ordering::SeqCst) {
+                    break;
+                }
+                chores.check_later(chores.roots());
+                last = Instant::now();
+            }
+        }
+    });
+    if let Err(e) = spawned {
+        eprintln!("Mesa: can't look for changes to what is indexed: {e}");
+    }
+    Watching { stop, wake: Some(wake) }
 }
 
 fn run(chores: Chores, settle: Duration, stop: &AtomicBool) {

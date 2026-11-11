@@ -11,10 +11,13 @@ mod embed;
 mod estimate;
 mod examples;
 mod folder_access;
+#[cfg(target_os = "linux")]
+mod gnome_keys;
 mod hotkey;
 mod index;
 mod indexer;
 mod main_window;
+mod page_scale;
 mod power;
 mod preview_queue;
 mod progress;
@@ -34,7 +37,11 @@ mod toast;
 mod unindexable;
 mod vectors;
 mod watch;
+#[cfg(target_os = "linux")]
+mod wayland;
 mod widget;
+#[cfg(any(target_os = "linux", test))]
+mod xdg;
 
 use tauri::{
     Manager, WindowEvent,
@@ -47,9 +54,9 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
     let search = MenuItem::with_id(app, "search", hotkey::tray_text(search_key), true, None::<&str>)?;
     app.manage(hotkey::TrayItem(search.clone()));
     let quit = MenuItem::with_id(app, "quit", "Quit Mesa", true, None::<&str>)?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let menu = Menu::with_items(app, &[&open, &search, &quit])?;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let menu = {
         let status = MenuItem::with_id(app, "status", "Not indexing", false, None::<&str>)?;
         let pause = MenuItem::with_id(app, "pause", "Pause Indexing", false, None::<&str>)?;
@@ -120,7 +127,7 @@ fn menu_bar_icon() -> Option<tauri::image::Image<'static>> {
 }
 
 fn main() {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if embed::watchdog::run_if_asked() {
         return;
     }
@@ -131,7 +138,10 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if startup::wants_search(&args) {
+            // On Wayland, a custom shortcut runs `mesa-app --search` to toggle the widget.
+            if startup::wants_search(&args) && cfg!(target_os = "linux") {
+                widget::toggle(app);
+            } else if startup::wants_search(&args) {
                 widget::show(app);
             } else if !startup::in_background(&args) {
                 main_window::show(app);
@@ -166,6 +176,9 @@ fn main() {
             _ => {}
         })
         .setup(move |app| {
+            #[cfg(target_os = "linux")]
+            page_scale::watch();
+            main_window::fit_to_page_scale(app);
             let dir = match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
                 Some(dir) => std::path::PathBuf::from(dir),
                 None => app.path().app_data_dir()?,
@@ -266,6 +279,7 @@ fn main() {
             commands::open_main,
             commands::show_main,
             commands::set_widget_box,
+            commands::widget_fills_screen,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

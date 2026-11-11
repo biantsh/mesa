@@ -24,8 +24,42 @@ static VISIBLE: Mutex<Option<[f64; 4]>> = Mutex::new(None);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 const WATCH_EVERY: Duration = Duration::from_millis(16);
 
-pub fn set_visible_box(rect: [f64; 4]) {
+pub fn set_visible_box(window: &WebviewWindow, rect: [f64; 4]) {
     *lock(&VISIBLE) = Some(rect);
+    #[cfg(target_os = "linux")]
+    if SHOWN.load(Ordering::SeqCst) {
+        input_region(window, Some(rect));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = window;
+}
+
+#[cfg(target_os = "linux")]
+fn input_region(window: &WebviewWindow, rect: Option<[f64; 4]>) {
+    let scale = crate::page_scale::factor();
+    let rect = rect.map(|box_| box_.map(|side| side * scale));
+    let on_window = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        use gtk::{
+            cairo::{RectangleInt, Region},
+            prelude::*,
+        };
+        let Ok(gtk_window) = on_window.gtk_window() else { return };
+        let Some(surface) = gtk_window.window() else { return };
+        let rectangle = match rect {
+            Some([left, top, right, bottom]) => {
+                let (left, top) = (left.floor() as i32, top.floor() as i32);
+                RectangleInt::new(
+                    left,
+                    top,
+                    (right.ceil() as i32 - left).max(0),
+                    (bottom.ceil() as i32 - top).max(0),
+                )
+            }
+            None => RectangleInt::new(0, 0, i32::MAX / 2, i32::MAX / 2),
+        };
+        surface.input_shape_combine_region(&Region::create_rectangle(&rectangle), 0, 0);
+    });
 }
 
 fn pointer_is_in_box(pointer: (f64, f64), origin: (i32, i32), scale: f64, rect: [f64; 4]) -> bool {
@@ -36,6 +70,7 @@ fn pointer_is_in_box(pointer: (f64, f64), origin: (i32, i32), scale: f64, rect: 
     x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn watch_pointer(app: &AppHandle, watch: u64) {
     let mut letting_through = false;
     while WATCH.load(Ordering::SeqCst) == watch {
@@ -60,6 +95,11 @@ fn watch_pointer(app: &AppHandle, watch: u64) {
 }
 
 pub fn float_over_everything(app: &AppHandle) {
+    if fills_screen()
+        && let Some(window) = app.get_webview_window(LABEL)
+    {
+        fill_the_screen(&window);
+    }
     #[cfg(target_os = "macos")]
     if let Some(window) = app.get_webview_window(LABEL) {
         let on_window = window.clone();
@@ -97,21 +137,51 @@ fn main_window_is_in_front(app: &AppHandle) -> bool {
     })
 }
 
+pub fn fills_screen() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        crate::wayland::is_wayland()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn fill_the_screen(window: &WebviewWindow) {
+    let _ = window.set_resizable(true);
+    let _ = window.maximize();
+}
+
 pub fn show(app: &AppHandle) {
+    if let Some(index) = app.try_state::<crate::index::Index>() {
+        index.look_soon();
+    }
     let Some(window) = app.get_webview_window(LABEL) else {
         return;
     };
-    place(app, &window);
+    if fills_screen() {
+        fill_the_screen(&window);
+    } else {
+        place(app, &window);
+    }
     SHOWN.store(true, Ordering::SeqCst);
     HAS_HAD_FOCUS.store(false, Ordering::SeqCst);
     *lock(&VISIBLE) = None;
     let _ = window.set_ignore_cursor_events(false);
+    #[cfg(target_os = "linux")]
+    input_region(&window, None);
     let _ = window.show();
     let _ = window.set_focus();
     let _ = app.emit_to(LABEL, SHOWN_EVENT, ());
     let watch = WATCH.fetch_add(1, Ordering::SeqCst) + 1;
-    let app = app.clone();
-    std::thread::spawn(move || watch_pointer(&app, watch));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let app = app.clone();
+        std::thread::spawn(move || watch_pointer(&app, watch));
+    }
+    #[cfg(target_os = "linux")]
+    let _ = watch;
 }
 
 pub fn hide(app: &AppHandle) {
@@ -120,6 +190,8 @@ pub fn hide(app: &AppHandle) {
     WATCH.fetch_add(1, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.set_ignore_cursor_events(false);
+        #[cfg(target_os = "linux")]
+        input_region(&window, None);
         let _ = window.hide();
     }
     let _ = app.emit_to(LABEL, HIDDEN_EVENT, ());

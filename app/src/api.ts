@@ -170,6 +170,7 @@ export interface HotkeyParts {
 
 export interface HotkeyStatus {
   active: HotkeyParts | null;
+  chosenIn: { kind: "mesa" } | { kind: "desktop" } | { kind: "unavailable"; desktop: string | null };
 }
 
 export interface HotkeyFailure {
@@ -283,6 +284,7 @@ export const api = {
   prepareExample: (path: string) => invoke<void>("prepare_example", { path }),
   openMain: (screen: "index" | "settings") => invoke<void>("open_main", { screen }),
   setWidgetBox: (left: number, top: number, right: number, bottom: number) => invoke<void>("set_widget_box", { left, top, right, bottom }),
+  widgetFillsScreen: () => invoke<boolean>("widget_fills_screen"),
   showMain: () => invoke<void>("show_main"),
 };
 

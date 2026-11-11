@@ -2,6 +2,10 @@ mod audio;
 #[cfg(target_os = "macos")]
 mod avfoundation;
 mod documents;
+#[cfg(target_os = "linux")]
+pub mod gstreamer;
+#[cfg(target_os = "linux")]
+pub mod heif;
 #[cfg(target_os = "macos")]
 mod imageio;
 mod llama;
@@ -16,7 +20,7 @@ mod resample;
 pub mod standin;
 #[cfg(windows)]
 mod video;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod watchdog;
 #[cfg(windows)]
 mod wic;

@@ -8,6 +8,7 @@ export const platform: Platform = (() => {
 })();
 
 export const isMac = platform === "mac";
+export const isWebKit = platform !== "windows";
 
 export const fileManager = { mac: "Finder", windows: "File Explorer", linux: "file manager" }[platform];
 
@@ -17,5 +18,5 @@ export function shortcut(key: string, shift = false): string {
 }
 
 export function markPlatform() {
-  if (isMac) document.documentElement.dataset.platform = "mac";
+  if (platform !== "windows") document.documentElement.dataset.platform = platform;
 }

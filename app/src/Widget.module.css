@@ -5,6 +5,15 @@
   border-radius: var(--window-radius);
 }
 
+:global(:root[data-widget-fill]) .shell {
+  position: absolute;
+  width: min(900px, 100vw);
+  height: min(560px, 100vh);
+  left: 50%;
+  top: max(0px, min(14vh, 100vh - 560px));
+  transform: translateX(-50%);
+}
+
 .screen {
   position: absolute;
   inset: 0;

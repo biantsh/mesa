@@ -38,7 +38,7 @@ pub trait Surface {
     fn gone(&mut self) -> Option<Gone>;
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
 struct Nowhere;
 
 impl Surface for Nowhere {
@@ -225,17 +225,17 @@ fn platform(app: &AppHandle, data_dir: &Path, act: Arc<dyn Fn(Action) + Send + S
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn platform(app: &AppHandle, _: &Path, _: Arc<dyn Fn(Action) + Send + Sync>) -> Box<dyn Surface> {
     Box::new(menu_bar::MenuBar { app: app.clone() })
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn platform(_: &AppHandle, _: &Path, _: Arc<dyn Fn(Action) + Send + Sync>) -> Box<dyn Surface> {
     Box::new(Nowhere)
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(any(target_os = "macos", target_os = "linux", test))]
 fn menu_bar_text(progress: &Progress) -> (String, String, &'static str) {
     let said = lines(progress);
     let beside_icon = match (progress.paused, said.fraction) {
@@ -260,7 +260,7 @@ fn menu_bar_text(progress: &Progress) -> (String, String, &'static str) {
     )
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod menu_bar {
     use tauri::{AppHandle, Manager, Wry, menu::MenuItem};
 

@@ -703,10 +703,171 @@ fn system_preview(path: &str, size: u32) -> Option<Vec<u8>> {
     {
         imageio::render(path, size).or_else(|| quicklook::render(path, size))
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        freedesktop::render(path, size)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = (path, size);
         None
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod freedesktop {
+    use std::{
+        io::Cursor,
+        path::{Path, PathBuf},
+        time::UNIX_EPOCH,
+    };
+
+    use gtk::glib;
+    use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, imageops::FilterType};
+
+    const SIZES: &[(&str, u32)] = &[("normal", 128), ("large", 256), ("x-large", 512), ("xx-large", 1024)];
+    const PICTURES: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+    const HEIF: &[&str] = &["heic", "heif"];
+    const VIDEOS: &[&str] = &["mp4", "mov", "mkv", "avi", "webm"];
+
+    pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
+        let file = Path::new(path);
+        let cache = cache_dir();
+        let uri = glib::filename_to_uri(file, None).ok()?.to_string();
+        let mtime = modified_seconds(file)?;
+        let (big_enough, smaller): (Vec<_>, Vec<_>) = SIZES.iter().partition(|(_, side)| *side >= size);
+        let cached = |folders: &[&(&str, u32)]| {
+            let cache = cache.as_deref()?;
+            folders
+                .iter()
+                .find_map(|(folder, _)| read_cached(&cache.join(folder), &uri, mtime, size))
+        };
+        cached(&big_enough)
+            .or_else(|| picture(file, size))
+            .or_else(|| cached(&smaller.into_iter().rev().collect::<Vec<_>>()))
+    }
+
+    fn cache_dir() -> Option<PathBuf> {
+        Some(crate::xdg::base_dir("XDG_CACHE_HOME", ".cache")?.join("thumbnails"))
+    }
+
+    fn modified_seconds(file: &Path) -> Option<u64> {
+        Some(
+            std::fs::metadata(file)
+                .ok()?
+                .modified()
+                .ok()?
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_secs(),
+        )
+    }
+
+    fn read_cached(folder: &Path, uri: &str, mtime: u64, size: u32) -> Option<Vec<u8>> {
+        let name = glib::compute_checksum_for_data(glib::ChecksumType::Md5, uri.as_bytes())?;
+        let bytes = std::fs::read(folder.join(format!("{name}.png"))).ok()?;
+        if !is_of(&bytes, uri, mtime) {
+            return None;
+        }
+        fit(
+            image::load_from_memory_with_format(&bytes, ImageFormat::Png).ok()?,
+            size,
+        )
+    }
+
+    pub(super) fn is_of(png: &[u8], uri: &str, mtime: u64) -> bool {
+        let Ok(reader) = png::Decoder::new(Cursor::new(png)).read_info() else {
+            return false;
+        };
+        let info = reader.info();
+        let text = |key: &str| {
+            info.uncompressed_latin1_text
+                .iter()
+                .find(|chunk| chunk.keyword == key)
+                .map(|chunk| chunk.text.clone())
+                .or_else(|| {
+                    info.utf8_text
+                        .iter()
+                        .find(|chunk| chunk.keyword == key)
+                        .and_then(|chunk| chunk.get_text().ok())
+                })
+        };
+        text("Thumb::URI").as_deref() == Some(uri)
+            && text("Thumb::MTime").and_then(|text| text.trim().parse::<u64>().ok()) == Some(mtime)
+    }
+
+    fn picture(file: &Path, size: u32) -> Option<Vec<u8>> {
+        let extension = file.extension()?.to_str()?.to_ascii_lowercase();
+        let from_rgb = |(rgb, width, height): (Vec<u8>, u32, u32)| {
+            image::RgbImage::from_raw(width, height, rgb).map(DynamicImage::ImageRgb8)
+        };
+        if HEIF.contains(&extension.as_str()) {
+            return fit(from_rgb(crate::embed::heif::decode(file).ok()?)?, size);
+        }
+        if VIDEOS.contains(&extension.as_str()) {
+            return fit(from_rgb(crate::embed::gstreamer::preview_frame(file)?)?, size);
+        }
+        if !PICTURES.contains(&extension.as_str()) {
+            return None;
+        }
+        let mut decoder = ImageReader::open(file)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .into_decoder()
+            .ok()?;
+        let orientation = decoder.orientation().ok();
+        let mut picture = DynamicImage::from_decoder(decoder).ok()?;
+        if let Some(orientation) = orientation {
+            picture.apply_orientation(orientation);
+        }
+        fit(picture, size)
+    }
+
+    fn fit(picture: DynamicImage, size: u32) -> Option<Vec<u8>> {
+        if picture.width() == 0 || picture.height() == 0 {
+            return None;
+        }
+        let picture = if picture.width() > size || picture.height() > size {
+            picture.resize(size, size, FilterType::Triangle)
+        } else {
+            picture
+        };
+        let mut out = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(picture.into_rgba8())
+            .write_to(&mut out, ImageFormat::Png)
+            .ok()?;
+        Some(out.into_inner())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn cached_png(width: u32, height: u32, uri: &str, mtime: &str) -> Vec<u8> {
+            let mut out = Vec::new();
+            {
+                let mut encoder = png::Encoder::new(&mut out, width, height);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder.add_text_chunk("Thumb::URI".into(), uri.into()).unwrap();
+                encoder.add_text_chunk("Thumb::MTime".into(), mtime.into()).unwrap();
+                let mut writer = encoder.write_header().unwrap();
+                writer
+                    .write_image_data(&vec![200; (width * height * 4) as usize])
+                    .unwrap();
+            }
+            out
+        }
+
+        #[test]
+        fn cache_checks_file_version() {
+            let uri = "file:///home/me/clip%20one.mp4";
+            let png = cached_png(256, 144, uri, "1700000000");
+            assert!(is_of(&png, uri, 1_700_000_000));
+            assert!(!is_of(&png, uri, 1_700_000_001));
+            assert!(!is_of(&png, "file:///home/me/other.mp4", 1_700_000_000));
+            assert!(!is_of(b"not a png", uri, 1_700_000_000));
+        }
     }
 }
 

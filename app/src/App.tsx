@@ -5,6 +5,7 @@ import { TitleBar } from "./components/TitleBar";
 import { cx } from "./cx";
 import { MAIN_HIDDEN, MAIN_SHOWN } from "./events";
 import { isMac } from "./platform";
+import { skipGivingBackTo } from "./lastInput";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { IndexPage } from "./screens/IndexPage";
 import { api, type ModelStatus } from "./api";
@@ -83,6 +84,7 @@ export default function App() {
     if (settingsOpen || !back) return;
     beforeSettings.current = null;
     const at = document.activeElement;
+    if (skipGivingBackTo(back)) return;
     if (back instanceof HTMLElement && back.isConnected && (!at || at === document.body || at.closest("dialog"))) {
       back.focus({ preventScroll: true });
     }

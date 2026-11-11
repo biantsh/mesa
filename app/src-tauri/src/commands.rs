@@ -240,7 +240,11 @@ pub fn copy_files(paths: Vec<String>, window: tauri::WebviewWindow) -> Result<()
         let _ = window;
         crate::clipboard::copy_files(&files)
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        crate::clipboard::copy_files(&window, &files)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
     {
         let _ = window;
         Err("Copying files isn't supported on this platform yet.".into())
@@ -637,8 +641,13 @@ pub fn open_main(app: AppHandle, screen: String) {
 #[tauri::command]
 pub fn set_widget_box(window: tauri::WebviewWindow, left: f64, top: f64, right: f64, bottom: f64) {
     if window.label() == crate::widget::LABEL {
-        crate::widget::set_visible_box([left, top, right, bottom]);
+        crate::widget::set_visible_box(&window, [left, top, right, bottom]);
     }
+}
+
+#[tauri::command]
+pub fn widget_fills_screen() -> bool {
+    crate::widget::fills_screen()
 }
 
 #[tauri::command]

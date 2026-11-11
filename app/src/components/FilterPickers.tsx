@@ -65,6 +65,7 @@ function Popover({ anchor, role, label, onClose, children }: PopoverProps) {
       ref={popover}
       className={styles.popover}
       style={position}
+      data-popup=""
       role={role}
       aria-label={label}
       onMouseDown={(e) => {

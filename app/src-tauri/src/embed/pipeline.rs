@@ -53,6 +53,8 @@ pub trait Backend: Send + Sync + 'static {
 
 const REST_AFTER_A_BATCH: f64 = 3.0;
 pub const GENTLE_SLOWDOWN: f64 = 1.0 + REST_AFTER_A_BATCH;
+const BATCH_TIME: Duration = Duration::from_secs(1);
+const UNIT_TIME_WEIGHT: f64 = 0.3;
 const PARK_FALLBACK: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
@@ -93,6 +95,20 @@ pub struct Pipeline<B: Backend> {
     preparers: usize,
     eco: AtomicBool,
     parking: Parking,
+    searching: AtomicUsize,
+    unit_time: Mutex<Option<f64>>,
+}
+
+struct Searching<'a> {
+    count: &'a AtomicUsize,
+    parking: &'a Parking,
+}
+
+impl Drop for Searching<'_> {
+    fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::SeqCst);
+        self.parking.wake();
+    }
 }
 
 impl<B: Backend> Pipeline<B> {
@@ -103,7 +119,33 @@ impl<B: Backend> Pipeline<B> {
             preparers: (cores / 2).clamp(2, 8),
             eco: AtomicBool::new(false),
             parking: Parking::default(),
+            searching: AtomicUsize::new(0),
+            unit_time: Mutex::new(None),
         }
+    }
+
+    fn search_first(&self) -> Searching<'_> {
+        self.searching.fetch_add(1, Ordering::SeqCst);
+        Searching {
+            count: &self.searching,
+            parking: &self.parking,
+        }
+    }
+
+    fn batch_size(&self) -> usize {
+        let most = self.backend.max_batch().max(1);
+        match *lock(&self.unit_time) {
+            Some(seconds) if seconds > 0.0 => ((BATCH_TIME.as_secs_f64() / seconds) as usize).clamp(1, most),
+            _ => most,
+        }
+    }
+
+    fn came_back(&self, inputs: usize, took: Duration) {
+        let seconds = took.as_secs_f64() / inputs.max(1) as f64;
+        let mut unit_time = lock(&self.unit_time);
+        *unit_time = Some(unit_time.map_or(seconds, |before| {
+            before * (1.0 - UNIT_TIME_WEIGHT) + seconds * UNIT_TIME_WEIGHT
+        }));
     }
 
     fn preparers(&self) -> usize {
@@ -306,16 +348,26 @@ impl<B: Backend> Embedder for Pipeline<B> {
                         }
                         let Ok(first) = ready_out.recv() else { break };
                         let mut batch = vec![first];
-                        while batch.len() < backend.max_batch() {
+                        let size = self.batch_size();
+                        while batch.len() < size {
                             match ready_out.try_recv() {
                                 Ok(more) => batch.push(more),
                                 Err(_) => break,
                             }
                         }
+                        while self.searching.load(Ordering::SeqCst) > 0 && !cancel.load(Ordering::Relaxed) {
+                            self.parking.wait_unless(|| {
+                                cancel.load(Ordering::Relaxed) || self.searching.load(Ordering::SeqCst) == 0
+                            });
+                        }
+                        if cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
                         let inputs: Vec<&Prepared> = batch.iter().map(|(_, unit)| &unit.input).collect();
                         let started = Instant::now();
                         match backend.embed_batch(&inputs) {
                             Ok(outputs) => {
+                                self.came_back(inputs.len(), started.elapsed());
                                 for ((item, unit), output) in batch.iter().zip(outputs) {
                                     let event = Event::Unit {
                                         item: *item,
@@ -369,6 +421,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
     }
 
     fn embed_example(&self, path: &Path, max_pieces: usize) -> Result<Vec<Record>, Error> {
+        let _first = self.search_first();
         let max = max_pieces.max(1);
         let batch_size = self.backend.max_batch().max(1);
         let (send, receive) = std::sync::mpsc::sync_channel::<Unit>(batch_size * 2);
@@ -407,6 +460,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
     }
 
     fn embed_query(&self, text: &str) -> Result<Record, Error> {
+        let _first = self.search_first();
         let prompt = Prepared::Text(documents::query_prompt(text.trim()));
         let output = self
             .backend
@@ -431,6 +485,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
     }
 
     fn set_device(&self, device: Device) -> Result<(), Error> {
+        *lock(&self.unit_time) = None;
         self.backend.set_device(device)
     }
 
@@ -470,6 +525,8 @@ mod tests {
         running: AtomicUsize,
         most_running: AtomicUsize,
         devices: Mutex<Vec<Device>>,
+        per_input: Duration,
+        log: Mutex<Vec<(Instant, Instant, bool)>>,
     }
 
     impl Backend for Fake {
@@ -481,7 +538,13 @@ mod tests {
         fn embed_batch(&self, batch: &[&Prepared]) -> Result<Vec<Result<Vec<f32>, String>>, Error> {
             let running = self.running.fetch_add(1, Ordering::SeqCst) + 1;
             self.most_running.fetch_max(running, Ordering::SeqCst);
-            thread::sleep(self.delay);
+            let begun = Instant::now();
+            let search = batch
+                .iter()
+                .any(|prepared| matches!(prepared, Prepared::Text(text) if text.contains("hold everything")));
+            let search_time = if search { Duration::from_secs(1) } else { Duration::ZERO };
+            thread::sleep(self.delay + self.per_input * batch.len() as u32 + search_time);
+            lock(&self.log).push((begun, Instant::now(), search));
             self.running.fetch_sub(1, Ordering::SeqCst);
             let mut batches = lock(&self.batches);
             batches.push(batch.len());

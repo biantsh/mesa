@@ -1,5 +1,5 @@
 pub fn give_way() {
-    imp::give_way(true);
+    imp::give_way_for_good();
 }
 
 thread_local! {
@@ -73,6 +73,10 @@ mod imp {
         };
     }
 
+    pub fn give_way_for_good() {
+        give_way(true);
+    }
+
     pub fn give_way(on: bool) {
         let mode = if on {
             THREAD_MODE_BACKGROUND_BEGIN
@@ -129,13 +133,81 @@ mod imp {
         let _ = unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0) };
     }
 
+    pub fn give_way_for_good() {
+        give_way(true);
+    }
+
     pub fn give_way(on: bool) {
         let _ = unsafe { libc::setpriority(libc::PRIO_DARWIN_THREAD, 0, if on { libc::PRIO_DARWIN_BG } else { 0 }) };
     }
 }
 
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
 mod imp {
+    const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+    const IOPRIO_CLASS_BE: libc::c_int = 2;
+    const IOPRIO_CLASS_IDLE: libc::c_int = 3;
+    const IOPRIO_CLASS_SHIFT: libc::c_int = 13;
+
+    fn io_priority(idle: bool) -> bool {
+        let priority = if idle {
+            IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT
+        } else {
+            (IOPRIO_CLASS_BE << IOPRIO_CLASS_SHIFT) | 4
+        };
+        unsafe { libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, libc::gettid(), priority) == 0 }
+    }
+
+    const LAST: libc::c_int = 19;
+
+    fn set_nice(nice: libc::c_int) -> bool {
+        unsafe { libc::setpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t, nice) == 0 }
+    }
+
+    fn can_take_the_processor_back() -> bool {
+        static CAN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CAN.get_or_init(|| {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            let read = unsafe { libc::getrlimit(libc::RLIMIT_NICE, &mut limit) } == 0;
+            (read && limit.rlim_cur >= 20) || unsafe { libc::geteuid() } == 0
+        })
+    }
+
+    pub fn give_way_for_good() {
+        io_priority(true);
+        set_nice(LAST);
+    }
+
+    pub fn give_way(on: bool) {
+        io_priority(on);
+        if can_take_the_processor_back() {
+            set_nice(if on { LAST } else { 0 });
+        }
+    }
+
+    pub fn below_the_page() {
+        unsafe {
+            let tid = libc::gettid() as libc::id_t;
+            let now = libc::getpriority(libc::PRIO_PROCESS, tid);
+            libc::setpriority(libc::PRIO_PROCESS, tid, (now + 5).min(19));
+        }
+    }
+
+    pub fn keep_pace(_: bool) {}
+
+    #[cfg(test)]
+    pub fn nice() -> libc::c_int {
+        unsafe { libc::getpriority(libc::PRIO_PROCESS, libc::gettid() as libc::id_t) }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+mod imp {
+    pub fn give_way_for_good() {}
+
     pub fn give_way(_: bool) {}
 
     pub fn below_the_page() {}

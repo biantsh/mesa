@@ -23,6 +23,98 @@ pub use windows_clipboard::copy_files;
 #[cfg(target_os = "macos")]
 pub use mac_clipboard::copy_files;
 
+#[cfg(target_os = "linux")]
+pub use linux_clipboard::copy_files;
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const URI_PATH: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~')
+    .remove(b'/');
+
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn file_uris(paths: &[PathBuf]) -> Vec<String> {
+    use std::os::unix::ffi::OsStrExt;
+    paths
+        .iter()
+        .filter(|path| path.is_absolute())
+        .map(|path| {
+            format!(
+                "file://{}",
+                percent_encoding::percent_encode(path.as_os_str().as_bytes(), URI_PATH)
+            )
+        })
+        .collect()
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn uri_list(uris: &[String]) -> String {
+    uris.iter().map(|uri| format!("{uri}\r\n")).collect()
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn gnome_copied_files(uris: &[String]) -> String {
+    std::iter::once("copy")
+        .chain(uris.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(target_os = "linux")]
+mod linux_clipboard {
+    use std::{path::PathBuf, sync::mpsc, time::Duration};
+
+    use super::{file_uris, gnome_copied_files, uri_list};
+
+    pub fn copy_files(window: &tauri::WebviewWindow, paths: &[PathBuf]) -> Result<(), String> {
+        let uris = file_uris(paths);
+        if uris.is_empty() {
+            return Err("Those files can't be copied.".into());
+        }
+        let text = paths
+            .iter()
+            .map(|path| path.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (sender, answer) = mpsc::channel();
+        window
+            .run_on_main_thread(move || {
+                let _ = sender.send(put(&uris, text));
+            })
+            .map_err(|e| e.to_string())?;
+        answer
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| Err("The clipboard didn't answer.".into()))
+    }
+
+    fn put(uris: &[String], text: String) -> Result<(), String> {
+        use gtk::{TargetEntry, TargetFlags, gdk};
+
+        let targets = [
+            TargetEntry::new("x-special/gnome-copied-files", TargetFlags::empty(), 0),
+            TargetEntry::new("text/uri-list", TargetFlags::empty(), 1),
+            TargetEntry::new("UTF8_STRING", TargetFlags::empty(), 2),
+            TargetEntry::new("text/plain;charset=utf-8", TargetFlags::empty(), 2),
+            TargetEntry::new("text/plain", TargetFlags::empty(), 2),
+        ];
+        let payloads = [gnome_copied_files(uris), uri_list(uris), text];
+        let clipboard = gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD);
+        let taken = clipboard.set_with_data(&targets, move |_, selection, kind| {
+            if let Some(payload) = payloads.get(kind as usize) {
+                selection.set(&selection.target(), 8, payload.as_bytes());
+            }
+        });
+        if taken {
+            Ok(())
+        } else {
+            Err("The clipboard didn't take the files.".into())
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod mac_clipboard {
     use std::path::PathBuf;

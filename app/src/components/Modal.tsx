@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { cx } from "../cx";
+import { skipGivingBackTo } from "../lastInput";
 import styles from "./Modal.module.css";
 
 interface Props {
@@ -24,7 +25,11 @@ export function Modal({ open, onClose, className, label, labelledBy, focusCard, 
       else el.showModal();
       if (focusCard) el.focus();
     }
-    if (!open && el.open) el.close();
+    if (!open && el.open) {
+      el.close();
+      const back = document.activeElement;
+      if (back instanceof HTMLElement && skipGivingBackTo(back)) back.blur();
+    }
   }, [open, focusCard, modeless]);
 
   useEffect(() => {
