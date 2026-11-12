@@ -19,7 +19,8 @@
   color: var(--color-primary);
 }
 
-.indexing svg {
+.indexing svg > * {
+  transform-origin: 12px 12px;
   animation: spin 900ms linear infinite;
 }
 
@@ -42,7 +43,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .indexing svg {
+  .indexing svg > * {
     animation-duration: 2400ms !important;
     animation-iteration-count: infinite !important;
   }

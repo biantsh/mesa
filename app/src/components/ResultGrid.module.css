@@ -8,11 +8,12 @@
 .counter {
   --for-progress: 0px;
   --for-count: 0px;
+  --under-query: 14px;
 }
 
 .pane {
   --stagger: 22ms;
-  --bar-room: calc(var(--top-gap) + var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px + 10px);
+  --bar-room: calc(var(--top-gap) + var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px + var(--under-query));
   --fade-top: var(--bar-room);
   position: absolute;
   z-index: 1;

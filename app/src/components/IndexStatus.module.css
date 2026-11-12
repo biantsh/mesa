@@ -114,6 +114,18 @@
 @keyframes arrive {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(6px);
+  }
+}
+
+.progress.leaving {
+  pointer-events: none;
+  animation: leave 220ms ease-in forwards;
+}
+
+@keyframes leave {
+  to {
+    opacity: 0;
+    transform: translateY(6px);
   }
 }

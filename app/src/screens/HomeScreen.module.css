@@ -730,6 +730,48 @@
   z-index: 4;
 }
 
+.indexNote {
+  position: absolute;
+  z-index: 3;
+  left: 2px;
+  top: calc(var(--field-height) + var(--tags-gap) + var(--tags-height) + 9px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--color-text-faint);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition:
+    opacity 220ms ease-in,
+    transform 220ms ease-in,
+    visibility 0s linear 220ms;
+}
+
+.engaged .indexNote.shown {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity 220ms ease-out calc(var(--focus-time) * 0.4),
+    transform 220ms ease-out calc(var(--focus-time) * 0.4),
+    visibility 0s;
+}
+
+.asWidget:not(.results) .indexNote {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition:
+    opacity 220ms ease-in,
+    transform 220ms ease-in,
+    visibility 0s linear 220ms;
+}
+
 .status {
   position: relative;
   display: flex;

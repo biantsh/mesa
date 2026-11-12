@@ -89,7 +89,7 @@ export function StatusBadge({ entry }: { entry: Entry }) {
   const spinning = badge?.className === styles.indexing;
   useLayoutEffect(() => {
     if (!spinning) return;
-    badgeElement.current?.querySelector("svg")?.getAnimations().forEach((animation) => (animation.startTime = 0));
+    badgeElement.current?.getAnimations({ subtree: true }).forEach((animation) => (animation.startTime = 0));
   }, [spinning]);
   if (!badge) return null;
   const { Icon, label } = badge;

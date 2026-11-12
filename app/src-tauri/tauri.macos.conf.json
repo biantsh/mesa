@@ -19,8 +19,8 @@
       {
         "label": "widget",
         "title": "Mesa Search",
-        "width": 900,
-        "height": 560,
+        "width": 992,
+        "height": 600,
         "resizable": false,
         "decorations": false,
         "transparent": true,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
-import type { Overview } from "../api";
+import type { Overview, Progress } from "../api";
 import { cx } from "../cx";
 import { prefersReducedMotion } from "../motion";
 import { Bar, figures, Label } from "./IndexProgress";
@@ -56,14 +56,21 @@ export function IndexStatus({ overview, onOpenIndex, attention, raised = false, 
     empty.current?.animate([none, lit, none], { duration: 500, easing: "ease-out" });
   }, [attention]);
 
+  const now = overview?.progress ?? null;
+  const [kept, setKept] = useState<Progress | null>(now);
+  if (now && now !== kept) setKept(now);
+  const leaving = !now && kept !== null;
+  const progress = now ?? kept;
+
   let content = null;
-  if (overview?.progress) {
-    const { progress } = overview;
+  if (progress) {
     const count = figures(progress);
     content = (
-      <button key="progress" type="button" className={cx(styles.progress, raised && styles.raised)}
+      <button key="progress" type="button" className={cx(styles.progress, raised && styles.raised, leaving && styles.leaving)}
         onMouseDown={keepsFocus ? (e) => e.preventDefault() : undefined}
-        onClick={onOpenIndex} data-tooltip="Show the index" data-pill>
+        onAnimationEnd={leaving ? (e) => { if (e.target === e.currentTarget) setKept(null); } : undefined}
+        disabled={leaving || undefined}
+        onClick={onOpenIndex} data-tooltip={leaving ? undefined : "Show the index"} data-pill>
         <Label progress={progress} />
         <Bar progress={progress} />
         <PillCount paused={progress.paused} count={count} />

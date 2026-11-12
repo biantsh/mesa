@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
-import { ArrowRight, Ban, Database, Files, Search, Settings, X } from "lucide-react";
+import { ArrowRight, Ban, CircleDashed, Database, Files, Search, Settings, X } from "lucide-react";
 import { api, errorText, type Category, type ModelStatus, type Overview, type SearchHit, type SearchPage } from "../api";
 import { CATEGORY_LABELS } from "../format";
 import { Button } from "../components/Button";
@@ -29,8 +29,8 @@ import { useTauriEvent } from "../useTauriEvent";
 import styles from "./HomeScreen.module.css";
 
 const TOP_GAP_PX = 20;
-const BOTTOM_GAP_PX = 16;
-const CORNER_TEXT_RISE_PX = -2;
+const BOTTOM_GAP_PX = 8;
+const PROGRESS_BOTTOM_PX = 4;
 const ARRIVING_SNAP_MS = 300;
 const BOTTOM_GAP_WITH_CORNERS_PX = 36;
 const CLEAR_RESULTS_MS = 500;
@@ -284,6 +284,7 @@ function Understanding({ understood, query, examples, fieldFocused, onFocusField
           <ExamplesPill examples={examples} fieldFocused={fieldFocused} onFocusField={onFocusField} onRemove={onRemoveExample} onClear={onClearExamples} />
         </div>
       )}
+
       {open?.what === "type" && <TypePicker anchor={open.pill} value={understood.fileType} onChoose={onChooseType} onClose={close} />}
       {(open?.what === "from" || open?.what === "to") && (
         <MonthPicker
@@ -349,6 +350,8 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const chooseType = useCallback((value: Category | null) => setChosen((now) => chooseFileType(now, query, new Date(), value)), [query]);
   const chooseDate = useCallback((end: "from" | "to", month: Month | null) => setChosen((now) => chooseDateEnd(now, query, new Date(), end, month)), [query]);
   const results = query.trim() !== "" || examples.length > 0 || exampleNotice !== null;
+  const progress = overview?.progress ?? null;
+  const incomplete = progress !== null && !(progress.updating && progress.queued === 0);
   const filled = query !== "" || examples.length > 0 || exampleNotice !== null;
   const dim = focused && !results;
   const engaged = focused || results;
@@ -594,8 +597,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       const set = (name: string, px: number) => root.style.setProperty(name, `${px}px`);
       set("--top-gap", TOP_GAP_PX);
       const bottomGap = asWidget ? BOTTOM_GAP_PX : BOTTOM_GAP_WITH_CORNERS_PX;
-      const cornerBottom = parseFloat(getComputedStyle(root).getPropertyValue("--corner-bottom")) || 10;
-      const pillBottom = asWidget ? BOTTOM_GAP_PX : cornerBottom + CORNER_TEXT_RISE_PX;
+      const pillBottom = PROGRESS_BOTTOM_PX;
       set("--bottom-gap", bottomGap);
       set("--pill-bottom", pillBottom);
       set("--lift", lift);
@@ -743,6 +745,10 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           >
             <Understanding understood={understood} query={query} examples={examples} fieldFocused={focused} onFocusField={focusField} onChooseType={chooseType} onChooseDate={chooseDate} onRemoveExample={removeExample} onClearExamples={clearExamples} />
           </div>
+          <p className={cx(styles.indexNote, incomplete && dragging === null && styles.shown)} aria-hidden={!incomplete || undefined}>
+            <CircleDashed size={12} aria-hidden />
+            Still indexing, results may be incomplete.
+          </p>
           <div ref={actions} className={styles.actions}>
             <Button variant="primary" className={styles.indexButton} onClick={onOpenIndex}>
               <Database size={16} aria-hidden />
