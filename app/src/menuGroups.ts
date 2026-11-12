@@ -27,9 +27,6 @@ export function menuGroups(
         disabled: actions.add === 0,
         onSelect: actions.doAdd,
       },
-      ...(actions.drop > 0
-        ? [{ label: counted("Drop from queue", actions.drop, several), onSelect: actions.doDrop }]
-        : []),
     ],
     [
       actions.exclude === 0 && actions.stop > 0

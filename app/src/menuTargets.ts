@@ -2,7 +2,6 @@ import type { Entry } from "./api";
 
 export interface MenuTargets {
   add: Entry[];
-  drop: Entry[];
   remove: Entry[];
   inside: Entry[];
   exclude: Entry[];
@@ -12,7 +11,6 @@ export interface MenuTargets {
 export function menuTargets(entries: Entry[]): MenuTargets {
   return {
     add: entries.filter((entry) => entry.index === "notIndexed" || entry.index === "partlyIndexed"),
-    drop: entries.filter((entry) => entry.droppable),
     remove: entries.filter((entry) => entry.removable),
     inside: entries.filter((entry) => entry.index === "indexed" && !entry.removable),
     exclude: entries.filter(

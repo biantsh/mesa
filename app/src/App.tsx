@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
@@ -14,7 +14,7 @@ import { LegalCorner } from "./components/LegalCorner";
 import { startup } from "./ready";
 import { useCornersAway } from "./useCornersAway";
 import { useFrozenWhile } from "./useFrozenWhile";
-import { useIndexOverviewNow } from "./useIndexOverview";
+import { useIndexState } from "./useIndexState";
 import { useFullscreen, useMaximized } from "./useMaximized";
 import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
@@ -40,7 +40,8 @@ export default function App() {
   const dimmed = (querying && !onIndex) || settingsOpen;
   const maximized = useMaximized();
   useFullscreen();
-  const { overview, refresh: refreshOverview, refreshProgress } = useIndexOverviewNow(true);
+  const { overview, refresh: refreshIndex, watch: watchIndex } = useIndexState();
+  const indexLink = useMemo(() => ({ refresh: refreshIndex, watch: watchIndex }), [refreshIndex, watchIndex]);
   const homeOverview = useFrozenWhile(onIndex, overview);
   const [pillWidth, setPillWidth] = useState<number | null>(null);
   const screensBox = useRef<HTMLDivElement>(null);
@@ -176,7 +177,7 @@ export default function App() {
           tabIndex={-1}
           inert={!onIndex || behind}
         >
-          <IndexPage onBack={goHome} onSearch={searchFromIndex} overview={overview} onRefreshOverview={refreshOverview} onRefreshProgress={refreshProgress} active={onIndex} />
+          <IndexPage onBack={goHome} onSearch={searchFromIndex} overview={overview} index={indexLink} active={onIndex} />
         </div>
         <footer ref={totalsLine} className={cx(styles.totals, cornersAway && styles.cornerAway)}>
           {overview && describeIndexTotals(overview.files, overview.bytes)}

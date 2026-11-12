@@ -1,10 +1,10 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     fs, io, mem,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc::{Receiver, TryRecvError},
+        atomic::{AtomicU64, Ordering},
+        mpsc::Receiver,
     },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -16,7 +16,7 @@ use crate::{
     browse::{self, Categories, Category, Shown},
     crawl::crawl,
     embed::{Item, Outcome},
-    index::{Job, Message, Shared, lock},
+    index::{Job, Shared, lock},
     power,
     store::{ScannedDir, ScannedFile},
     unindexable,
@@ -28,78 +28,64 @@ const CHUNK_FILES: usize = 512;
 const RUN_MOST: usize = 512;
 const LISTED_AHEAD: usize = 1024;
 
-pub fn work(shared: &Shared, jobs: Receiver<Message>) {
-    let mut held: VecDeque<Message> = VecDeque::new();
+pub fn work(shared: &Shared) {
     loop {
         power::follow(shared.is_gentle());
-        let message = match held.pop_front().map(Ok).unwrap_or_else(|| jobs.try_recv()) {
-            Ok(message) => message,
-            Err(TryRecvError::Disconnected) => break,
-            Err(TryRecvError::Empty) => {
-                if !shared.is_busy() {
-                    shared.set_turbo(false);
-                    power::follow(true);
-                }
-                let next = lock(&shared.quiet).next();
-                if let Some(path) = next {
-                    power::keep_pace(true);
-                    check(shared, &path);
-                    continue;
-                }
-                power::keep_pace(false);
-                match jobs.recv() {
-                    Ok(message) => message,
-                    Err(_) => break,
-                }
-            }
-        };
-        power::keep_pace(true);
-        let Message::Job(job) = message else { continue };
-        took_urgent(shared);
-        if job.root.is_dir() {
-            work_on(shared, job);
+        let seen = shared.control.work_seen();
+        if shared.control.is_shut() {
+            break;
+        }
+        let run = take_next(shared);
+        if !run.is_empty() {
+            power::keep_pace(true);
+            do_run(shared, run);
             continue;
         }
-        let mut run = vec![job];
-        while run.len() < RUN_MOST {
-            match held.pop_front().map(Ok).unwrap_or_else(|| jobs.try_recv()) {
-                Ok(Message::Job(next)) if !next.root.is_dir() => {
-                    took_urgent(shared);
-                    run.push(next);
-                }
-                Ok(other) => {
-                    held.push_front(other);
-                    break;
-                }
-                Err(_) => break,
-            }
+        if !shared.is_busy() {
+            shared.set_turbo(false);
+            power::follow(true);
         }
-        if run.len() == 1 {
-            work_on(shared, run.remove(0));
+        let next = lock(&shared.quiet).next();
+        if let Some(path) = next {
+            power::keep_pace(true);
+            check(shared, &path);
             continue;
         }
-        for job in walk_files(shared, run).into_iter().rev() {
-            shared.urgent.fetch_add(1, Ordering::SeqCst);
-            held.push_front(Message::Job(job));
+        power::keep_pace(false);
+        if shared.control.wait_for_work(seen) {
+            break;
         }
     }
 }
 
-fn took_urgent(shared: &Shared) {
-    let _ = shared
-        .urgent
-        .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| Some(n.saturating_sub(1)));
+fn take_next(shared: &Shared) -> Vec<Job> {
+    let upcoming = lock(&shared.progress).upcoming(RUN_MOST);
+    let mut run: Vec<Job> = Vec::new();
+    for (ticket, id, root) in upcoming {
+        let is_dir = root.is_dir();
+        if is_dir && !run.is_empty() {
+            break;
+        }
+        run.push(Job { id, root, ticket });
+        if is_dir {
+            break;
+        }
+    }
+    let tickets: Vec<u64> = run.iter().map(|job| job.ticket).collect();
+    let begun: HashSet<u64> = lock(&shared.progress).begin_together(&tickets).into_iter().collect();
+    run.retain(|job| begun.contains(&job.ticket));
+    run
+}
+
+fn do_run(shared: &Shared, mut run: Vec<Job>) {
+    if run.len() == 1 {
+        work_on(shared, run.remove(0));
+    } else {
+        walk_files(shared, run);
+    }
 }
 
 fn work_on(shared: &Shared, job: Job) {
-    if job.waiting {
-        lock(&shared.pending).add(job.root.clone());
-    }
-    if !lock(&shared.progress).begin(job.ticket) {
-        lock(&shared.pending).release(&job.root);
-        end_pause_if_idle(shared);
-        return;
-    }
     shared.wait_while_paused_for(Some(job.ticket));
     await_counts(shared, job.ticket);
     let stored = walk(shared, job.ticket, &job.root);
@@ -119,34 +105,8 @@ fn work_on(shared: &Shared, job: Job) {
     drop(store);
 }
 
-fn walk_files(shared: &Shared, run: Vec<Job>) -> Vec<Job> {
-    {
-        let mut pending = lock(&shared.pending);
-        run.iter()
-            .filter(|job| job.waiting)
-            .for_each(|job| pending.add(job.root.clone()));
-    }
-    let tickets: Vec<u64> = run.iter().map(|job| job.ticket).collect();
-    let begun: HashSet<u64> = lock(&shared.progress).begin_together(&tickets).into_iter().collect();
-    debug_assert!(
-        !begun.is_empty() || !tickets.iter().any(|&ticket| lock(&shared.progress).has(ticket)),
-        "a run of jobs of a file each none of which is next"
-    );
-    let (mine, rest): (Vec<Job>, Vec<Job>) = run.into_iter().partition(|job| begun.contains(&job.ticket));
-    let mut after = Vec::new();
-    for job in rest {
-        let queued = lock(&shared.progress).has(job.ticket);
-        if job.waiting || !queued {
-            lock(&shared.pending).release(&job.root);
-        }
-        if queued {
-            after.push(job);
-        }
-    }
-    let Some(first) = mine.first() else {
-        end_pause_if_idle(shared);
-        return after;
-    };
+fn walk_files(shared: &Shared, mine: Vec<Job>) {
+    let Some(first) = mine.first() else { return };
     shared.wait_while_paused_for(Some(first.ticket));
     for job in &mine {
         await_counts(shared, job.ticket);
@@ -181,7 +141,6 @@ fn walk_files(shared: &Shared, run: Vec<Job>) -> Vec<Job> {
     walker.batch.finish_left(shared, stored);
     drop(walker);
     end_pause_if_idle(shared);
-    after
 }
 
 fn end_pause_if_idle(shared: &Shared) {
@@ -203,7 +162,7 @@ fn check(shared: &Shared, path: &Path) {
         return;
     }
     walk_tree(shared, Tracking::Unseen, path);
-    if shared.urgent.load(Ordering::SeqCst) > 0 {
+    if lock(&shared.progress).has_waiting() {
         lock(&shared.quiet).again(path.to_owned());
     }
     if shared.control.is_paused() && !lock(&shared.progress).is_active() {
@@ -254,9 +213,41 @@ pub fn count_ahead(shared: &Shared, wake: Receiver<()>) {
 }
 
 fn count_files(shared: &Shared, ticket: u64, root: &Path) {
+    let found_in = |folder: &Path, files: u64| {
+        let mut progress = lock(&shared.progress);
+        if !shared.is_excluded(folder) {
+            progress.found_in(ticket, folder, files);
+        }
+    };
+    let found = supported_files(
+        shared,
+        root,
+        |path| shared.is_indexed(path),
+        || lock(&shared.progress).has(ticket),
+        found_in,
+    );
+    if found > 0 && root.is_file() {
+        found_in(root, found);
+    }
+    lock(&shared.progress).finish_counting(ticket);
+}
+
+#[cfg(test)]
+fn count_job(shared: &Shared, ticket: u64, root: &Path) {
+    count_files(shared, ticket, root);
+}
+
+fn supported_files(
+    shared: &Shared,
+    root: &Path,
+    counted: impl Fn(&Path) -> bool + Sync,
+    go_on: impl Fn() -> bool + Sync,
+    found: impl Fn(&Path, u64) + Sync,
+) -> u64 {
     if root.is_dir() {
+        let total = AtomicU64::new(0);
         crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
-            if !shared.is_indexed(&dir) || !lock(&shared.progress).has(ticket) {
+            if !counted(&dir) || !go_on() {
                 return Vec::new();
             }
             let mut subdirs = Vec::new();
@@ -266,20 +257,23 @@ fn count_files(shared: &Shared, ticket: u64, root: &Path) {
                 Shown::File(_) => files += 1,
             });
             if files > 0 {
-                lock(&shared.progress).found(ticket, files);
+                total.fetch_add(files, Ordering::Relaxed);
+                found(&dir, files);
             }
             subdirs
         });
+        total.into_inner()
     } else if root.is_file()
-        && shared.is_indexed(root)
+        && counted(root)
         && root
             .file_name()
             .and_then(|name| browse::category_of(&name.to_string_lossy()))
             .is_some_and(|category| shared.types().contains(category))
     {
-        lock(&shared.progress).found(ticket, 1);
+        1
+    } else {
+        0
     }
-    lock(&shared.progress).finish_counting(ticket);
 }
 
 fn walk(shared: &Shared, ticket: u64, root: &Path) -> bool {
@@ -289,11 +283,9 @@ fn walk(shared: &Shared, ticket: u64, root: &Path) -> bool {
 fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
     let in_progress = tracking.is_in_progress();
     let mut walker = Walker::new(shared, tracking, root);
-    let abandoned = AtomicBool::new(false);
 
     if root.is_dir() {
         let (listed, found) = bounded::<ScannedDir>(LISTED_AHEAD);
-        let abandoned = &abandoned;
         thread::scope(|scope| {
             scope.spawn(move || {
                 crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
@@ -302,8 +294,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
 
                     let found = if !dropped
                         && shared.is_indexed(&dir)
-                        && !abandoned.load(Ordering::Relaxed)
-                        && !(!in_progress && shared.urgent.load(Ordering::SeqCst) > 0)
+                        && (in_progress || !lock(&shared.progress).has_waiting())
                     {
                         scan_dir(&dir, shared.types())
                     } else {
@@ -334,10 +325,6 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
             for scan in found {
                 power::follow(shared.is_gentle());
                 walker.stored &= walker.batch.pause_point(shared);
-                if walker.dropped() {
-                    abandoned.store(true, Ordering::Relaxed);
-                    break;
-                }
                 walker.add(scan);
                 if walker.waiting() >= CHUNK_FILES {
                     walker.embed_waiting();
@@ -412,10 +399,6 @@ impl<'a> Walker<'a> {
 
     fn waiting(&self) -> usize {
         self.waiting.len()
-    }
-
-    fn dropped(&self) -> bool {
-        matches!(self.batch.tracking, Tracking::Seen(ticket) if !lock(&self.shared.progress).has(ticket))
     }
 
     fn show(&mut self, files: usize) {
@@ -505,10 +488,9 @@ impl<'a> Walker<'a> {
         };
 
         while !left.is_empty() {
-            let dropped = self.dropped();
             left.retain(|&n| {
                 let path = path_of(&folders, places[n]);
-                let wanted = !dropped && shared.wants(&path);
+                let wanted = shared.wants(&path);
                 if !wanted {
                     self.release(&path);
                 }
@@ -521,11 +503,8 @@ impl<'a> Walker<'a> {
                 for &n in &left {
                     let path = path_of(&folders, places[n]);
                     self.release(&path);
-                    if self.batch.tracking == Tracking::Run {
-                        self.batch.processed_file(shared, &path, &folders[places[n].0].path);
-                    }
+                    self.batch.processed_file(shared, &path, &folders[places[n].0].path);
                 }
-                self.batch.processed(shared, left.len() as u64);
                 break;
             }
             self.stored &= self.batch.pause_point(shared);
@@ -553,7 +532,7 @@ impl<'a> Walker<'a> {
                     };
                     if new_files.remove(&items[i].path) {
                         batch.new += 1;
-                        shared.finished_new.fetch_add(1, Ordering::SeqCst);
+                        shared.counts.made();
                     }
                     batch.finished.push(items[i].path.clone());
                     batch.add_file(&folders[folder].path, file);
@@ -587,7 +566,7 @@ impl<'a> Walker<'a> {
 
         self.new_files.clear();
 
-        if !self.failed && !self.dropped() {
+        if !self.failed {
             for folder in folders.drain(..).filter(|folder| folder.complete) {
                 self.batch.files += folder.files.len();
                 self.batch.scans.push(folder);
@@ -650,18 +629,12 @@ impl Batch {
         self.marked.drain().for_each(|path| pending.release(&path));
     }
 
-    fn processed(&self, shared: &Shared, files: u64) {
-        if let Some(ticket) = self.tracking.ticket() {
-            lock(&shared.progress).processed(ticket, files);
-        }
-    }
-
     fn processed_file(&self, shared: &Shared, file: &Path, folder: &Path) {
         if self.tracking != Tracking::Run {
             return self.processed_in(shared, 1, folder);
         }
         if let Some(&(ticket, _)) = self.owners.get(file).and_then(|jobs| jobs.first()) {
-            lock(&shared.progress).processed(ticket, 1);
+            lock(&shared.progress).processed_in(ticket, 1, file);
         }
     }
 
@@ -711,14 +684,12 @@ impl Batch {
     fn store(&mut self, shared: &Shared) -> bool {
         let mut stored = true;
         if !self.scans.is_empty() {
-            let mut store = lock(&shared.store);
-            let result = store.write_scans(&self.scans, &|path| shared.wants(path));
+            let result =
+                lock(&shared.store).write_scans(&self.scans, &|path| shared.wants(path), mem::take(&mut self.new));
             if let Err(e) = result {
                 eprintln!("Mesa: couldn't store indexed files: {e}");
                 stored = false;
             }
-            shared.landed_new.fetch_add(mem::take(&mut self.new), Ordering::SeqCst);
-            drop(store);
         }
         let mut pending = lock(&shared.pending);
         let mut done = Vec::new();
@@ -741,9 +712,7 @@ impl Batch {
 
 impl Drop for Walker<'_> {
     fn drop(&mut self) {
-        self.shared
-            .landed_new
-            .fetch_add(mem::take(&mut self.batch.new), Ordering::SeqCst);
+        self.shared.counts.not_stored(mem::take(&mut self.batch.new));
     }
 }
 
@@ -866,7 +835,7 @@ fn unix_millis(time: SystemTime) -> i64 {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeSet, HashSet, VecDeque},
+        collections::{BTreeSet, VecDeque},
         sync::{
             Arc, Mutex,
             atomic::{AtomicUsize, Ordering},
@@ -968,19 +937,17 @@ mod tests {
             fs::write(path, "x").unwrap();
         }
         let embedder = Arc::new(embedder);
+        let store = Store::open(&data.join("index")).unwrap();
         let shared = Arc::new(Shared {
-            store: Mutex::new(Store::open(&data.join("index")).unwrap()),
-            rules: Mutex::new(HashSet::from([folder.clone()])),
-            included: Mutex::new(BTreeSet::new()),
-            excluded: Mutex::new(HashSet::new()),
+            counts: store.counts(),
+            store: Mutex::new(store),
+            rules: Mutex::new(BTreeSet::from([folder.clone()])),
+            excluded: Mutex::new(BTreeSet::new()),
             pending: Mutex::new(Pending::default()),
             progress: Mutex::new(ProgressState::default()),
-            finished_new: std::sync::atomic::AtomicU64::new(0),
-            landed_new: std::sync::atomic::AtomicU64::new(0),
             indexed_types: std::sync::atomic::AtomicU8::new(Categories::ALL.bits()),
             control: Control::with_turbo(false, true),
             quiet: Default::default(),
-            urgent: Default::default(),
             embedder: embedder.clone(),
         });
         let ticket = {
@@ -1000,7 +967,7 @@ mod tests {
 
     impl Fixture {
         fn run(&self) -> bool {
-            count_files(&self.shared, self.ticket, &self.folder);
+            count_job(&self.shared, self.ticket, &self.folder);
             walk(&self.shared, self.ticket, &self.folder)
         }
 

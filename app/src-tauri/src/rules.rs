@@ -1,9 +1,9 @@
 use std::{
-    collections::HashSet,
+    collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
 };
 
-pub type Rules = HashSet<PathBuf>;
+pub type Rules = BTreeSet<PathBuf>;
 
 pub fn effective(rules: &Rules, path: &Path) -> bool {
     path.ancestors().any(|a| rules.contains(a))

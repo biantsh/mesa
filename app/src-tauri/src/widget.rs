@@ -21,6 +21,9 @@ const TOP_AT: f64 = 0.14;
 static SHOWN: AtomicBool = AtomicBool::new(false);
 static PICKING: AtomicBool = AtomicBool::new(false);
 static VISIBLE: Mutex<Option<[f64; 4]>> = Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+static FRAME: Mutex<Option<[f64; 4]>> = Mutex::new(None);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 const WATCH_EVERY: Duration = Duration::from_millis(16);
 
@@ -62,12 +65,38 @@ fn input_region(window: &WebviewWindow, rect: Option<[f64; 4]>) {
     });
 }
 
-fn pointer_is_in_box(pointer: (f64, f64), origin: (i32, i32), scale: f64, rect: [f64; 4]) -> bool {
-    let (x, y) = (
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn page_place(pointer: (f64, f64), origin: (i32, i32), scale: f64) -> (f64, f64) {
+    (
         (pointer.0 - f64::from(origin.0)) / scale,
         (pointer.1 - f64::from(origin.1)) / scale,
-    );
-    x >= rect[0] && x <= rect[2] && y >= rect[1] && y <= rect[3]
+    )
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn page_place_on_mac(mouse: (f64, f64), frame: [f64; 4]) -> (f64, f64) {
+    let [left, bottom, _, height] = frame;
+    (mouse.0 - left, bottom + height - mouse.1)
+}
+
+fn in_box(at: (f64, f64), rect: [f64; 4]) -> bool {
+    at.0 >= rect[0] && at.0 <= rect[2] && at.1 >= rect[1] && at.1 <= rect[3]
+}
+
+#[cfg(target_os = "macos")]
+fn pointer_in_page(_app: &AppHandle, _window: &WebviewWindow) -> Option<(f64, f64)> {
+    let frame = (*lock(&FRAME))?;
+    let mouse = objc2_app_kit::NSEvent::mouseLocation();
+    Some(page_place_on_mac((mouse.x, mouse.y), frame))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn pointer_in_page(app: &AppHandle, window: &WebviewWindow) -> Option<(f64, f64)> {
+    let (Ok(pointer), Ok(origin), Ok(scale)) = (app.cursor_position(), window.inner_position(), window.scale_factor())
+    else {
+        return None;
+    };
+    Some(page_place((pointer.x, pointer.y), (origin.x, origin.y), scale))
 }
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
@@ -78,13 +107,11 @@ fn watch_pointer(app: &AppHandle, watch: u64) {
         let Some(window) = app.get_webview_window(LABEL) else {
             return;
         };
-        let (Ok(pointer), Ok(origin), Ok(scale)) =
-            (app.cursor_position(), window.inner_position(), window.scale_factor())
-        else {
+        let Some(at) = pointer_in_page(app, &window) else {
             continue;
         };
         let over_it = match *lock(&VISIBLE) {
-            Some(rect) => pointer_is_in_box((pointer.x, pointer.y), (origin.x, origin.y), scale, rect),
+            Some(rect) => in_box(at, rect),
             None => true,
         };
         if over_it == letting_through && WATCH.load(Ordering::SeqCst) == watch {
@@ -160,6 +187,10 @@ pub fn show(app: &AppHandle) {
     let Some(window) = app.get_webview_window(LABEL) else {
         return;
     };
+    #[cfg(target_os = "macos")]
+    {
+        *lock(&FRAME) = None;
+    }
     if fills_screen() {
         fill_the_screen(&window);
     } else {
@@ -262,6 +293,8 @@ fn place(_app: &AppHandle, window: &WebviewWindow) {
             frame.origin.x + f64::from(across),
             frame.origin.y + frame.size.height - f64::from(down),
         ));
+        let placed = ns_window.frame();
+        *lock(&FRAME) = Some([placed.origin.x, placed.origin.y, placed.size.width, placed.size.height]);
     });
 }
 

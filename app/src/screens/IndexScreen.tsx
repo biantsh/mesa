@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import { api, COMPUTER, errorText, type Entry, type Listed, type Listing, type Overview } from "../api";
+import { api, COMPUTER, errorText, type Entry, type IndexView, type Listed, type Listing, type Overview } from "../api";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ContextMenu } from "../components/ContextMenu";
 import { EmptyFolder } from "../components/EmptyFolder";
@@ -25,8 +25,9 @@ import { useIndexKeys } from "../useIndexKeys";
 import { useIndexLists } from "../useIndexLists";
 import { useLatest } from "../useLatest";
 import { useListMenu } from "../useListMenu";
-import { useLiveIndexStatus } from "../useLiveIndexStatus";
-import { entriesWith, shapeOf } from "../entriesShape";
+import { entriesWith, sameShape, shapeOf } from "../entriesShape";
+import type { IndexLink } from "../useIndexState";
+import { withStatusChanges } from "../listingColumns";
 import { useFolderChanges } from "../useFolderChanges";
 import { usePageSelection } from "../usePageSelection";
 import { usePanelLayout } from "../usePanelLayout";
@@ -37,6 +38,7 @@ import { useViewMode } from "../useViewMode";
 import styles from "./IndexScreen.module.css";
 
 const NO_ENTRIES: Entry[] = [];
+const isUnfinished = (entry: Entry) => entry.index === "indexing" || entry.index === "paused" || entry.queued;
 const KEEPS_SELECTION = "button, a, input, select, textarea, label, dialog, [role='menu'], [role='separator']";
 
 const INDEXED_HINT = (
@@ -67,13 +69,13 @@ interface Props {
   onBack: () => void;
   onSimple: () => void;
   overview: Overview | null;
-  onRefreshProgress: () => Promise<void>;
+  index: IndexLink;
   secondsLeft: number | null;
   arrivalDelay: number;
   active: boolean;
 }
 
-export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: refreshProgress, secondsLeft, arrivalDelay, active }: Props) {
+export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, arrivalDelay, active }: Props) {
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(true);
   const [openingAnother, setOpeningAnother] = useState(true);
@@ -87,11 +89,7 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const changeSort = useCallback((column: SortColumn) => setSort((current) => nextSort(current, column)), []);
   const progress = overview?.progress ?? null;
-
-  const { indexed, excluded, loaded, refresh: refreshLists } = useIndexLists(
-    `${progress?.name ?? ""}|${progress?.queued ?? 0}|${progress?.paused ? 1 : 0}`,
-    active,
-  );
+  const { indexed, excluded, loaded, ask: askLists, take: takeLists } = useIndexLists(active, progress !== null);
   const listItems = { indexed, excluded };
 
   const entries = listing?.entries ?? NO_ENTRIES;
@@ -129,12 +127,6 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
   useDefaultScroll(active, () => explorer.current?.querySelector<HTMLElement>("[data-scroller]") ?? null);
 
   const readAgainLater = useRef<() => void>(() => {});
-  const readAgain = useCallback(() => readAgainLater.current(), []);
-  const refreshStatuses = useLiveIndexStatus(listing, setListing, refreshProgress, active && progress !== null, readAgain);
-  const refreshAll = async () => {
-    await refreshStatuses();
-    await refreshProgress();
-  };
 
   const { open, choose } = usePanelLayout(indexed.length, excluded.length, loaded);
   const expandIndexed = useCallback(() => choose("indexed"), [choose]);
@@ -149,10 +141,7 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
   const typeChoice = useTypeChoice({
     active,
     nothingIndexed: overview?.empty ?? true,
-    onChanged: async () => {
-      await refreshProgress();
-      await Promise.all([refreshFolder(), refreshLists()]);
-    },
+    onChanged: index.refresh,
     onError: setError,
   });
   const arrival = useFirstArrival(active, loaded, arrivalDelay);
@@ -218,6 +207,31 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
   readAgainLater.current = () => void refreshFolder();
   useFolderChanges(listing?.path ?? null, active, refreshFolder);
 
+  const indexing = progress !== null;
+  const unfinished = useMemo(() => !indexing && entries.some(isUnfinished), [entries, indexing]);
+  const watcher = useLatest({ listing, askLists, takeLists, wanted: indexing || unfinished });
+  useEffect(() => {
+    if (!active) return;
+    const unwatch = index.watch({
+      listing: (now) => (now || watcher.current.wanted ? (watcher.current.listing?.generation ?? null) : null),
+      lists: (now) => watcher.current.askLists(now),
+      take: (view: IndexView) => {
+        if (view.lists) watcher.current.takeLists(view.lists);
+        const told = view.folder;
+        if (!told) return;
+        if (told.stale) return readAgainLater.current();
+        setListing((current) => {
+          if (!current || current.generation !== told.base) return current;
+          const changed = withStatusChanges(current.entries, told.changes);
+          if (!changed) return current.generation === told.generation ? current : { ...current, generation: told.generation };
+          return { ...current, entries: sameShape(changed, current.entries), generation: told.generation };
+        });
+      },
+    });
+    void index.refresh();
+    return unwatch;
+  }, [active, index, watcher]);
+
   const listedShape = listing ? shapeOf(listing.entries) : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const hasPrivacyLocked = useMemo(() => listing?.entries.some((entry) => entry.privacy) ?? false, [listedShape]);
@@ -248,9 +262,7 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
   const { actionsFor, addEntry, stopEntry, undoRecentAdd, undoRecentStop, listActions, askAboutIndexAll, confirmation, confirm, chooseAlternative, dismiss } = useIndexActions({
     folder: listing?.path ?? null,
     entries,
-    rereadFolder: refreshFolder,
-    refreshProgress,
-    refreshLists,
+    refresh: index.refresh,
     clearSelection: clear,
     clearListSelection,
     setError,
@@ -341,7 +353,7 @@ export function IndexScreen({ onBack, onSimple, overview, onRefreshProgress: ref
         onBack={onBack}
         progress={progress}
         secondsLeft={secondsLeft}
-        onRefreshProgress={refreshAll}
+        onRefreshProgress={index.refresh}
         onIndexAll={askAboutIndexAll}
         everythingIndexed={overview?.everythingIndexed ?? false}
         onError={setError}

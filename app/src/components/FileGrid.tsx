@@ -189,7 +189,7 @@ function Corner({
   onAdd: (entry: Entry) => void;
   onStop: (entry: Entry) => void;
 }) {
-  const stoppable = entry.droppable && (entry.index === "indexing" || entry.index === "paused");
+  const stoppable = entry.queued && (entry.index === "indexing" || entry.index === "paused");
   return (
     <>
       {stoppable ? (

@@ -1,6 +1,7 @@
 import { useSecondsLeft } from "../useSecondsLeft";
 import { useCallback, useEffect, useRef } from "react";
 import type { Overview } from "../api";
+import type { IndexLink } from "../useIndexState";
 import { changeWithTransition } from "../viewTransition";
 import { IndexScreen } from "./IndexScreen";
 import { SimpleIndexScreen } from "./SimpleIndexScreen";
@@ -11,14 +12,13 @@ interface Props {
   onBack: () => void;
   onSearch: () => void;
   overview: Overview | null;
-  onRefreshOverview: () => Promise<void>;
-  onRefreshProgress: () => Promise<void>;
+  index: IndexLink;
   active: boolean;
 }
 
 const ARRIVAL_DELAY_MS = 100;
 
-export function IndexPage({ onBack, onSearch, overview, onRefreshOverview, onRefreshProgress, active }: Props) {
+export function IndexPage({ onBack, onSearch, overview, index, active }: Props) {
   const secondsLeft = useSecondsLeft(overview?.progress ?? null);
   const [view, setView] = useIndexView();
   const simple = view === "simple";
@@ -49,8 +49,7 @@ export function IndexPage({ onBack, onSearch, overview, onRefreshOverview, onRef
           onSearch={onSearch}
           overview={overview}
           secondsLeft={secondsLeft}
-          onRefreshOverview={onRefreshOverview}
-          onRefreshProgress={onRefreshProgress}
+          onRefresh={index.refresh}
           active={active && simple}
         />
       </div>
@@ -59,7 +58,7 @@ export function IndexPage({ onBack, onSearch, overview, onRefreshOverview, onRef
           onBack={onBack}
           onSimple={showSimple}
           overview={overview}
-          onRefreshProgress={onRefreshProgress}
+          index={index}
           secondsLeft={secondsLeft}
           arrivalDelay={arrivalDelay}
           active={active && !simple}

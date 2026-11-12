@@ -4,11 +4,13 @@
   overflow: hidden;
 }
 
+/* Keep it on its own layer so WebKit doesn't snap it a pixel sideways when a slide ends. */
 .icon {
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
+  will-change: transform;
 }
 
 .icon[data-lane="current"] {

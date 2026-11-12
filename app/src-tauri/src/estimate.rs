@@ -90,7 +90,14 @@ pub fn before_model_starts(state: &ModelState) {
 struct Kept {
     at: Instant,
     not_asked: Vec<String>,
+    excluded: Vec<PathBuf>,
     survey: Survey,
+}
+
+impl Kept {
+    fn is_good(&self, not_asked: &[String], excluded: &[PathBuf]) -> bool {
+        self.at.elapsed() < SURVEY_FRESH && self.not_asked == not_asked && self.excluded == excluded
+    }
 }
 
 pub struct Estimator {
@@ -123,16 +130,16 @@ impl Estimator {
         lock(&self.surveying)
     }
 
-    pub fn recent_survey(&self, not_asked: &[String]) -> Option<Survey> {
+    pub fn recent_survey(&self, not_asked: &[String], excluded: &[PathBuf]) -> Option<Survey> {
         let kept = lock(&self.survey);
         let kept = kept.as_ref()?;
-        (kept.at.elapsed() < SURVEY_FRESH && kept.not_asked == not_asked).then(|| kept.survey.clone())
+        kept.is_good(not_asked, excluded).then(|| kept.survey.clone())
     }
 
-    pub fn counted(&self, types: Categories) -> Option<Vec<(PathBuf, u64)>> {
+    pub fn counted(&self, types: Categories, excluded: &[PathBuf]) -> Option<Vec<(PathBuf, u64)>> {
         let kept = lock(&self.survey);
         let kept = kept.as_ref()?;
-        if kept.at.elapsed() >= SURVEY_FRESH || !kept.survey.not_asked.is_empty() {
+        if kept.at.elapsed() >= SURVEY_FRESH || kept.excluded != excluded || !kept.survey.not_asked.is_empty() {
             return None;
         }
         let of = |counts: &PerType<u64>| {
@@ -144,17 +151,19 @@ impl Estimator {
         };
         Some(
             kept.survey
-                .by_root
+                .by_folder
                 .iter()
-                .map(|(root, counts)| (root.clone(), of(counts)))
+                .map(|(folder, counts)| (folder.clone(), of(counts)))
+                .filter(|&(_, files)| files > 0)
                 .collect(),
         )
     }
 
-    pub fn keep(&self, survey: Survey, not_asked: Vec<String>) {
+    pub fn keep(&self, survey: Survey, not_asked: Vec<String>, excluded: Vec<PathBuf>) {
         *lock(&self.survey) = Some(Kept {
             at: Instant::now(),
             not_asked,
+            excluded,
             survey,
         });
     }

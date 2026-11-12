@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ffi::{OsStr, OsString},
     ops::Bound,
@@ -44,8 +45,8 @@ struct ActiveJob {
     started: bool,
     quiet: bool,
     count_taken: bool,
-    found: u64,
-    total: Option<u64>,
+    counted: bool,
+    to_do: u64,
     done: u64,
     current: Option<PathBuf>,
     already: u64,
@@ -60,8 +61,8 @@ impl ActiveJob {
             started: quiet,
             quiet,
             count_taken: quiet,
-            found: 0,
-            total: quiet.then_some(0),
+            counted: quiet,
+            to_do: 0,
             done: 0,
             current: None,
             already: 0,
@@ -69,16 +70,39 @@ impl ActiveJob {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct Tally {
+    found: u64,
+    done: u64,
+}
+
+impl Tally {
+    fn shown_done(self) -> u64 {
+        self.done.min(self.found)
+    }
+}
+
+pub struct Dropped {
+    pub root: PathBuf,
+    pub id: i64,
+    pub started: bool,
+}
+
 #[derive(Default)]
 pub struct ProgressState {
     next_ticket: u64,
     jobs: VecDeque<ActiveJob>,
     count_from: u64,
-    untotalled: usize,
-    finished: u64,
+    uncounted: usize,
     released: bool,
-    waiting: Roots,
+    unstarted: usize,
     asked: Roots,
+    tallies: BTreeMap<PathBuf, Tally>,
+    found: u64,
+    done: u64,
+    already: u64,
+    checks_to_do: u64,
+    checks_done: u64,
 }
 
 #[derive(Default)]
@@ -104,21 +128,6 @@ impl Roots {
 
     fn at_or_above(&self, path: &Path) -> bool {
         path.ancestors().any(|above| self.0.contains_key(above))
-    }
-
-    fn at_or_below(&self, path: &Path) -> bool {
-        self.0
-            .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
-            .next()
-            .is_some_and(|(below, _)| below.starts_with(path))
-    }
-
-    fn of_children(&self, folder: &Path) -> (bool, HashSet<OsString>) {
-        let above = folder.ancestors().any(|above| self.0.contains_key(above));
-        (
-            above,
-            crate::index::children_with_something(crate::index::strictly_below(&self.0, folder), folder),
-        )
     }
 
     fn children(&self, folder: &Path) -> HashSet<OsString> {
@@ -155,6 +164,19 @@ impl ProgressState {
         (self.next_ticket, first)
     }
 
+    pub fn upcoming(&self, most: usize) -> Vec<(u64, i64, PathBuf)> {
+        self.jobs
+            .iter()
+            .take_while(|job| !job.started && !job.quiet)
+            .take(most)
+            .map(|job| (job.ticket, job.id, job.root.clone()))
+            .collect()
+    }
+
+    pub fn has_waiting(&self) -> bool {
+        self.unstarted > 0
+    }
+
     pub fn add_quiet(&mut self, root: PathBuf) -> u64 {
         if self.jobs.is_empty() {
             self.new_run();
@@ -166,11 +188,11 @@ impl ProgressState {
     }
 
     pub fn add_total(&mut self, ticket: u64, files: u64) {
-        if !self.is_current(ticket) {
+        if !self.is_current(ticket) || !self.jobs[0].quiet {
             return;
         }
-        let total = self.jobs[0].total.unwrap_or(0) + files;
-        self.set_total(0, total);
+        self.jobs[0].to_do += files;
+        self.checks_to_do += files;
     }
 
     pub fn has(&self, ticket: u64) -> bool {
@@ -179,10 +201,10 @@ impl ProgressState {
 
     #[cfg(test)]
     pub fn drop_job(&mut self, root: &Path) -> Option<i64> {
-        self.drop_jobs(&[root.to_owned()]).pop().map(|(_, id)| id)
+        self.drop_jobs(&[root.to_owned()]).pop().map(|dropped| dropped.id)
     }
 
-    pub fn drop_jobs(&mut self, roots: &[PathBuf]) -> Vec<(PathBuf, i64)> {
+    pub fn drop_jobs(&mut self, roots: &[PathBuf]) -> Vec<Dropped> {
         let mut wanted: HashMap<&Path, usize> = HashMap::new();
         for root in roots.iter().filter(|root| self.asked.contains(root)) {
             *wanted.entry(root.as_path()).or_default() += 1;
@@ -202,41 +224,57 @@ impl ProgressState {
                     })
             })
             .collect();
-        let mut dropped: Vec<(PathBuf, i64)> = positions
+        let mut dropped: Vec<Dropped> = positions
             .into_iter()
             .rev()
             .map(|at| self.remove_job(at))
-            .map(|job| (job.root, job.id))
+            .map(|job| Dropped {
+                root: job.root,
+                id: job.id,
+                started: job.started,
+            })
             .collect();
         dropped.reverse();
+        for Dropped { root, .. } in &dropped {
+            let gone: Vec<PathBuf> = self
+                .tallies_under(root)
+                .filter(|folder| !self.asked.at_or_above(folder))
+                .cloned()
+                .collect();
+            gone.iter().for_each(|folder| self.forget(folder));
+        }
         self.forget_if_over();
         dropped
     }
 
     fn push_job(&mut self, job: ActiveJob) {
         if !job.started {
-            self.waiting.add(&job.root);
+            self.unstarted += 1;
         }
         if !job.quiet {
             self.asked.add(&job.root);
         }
-        if job.total.is_none() {
-            self.untotalled += 1;
+        if !job.counted {
+            self.uncounted += 1;
         }
+        self.already += job.already;
         self.jobs.push_back(job);
     }
 
     fn remove_job(&mut self, position: usize) -> ActiveJob {
         let job = self.jobs.remove(position).expect("a job that is there");
-        if job.total.is_none() {
-            self.untotalled -= 1;
+        if !job.counted {
+            self.uncounted -= 1;
         }
         if !job.started {
-            self.waiting.remove(&job.root);
+            self.unstarted -= 1;
         }
         if !job.quiet {
             self.asked.remove(&job.root);
         }
+        self.already -= job.already;
+        self.checks_to_do -= job.to_do;
+        self.checks_done -= job.done;
         job
     }
 
@@ -248,10 +286,6 @@ impl ProgressState {
         self.asked.contains(root)
     }
 
-    pub fn waiting_children(&self, folder: &Path) -> (bool, HashSet<OsString>) {
-        self.waiting.of_children(folder)
-    }
-
     pub fn job_root_children(&self, folder: &Path) -> HashSet<OsString> {
         self.asked.children(folder)
     }
@@ -260,52 +294,12 @@ impl ProgressState {
         self.asked.0.keys().cloned().collect()
     }
 
-    pub fn is_waiting(&self, path: &Path) -> bool {
-        self.waiting.at_or_above(path) || self.waiting.at_or_below(path)
-    }
-
     pub fn is_active(&self) -> bool {
         !self.jobs.is_empty()
     }
 
-    #[cfg(test)]
-    pub fn cancel_all(&mut self) -> Vec<(i64, PathBuf)> {
-        self.new_run();
-        self.waiting = Roots::default();
-        self.asked = Roots::default();
-        self.untotalled = 0;
-        self.jobs
-            .drain(..)
-            .filter(|job| !job.quiet)
-            .map(|job| (job.id, job.root))
-            .collect()
-    }
-
-    #[cfg(test)]
-    pub fn cancel_check(&mut self) -> bool {
-        if !self.jobs.front().is_some_and(|job| job.quiet) {
-            return false;
-        }
-        self.remove_job(0);
-        self.forget_if_over();
-        true
-    }
-
-    fn job_mut(&mut self, ticket: u64) -> Option<&mut ActiveJob> {
-        let position = self.position_of(ticket)?;
-        self.jobs.get_mut(position)
-    }
-
     fn position_of(&self, ticket: u64) -> Option<usize> {
         self.jobs.binary_search_by_key(&ticket, |job| job.ticket).ok()
-    }
-
-    fn set_total(&mut self, position: usize, total: u64) {
-        let job = &mut self.jobs[position];
-        if job.total.is_none() {
-            self.untotalled -= 1;
-        }
-        job.total = Some(total);
     }
 
     fn is_current(&self, ticket: u64) -> bool {
@@ -313,8 +307,13 @@ impl ProgressState {
     }
 
     fn new_run(&mut self) {
-        self.finished = 0;
         self.released = false;
+        self.tallies = BTreeMap::new();
+        self.found = 0;
+        self.done = 0;
+        self.already = 0;
+        self.checks_to_do = 0;
+        self.checks_done = 0;
     }
 
     fn forget_if_over(&mut self) {
@@ -323,14 +322,39 @@ impl ProgressState {
         }
     }
 
+    fn tallies_under<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a PathBuf> + 'a {
+        self.tallies
+            .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
+            .map(|(folder, _)| folder)
+            .take_while(move |folder| folder.starts_with(path))
+    }
+
+    fn change(&mut self, folder: &Path, change: impl FnOnce(&mut Tally)) {
+        if !self.tallies.contains_key(folder) {
+            self.tallies.insert(folder.to_owned(), Tally::default());
+        }
+        let tally = self.tallies.get_mut(folder).expect("just made");
+        let before = *tally;
+        change(tally);
+        self.found = self.found - before.found + tally.found;
+        self.done = self.done - before.shown_done() + tally.shown_done();
+    }
+
+    fn forget(&mut self, folder: &Path) {
+        if let Some(tally) = self.tallies.remove(folder) {
+            self.found -= tally.found;
+            self.done -= tally.shown_done();
+        }
+    }
+
+    #[cfg(test)]
     pub fn begin(&mut self, ticket: u64) -> bool {
         if !self.is_current(ticket) {
             return false;
         }
         if !self.jobs[0].started {
             self.jobs[0].started = true;
-            let root = self.jobs[0].root.clone();
-            self.waiting.remove(&root);
+            self.unstarted -= 1;
         }
         true
     }
@@ -347,8 +371,7 @@ impl ProgressState {
             let job = &mut self.jobs[position];
             if !job.started {
                 job.started = true;
-                let root = job.root.clone();
-                self.waiting.remove(&root);
+                self.unstarted -= 1;
             }
             begun.push(ticket);
         }
@@ -369,48 +392,84 @@ impl ProgressState {
 
     pub fn ready(&self, ticket: u64) -> Option<bool> {
         let job = &self.jobs[self.position_of(ticket)?];
-        Some(job.total.is_some() && (self.released || self.untotalled == 0))
+        Some(job.counted && (self.released || self.uncounted == 0))
     }
 
     pub fn release(&mut self) {
         self.released = true;
     }
 
+    #[cfg(test)]
     pub fn found(&mut self, ticket: u64, files: u64) {
-        if let Some(job) = self.job_mut(ticket) {
-            job.found += files;
+        if let Some(position) = self.position_of(ticket) {
+            let root = self.jobs[position].root.clone();
+            let before = self.tallies.get(&root).map_or(0, |tally| tally.found);
+            self.found_in(ticket, &root, before + files);
         }
     }
 
-    pub fn counted_already(&mut self, ticket: u64, total: u64) {
-        if let Some(position) = self.position_of(ticket) {
-            let job = &mut self.jobs[position];
-            job.count_taken = true;
-            job.found = total;
-            self.set_total(position, total);
+    pub fn found_in(&mut self, ticket: u64, folder: &Path, files: u64) {
+        if self
+            .position_of(ticket)
+            .is_some_and(|position| !self.jobs[position].quiet)
+        {
+            self.change(folder, |tally| tally.found = files);
         }
+    }
+
+    pub fn counted_already(&mut self, ticket: u64, folders: &[(PathBuf, u64)]) {
+        if !self.has(ticket) {
+            return;
+        }
+        for (folder, files) in folders {
+            self.found_in(ticket, folder, *files);
+        }
+        let position = self.position_of(ticket).expect("there");
+        self.jobs[position].count_taken = true;
+        self.finish_counting(ticket);
     }
 
     pub fn finish_counting(&mut self, ticket: u64) {
-        if let Some(position) = self.position_of(ticket) {
-            let found = self.jobs[position].found;
-            self.set_total(position, found);
+        if let Some(position) = self.position_of(ticket)
+            && !self.jobs[position].counted
+        {
+            self.jobs[position].counted = true;
+            self.uncounted -= 1;
         }
     }
 
+    pub fn excluded(&mut self, path: &Path) {
+        let gone: Vec<PathBuf> = self.tallies_under(path).cloned().collect();
+        gone.iter().for_each(|folder| self.forget(folder));
+    }
+
+    #[cfg(test)]
     pub fn processed(&mut self, ticket: u64, files: u64) {
-        if let Some(job) = self.job_mut(ticket) {
-            job.done += files;
+        if let Some(position) = self.position_of(ticket) {
+            let root = self.jobs[position].root.clone();
+            self.processed_in(ticket, files, &root);
         }
     }
 
     pub fn processed_in(&mut self, ticket: u64, files: u64, folder: &Path) {
-        if let Some(job) = self.job_mut(ticket) {
-            job.done += files;
-            if job.current.as_deref() != Some(folder) {
-                job.current = Some(folder.to_owned());
-            }
+        let Some(position) = self.position_of(ticket) else {
+            return;
+        };
+        let job = &mut self.jobs[position];
+        if job.current.as_deref() != Some(folder) {
+            job.current = Some(folder.to_owned());
         }
+        if job.quiet {
+            job.done += files;
+            self.checks_done += files;
+            return;
+        }
+        let tallied = if folder.starts_with(&job.root) {
+            Cow::Borrowed(folder)
+        } else {
+            Cow::Owned(job.root.clone())
+        };
+        self.change(&tallied, |tally| tally.done += files);
     }
 
     pub fn finish_job(&mut self, ticket: u64) -> bool {
@@ -418,27 +477,40 @@ impl ProgressState {
             return false;
         };
         let job = self.remove_job(position);
-        self.finished += job.total.unwrap_or(0);
+        if job.quiet {
+            self.checks_to_do += job.to_do;
+            self.checks_done += job.to_do;
+        } else {
+            let whole: Vec<PathBuf> = self
+                .tallies_under(&job.root)
+                .filter(|folder| {
+                    !folder
+                        .ancestors()
+                        .take_while(|above| above.starts_with(&job.root))
+                        .any(|above| self.asked.contains(above))
+                })
+                .cloned()
+                .collect();
+            whole
+                .iter()
+                .for_each(|folder| self.change(folder, |tally| tally.done = tally.done.max(tally.found)));
+        }
         self.forget_if_over();
         true
     }
 
     pub fn snapshot(&self, paused: bool) -> Option<Progress> {
         let current = self.jobs.front()?;
-        let counted: u64 = self.jobs.iter().filter_map(|job| job.total).sum();
-        let counting = current.total.is_none() || (!self.released && self.untotalled > 0);
-        let done: u64 = self
-            .jobs
-            .iter()
-            .map(|job| job.done.max(job.already).min(job.total.unwrap_or(0)))
-            .sum();
+        let counting = !current.counted || (!self.released && self.uncounted > 0);
+        let total = self.found + self.checks_to_do;
+        let done = (self.done.max(self.already) + self.checks_done.min(self.checks_to_do)).min(total);
         Some(Progress {
             name: browse::display_name(&current.root),
             queued: self.jobs.len() as u64 - 1,
             counting,
-            found: self.finished + self.jobs.iter().map(|job| job.found).sum::<u64>(),
-            done: self.finished + done,
-            total: if counting { 0 } else { self.finished + counted },
+            found: self.found,
+            done,
+            total: if counting { 0 } else { total },
             paused,
             updating: current.quiet,
             folders: folders_below(&current.root, current.current.as_deref()),
@@ -476,6 +548,30 @@ mod tests {
         assert!(state.drop_job(&root("b")).is_some());
         let snapshot = state.snapshot(false).unwrap();
         assert_eq!((snapshot.done, snapshot.total, snapshot.queued), (20, 50, 0));
+    }
+
+    #[test]
+    fn stop_all_ignores_late_updates() {
+        let (mut state, old) = state_with(&["a", "b"]);
+        state.begin(old[0]);
+        state.found(old[0], 10);
+        state.finish_counting(old[0]);
+        let roots = state.job_roots();
+        state.drop_jobs(&roots);
+        assert_eq!(state.snapshot(false), None);
+
+        let new = state.add_job(0, root("c")).0;
+        state.begin(new);
+        state.found(old[0], 99);
+        state.processed(old[0], 99);
+        state.finish_counting(old[0]);
+        state.finish_job(old[0]);
+        let snapshot = state.snapshot(false).unwrap();
+        assert_eq!(
+            (snapshot.name.as_str(), snapshot.found, snapshot.done, snapshot.total),
+            ("c", 0, 0, 0)
+        );
+        assert!(snapshot.counting);
     }
 
     #[test]

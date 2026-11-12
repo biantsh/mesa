@@ -9,7 +9,6 @@ import { SimpleProgress } from "../components/SimpleProgress";
 import { TypeTiles } from "../components/TypeTiles";
 import { DEFAULT_TYPES, TYPE_ORDER, describeTypes, hasNewTypes, typesToIndex } from "../indexTypes";
 import { HINT_DELAY_MS, hasShownBackgroundHint, markBackgroundHintShown } from "../backgroundHint";
-import { removeItems } from "../confirmations";
 import { SWITCH_NAME } from "../indexView";
 import { changeWithTransition } from "../viewTransition";
 import { useIndexedTypes } from "../useIndexedTypes";
@@ -32,8 +31,7 @@ interface Props {
   onSearch: () => void;
   overview: Overview | null;
   secondsLeft: number | null;
-  onRefreshOverview: () => Promise<void>;
-  onRefreshProgress: () => Promise<void>;
+  onRefresh: () => Promise<void>;
   active: boolean;
 }
 
@@ -43,8 +41,7 @@ export function SimpleIndexScreen({
   onSearch,
   overview,
   secondsLeft,
-  onRefreshOverview,
-  onRefreshProgress: refreshProgress,
+  onRefresh: refresh,
   active,
 }: Props) {
   const progress = overview?.progress ?? null;
@@ -145,32 +142,13 @@ export function SimpleIndexScreen({
 
   const [stopAsked, setStopAsked] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [queuedRoots, setQueuedRoots] = useState<string[]>([]);
-  const queueKey = view === "running" && progress ? `${progress.name}|${progress.queued}` : "";
-  useEffect(() => {
-    if (!queueKey || !active) return;
-    let cancelled = false;
-    api
-      .queuedRoots()
-      .then((roots) => {
-        if (!cancelled) setQueuedRoots(roots);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [queueKey, active]);
   const stop = async () => {
     setStopAsked(false);
     setStopping(true);
     setError(null);
     try {
-      const dropping =
-        queuedRoots.length > 0
-          ? queuedRoots
-          : await api.queuedRoots();
-      await removeItems(dropping, dropping);
-      await Promise.all([refreshProgress(), onRefreshOverview().catch(() => {})]);
+      await api.stopIndexing();
+      await refresh();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -191,7 +169,7 @@ export function SimpleIndexScreen({
       } else {
         await indexed.set(typesToIndex(indexedTypes, picked, false));
       }
-      await Promise.all([refreshProgress(), onRefreshOverview().catch(() => {})]);
+      await refresh();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -234,7 +212,7 @@ export function SimpleIndexScreen({
                 <>
                   <h2 className={styles.cardTitle}>{progress.updating ? "Updating your index" : "Indexing your files"}</h2>
                   <div className={styles.middle}>
-                    <SimpleProgress progress={progress} secondsLeft={secondsLeft} onScreen={active} onRefresh={refreshProgress} onError={setError} />
+                    <SimpleProgress progress={progress} secondsLeft={secondsLeft} onScreen={active} onRefresh={refresh} onError={setError} />
                     {hint && (
                       <p className={styles.hint}>
                         <Info size={16} aria-hidden />

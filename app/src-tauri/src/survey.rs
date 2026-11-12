@@ -2,7 +2,7 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -59,7 +59,7 @@ pub struct Survey {
     #[serde(skip)]
     pub samples: PerType<Vec<Sample>>,
     #[serde(skip)]
-    pub by_root: Vec<(PathBuf, PerType<u64>)>,
+    pub by_folder: Arc<Vec<(PathBuf, PerType<u64>)>>,
 }
 
 struct Reservoir {
@@ -114,9 +114,8 @@ pub fn survey(roots: &[PathBuf], protected: &[Protected], excluded: impl Fn(&Pat
     let no_access = Mutex::new(Vec::new());
     let at = |category: Category| CATEGORIES.iter().position(|&each| each == category).unwrap_or(0);
 
-    let mut by_root = Vec::new();
+    let by_folder = Mutex::new(Vec::new());
     for root in roots {
-        let before: Vec<u64> = counts.iter().map(|count| count.load(Ordering::Relaxed)).collect();
         crawl(root.clone(), crawl::threads(), false, |dir| {
             if excluded(&dir) || not_asked.iter().any(|folder| dir.starts_with(&folder.path)) {
                 return Vec::new();
@@ -132,23 +131,25 @@ pub fn survey(roots: &[PathBuf], protected: &[Protected], excluded: impl Fn(&Pat
                 mine.1 += size;
                 mine.2.push((path, size));
             });
+            let mut here = PerType::default();
             for (i, (files, size, samples)) in found.into_iter().enumerate() {
                 if files == 0 {
                     continue;
                 }
+                *here.get_mut(CATEGORIES[i]) = files;
                 counts[i].fetch_add(files, Ordering::Relaxed);
                 bytes[i].fetch_add(size, Ordering::Relaxed);
                 let mut reservoir = lock(&reservoirs[i]);
                 samples.into_iter().for_each(|sample| reservoir.offer(sample));
             }
+            if here != PerType::default() {
+                lock(&by_folder).push((dir, here));
+            }
             subdirs.unwrap_or_default()
         });
-        let mut here = PerType::default();
-        for (i, &category) in CATEGORIES.iter().enumerate() {
-            *here.get_mut(category) = counts[i].load(Ordering::Relaxed) - before[i];
-        }
-        by_root.push((root.clone(), here));
     }
+    let mut by_folder = by_folder.into_inner().unwrap_or_else(|e| e.into_inner());
+    by_folder.sort_by(|(a, _), (b, _)| a.cmp(b));
 
     let no_access = no_access.into_inner().unwrap_or_else(|e| e.into_inner());
     let denied_in_order = protected
@@ -160,7 +161,7 @@ pub fn survey(roots: &[PathBuf], protected: &[Protected], excluded: impl Fn(&Pat
     let mut survey = Survey {
         not_asked,
         no_access: denied_in_order,
-        by_root,
+        by_folder: Arc::new(by_folder),
         ..Survey::default()
     };
     for (i, &category) in CATEGORIES.iter().enumerate() {

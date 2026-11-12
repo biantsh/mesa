@@ -40,15 +40,11 @@ impl Row {
             privacy: entry.privacy,
             state: IndexState {
                 status: entry.index,
-                droppable: entry.droppable,
+                queued: entry.queued,
                 excluded_here: entry.excluded_here,
                 removable: entry.removable,
             },
         }
-    }
-
-    fn is_unfinished(&self) -> bool {
-        matches!(self.state.status, IndexStatus::Indexing | IndexStatus::Paused) || self.state.droppable
     }
 }
 
@@ -86,7 +82,6 @@ pub struct Said {
     path: String,
     parent: Option<String>,
     breadcrumbs: Vec<Crumb>,
-    unfinished: bool,
     entries: Columns,
 }
 
@@ -143,7 +138,7 @@ const STATUSES: [IndexStatus; 8] = [
 ];
 const FLAG_READABLE: u8 = 1;
 const FLAG_HAS_CONTENTS: u8 = 2;
-const FLAG_DROPPABLE: u8 = 4;
+const FLAG_QUEUED: u8 = 4;
 const FLAG_EXCLUDED_HERE: u8 = 8;
 const FLAG_REMOVABLE: u8 = 16;
 
@@ -185,7 +180,7 @@ impl Columns {
             let flags = [
                 (row.readable, FLAG_READABLE),
                 (row.has_contents, FLAG_HAS_CONTENTS),
-                (row.state.droppable, FLAG_DROPPABLE),
+                (row.state.queued, FLAG_QUEUED),
                 (row.state.excluded_here, FLAG_EXCLUDED_HERE),
                 (row.state.removable, FLAG_REMOVABLE),
             ]
@@ -238,7 +233,6 @@ pub struct Statuses {
     generation: u64,
     changes: Vec<(u32, IndexStatus, bool, bool, bool)>,
     folder: Option<IndexState>,
-    unfinished: bool,
 }
 
 #[derive(Serialize)]
@@ -249,7 +243,6 @@ pub enum Refreshed {
         base: u64,
         generation: u64,
         shape: u64,
-        unfinished: bool,
         runs: Vec<Run>,
         fresh: Columns,
         parent: Option<String>,
@@ -283,7 +276,6 @@ impl ShownListing {
             path: listing.path.clone(),
             parent: listing.parent.clone(),
             breadcrumbs: listing.breadcrumbs,
-            unfinished: rows.iter().any(Row::is_unfinished),
             entries: Columns::of(&rows.iter().collect::<Vec<_>>(), prefix.clone(), paths.clone()),
         };
         *self.lock() = Some(Held {
@@ -322,7 +314,6 @@ impl ShownListing {
             prefix.clone().filter(|_| !fresh_at.is_empty()),
             fresh_paths,
         );
-        let unfinished = rows.iter().any(Row::is_unfinished);
         *held = Some(Held {
             generation,
             shape,
@@ -336,7 +327,6 @@ impl ShownListing {
             base,
             generation,
             shape,
-            unfinished,
             runs,
             fresh,
             parent: listing.parent,
@@ -351,7 +341,6 @@ impl ShownListing {
             generation,
             changes: Vec::new(),
             folder: None,
-            unfinished: false,
         };
         let (path, folder) = {
             let held = self.lock();
@@ -396,7 +385,7 @@ impl ShownListing {
                     changes.push((
                         at as u32,
                         state.status,
-                        state.droppable,
+                        state.queued,
                         state.excluded_here,
                         state.removable,
                     ));
@@ -413,7 +402,6 @@ impl ShownListing {
             generation: held.generation,
             changes,
             folder: own,
-            unfinished: held.rows.iter().any(Row::is_unfinished),
         }
     }
 

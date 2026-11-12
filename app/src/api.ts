@@ -22,7 +22,7 @@ export interface Entry {
   readable: boolean;
   hasContents: boolean;
   index: IndexStatus;
-  droppable: boolean;
+  queued: boolean;
   excludedHere: boolean;
   removable: boolean;
   size: number | null;
@@ -51,12 +51,19 @@ interface SaidLists {
 
 export interface ListStates {
   version: number;
+  stale: boolean;
   states: [IndexStatus, boolean, boolean][] | null;
+}
+
+export interface IndexView {
+  overview: Overview;
+  folder: FolderStatuses | null;
+  lists: ListStates | null;
 }
 
 export interface IndexState {
   status: IndexStatus;
-  droppable: boolean;
+  queued: boolean;
   excludedHere: boolean;
   removable: boolean;
 }
@@ -73,7 +80,6 @@ export interface Listing {
   entries: Entry[];
   generation: number;
   shape: number;
-  unfinished: boolean;
 }
 
 interface SaidListing extends Omit<Listing, "entries"> {
@@ -92,7 +98,6 @@ type Refreshed =
       base: number;
       generation: number;
       shape: number;
-      unfinished: boolean;
       runs: Run[];
       fresh: Columns;
       parent: string | null;
@@ -105,7 +110,6 @@ export interface FolderStatuses {
   generation: number;
   changes: StatusChange[];
   folder: IndexState | null;
-  unfinished: boolean;
 }
 
 export interface Progress {
@@ -160,7 +164,6 @@ export interface Estimate {
 
 export interface Settings {
   gpuAcceleration: boolean;
-  indexedTypes: Category[];
 }
 
 export interface HotkeyParts {
@@ -192,6 +195,8 @@ export interface SearchPage {
   id: number;
   hits: SearchHit[];
   more: boolean;
+  close: boolean;
+  moreClose: boolean;
 }
 
 export interface SearchFilter {
@@ -219,25 +224,22 @@ export const api = {
     if (said.kind === "whole") return { listing: listingOf(said), whole: true };
     const entries = applyRuns(shown.entries, said.runs, entriesOf(said.fresh));
     if (!entries) return { listing: listingOf(await invoke<SaidListing>("list_dir", { path: shown.path })), whole: true };
-    const { generation, shape, unfinished, parent, breadcrumbs } = said;
+    const { generation, shape, parent, breadcrumbs } = said;
     return { whole: false, listing: {
       ...shown,
       parent,
       breadcrumbs,
       generation,
       shape,
-      unfinished,
       entries: shape === shown.shape ? sameShape(entries, shown.entries) : withShape(entries, { rust: shape, order: null }),
     } };
   },
-  folderStatuses: (generation: number) => invoke<FolderStatuses>("folder_statuses", { generation }),
   watchShownFolder: (path: string | null) => invoke<void>("watch_shown_folder", { path }),
   showFolderPreviews: (generation: number, folder: FolderPreviews | null) => invoke<void>("show_folder_previews", { generation, folder }),
   showPreviewWindow: (generation: number, start: number, end: number, warm: boolean) =>
     invoke<void>("show_preview_window", { generation, start, end, warm }),
-  indexStatuses: (paths: string[]) => invoke<IndexState[]>("index_statuses", { paths }),
-  indexProgress: () => invoke<Progress | null>("index_progress"),
-  indexOverview: () => invoke<Overview>("index_overview"),
+  indexView: (listing: number | null, lists: number | null, listStates: boolean) =>
+    invoke<IndexView>("index_view", { listing, lists, listStates }),
   search: (query: string, filter: SearchFilter, files: string[] = []) =>
     invoke<SearchPage>("search", { query, ...filter, files }),
   searchMore: (id: number) => invoke<SearchPage>("search_more", { id }),
@@ -246,9 +248,9 @@ export const api = {
   getIndexedTypes: () => invoke<Category[]>("get_indexed_types"),
   setIndexedTypes: (types: Category[]) => invoke<Category[]>("set_indexed_types", { types }),
   countIndexedOfType: (kind: Category) => invoke<number>("count_indexed_of_type", { kind }),
-  dropFromQueue: (paths: string[]) => invoke<void>("drop_from_queue", { paths }),
   addToIndex: (paths: string[], completing?: string) => invoke<void>("add_to_index", { paths, completing }),
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
+  reportPageError: (message: string) => invoke<void>("report_page_error", { message }),
   openProjectPage: () => invoke<void>("open_project_page"),
   openPrivacySettings: (pane: PrivacyPane) => invoke<void>("open_privacy_settings", { pane }),
   openFile: (path: string) => invoke<void>("open_file", { path }),
@@ -262,8 +264,7 @@ export const api = {
     const said = await invoke<SaidLists>("index_lists");
     return { version: said.version, indexed: listedOf(said.indexed), excluded: listedOf(said.excluded) };
   },
-  indexListStates: (version: number) => invoke<ListStates>("index_list_states", { version }),
-  queuedRoots: () => invoke<string[]>("queued_roots"),
+  stopIndexing: () => invoke<void>("stop_indexing"),
   indexEverything: () => invoke<void>("index_everything"),
   surveyUserFiles: (includeProtected: boolean) => invoke<Survey>("survey_user_files", { includeProtected }),
   indexEstimate: () => invoke<Estimate>("index_estimate"),

@@ -527,6 +527,7 @@ mod tests {
         devices: Mutex<Vec<Device>>,
         per_input: Duration,
         log: Mutex<Vec<(Instant, Instant, bool)>>,
+        sized: Mutex<Vec<(thread::ThreadId, usize)>>,
     }
 
     impl Backend for Fake {
@@ -545,6 +546,7 @@ mod tests {
             let search_time = if search { Duration::from_secs(1) } else { Duration::ZERO };
             thread::sleep(self.delay + self.per_input * batch.len() as u32 + search_time);
             lock(&self.log).push((begun, Instant::now(), search));
+            lock(&self.sized).push((thread::current().id(), batch.len()));
             self.running.fetch_sub(1, Ordering::SeqCst);
             let mut batches = lock(&self.batches);
             batches.push(batch.len());

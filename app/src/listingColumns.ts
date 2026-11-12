@@ -17,7 +17,7 @@ export interface Columns {
 const LETTERS = "0123456789abcdefghijklmnopqrstuv";
 const READABLE = 1;
 const HAS_CONTENTS = 2;
-const DROPPABLE = 4;
+const QUEUED = 4;
 const EXCLUDED_HERE = 8;
 const REMOVABLE = 16;
 
@@ -37,7 +37,7 @@ export function entriesOf(columns: Columns): Entry[] {
       readable: (bits & READABLE) !== 0,
       hasContents: (bits & HAS_CONTENTS) !== 0,
       index: legend.statuses[codeOf(statuses[i])],
-      droppable: (bits & DROPPABLE) !== 0,
+      queued: (bits & QUEUED) !== 0,
       excludedHere: (bits & EXCLUDED_HERE) !== 0,
       removable: (bits & REMOVABLE) !== 0,
       size: sizes[i],
@@ -80,10 +80,10 @@ export type StatusChange = [number, IndexStatus, boolean, boolean, boolean];
 export function withStatusChanges(entries: readonly Entry[], changes: StatusChange[]): Entry[] | null {
   if (changes.length === 0) return null;
   const next = entries.slice();
-  for (const [at, index, droppable, excludedHere, removable] of changes) {
+  for (const [at, index, queued, excludedHere, removable] of changes) {
     const entry = next[at];
     if (!entry) return null;
-    next[at] = { ...entry, index, droppable, excludedHere, removable };
+    next[at] = { ...entry, index, queued, excludedHere, removable };
   }
   return next;
 }

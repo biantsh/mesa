@@ -3,7 +3,7 @@ import { api } from "./api";
 import { WIDGET_HIDDEN, WIDGET_SHOWN } from "./events";
 import { THEME_EVENT, chosenTheme, followTheme, type Theme } from "./theme";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
-import { useIndexOverview } from "./useIndexOverview";
+import { useIndexState } from "./useIndexState";
 import { useModelStatus } from "./useModelStatus";
 import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
@@ -15,7 +15,7 @@ export default function Widget() {
   const [there, setThere] = useState(false);
   const home = useRef<HomeHandle>(null);
   const frame = useRef(0);
-  const overview = useIndexOverview(true);
+  const { overview } = useIndexState();
   const model = useModelStatus();
   const retryModel = useCallback(() => void api.retryModelSetup().catch(() => {}), []);
   const openIndex = useCallback(() => void api.openMain("index").catch(() => {}), []);
@@ -71,7 +71,8 @@ export default function Widget() {
     <div
       className={styles.shell}
       onMouseDownCapture={(e) => {
-        if ((e.target as HTMLElement).closest("button")) e.preventDefault();
+        const button = (e.target as HTMLElement).closest("button");
+        if (button && !button.hasAttribute("data-result")) e.preventDefault();
       }}
     >
       <div className={styles.screen}>

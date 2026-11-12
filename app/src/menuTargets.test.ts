@@ -10,7 +10,7 @@ const entry = (name: string, index: IndexStatus, more: Partial<Entry> = {}): Ent
   readable: true,
   hasContents: true,
   index,
-  droppable: false,
+  queued: false,
   excludedHere: false,
   removable: false,
   size: null,

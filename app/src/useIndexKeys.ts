@@ -42,10 +42,9 @@ export function useIndexKeys({ enabled, somethingSelected, dragging, clear, acti
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && keys.add > 0) {
         e.preventDefault();
         keys.doAdd();
-      } else if (e.key === "Delete" && !e.ctrlKey && !e.metaKey && (keys.takeOut > 0 || keys.drop > 0)) {
+      } else if (e.key === "Delete" && !e.ctrlKey && !e.metaKey && keys.takeOut > 0) {
         e.preventDefault();
-        if (keys.takeOut > 0) keys.doTakeOut();
-        else keys.doDrop();
+        keys.doTakeOut();
       }
     };
     window.addEventListener("keydown", onKeyDown);

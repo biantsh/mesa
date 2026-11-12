@@ -22,6 +22,7 @@ mod power;
 mod preview_queue;
 mod progress;
 mod reclaim;
+mod relevance;
 mod rules;
 mod settings;
 mod shown_folder;
@@ -192,7 +193,7 @@ fn main() {
             let settings = settings::SettingsStore::open(&dir);
             let embedder = embed::for_this_platform(&dir, resources.as_deref(), settings.get().device());
             embedder.warm_up();
-            let index = index::Index::open_with(&dir, embedder, false, settings.get().indexed())
+            let index = index::Index::open_with(&dir, embedder, false, settings.get().indexed_before())
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             let access = folder_access::FolderAccess::open(&dir, app.path().home_dir().ok().as_deref());
             access.indexing(index.indexed_roots().iter().map(std::path::PathBuf::as_path));
@@ -229,13 +230,10 @@ fn main() {
             commands::home_dir,
             commands::list_dir,
             commands::refresh_folder,
-            commands::folder_statuses,
             commands::watch_shown_folder,
             commands::show_folder_previews,
             commands::show_preview_window,
-            commands::index_statuses,
-            commands::index_progress,
-            commands::index_overview,
+            commands::index_view,
             commands::search,
             commands::search_more,
             commands::set_indexing_paused,
@@ -244,15 +242,13 @@ fn main() {
             commands::set_indexed_types,
             commands::count_indexed_of_type,
             commands::add_to_index,
-            commands::drop_from_queue,
             commands::remove_from_index,
             commands::exclude_from_index,
             commands::stop_excluding,
             commands::count_with_data,
             commands::exclusion_count,
             commands::index_lists,
-            commands::index_list_states,
-            commands::queued_roots,
+            commands::stop_indexing,
             commands::open_file,
             commands::copy_files,
             commands::open_project_page,
@@ -273,6 +269,7 @@ fn main() {
             commands::page_painted,
             commands::reveal_main,
             commands::hide_widget,
+            commands::report_page_error,
             commands::set_picking,
             commands::folders_among,
             commands::prepare_example,

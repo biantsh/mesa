@@ -19,15 +19,9 @@ export interface ConfirmContext {
   exclusions: number;
   withData: number;
   stops: boolean;
-  dropping: string[];
   folder: string;
   completing: boolean;
   everything: boolean;
-}
-
-export async function removeItems(paths: string[], dropping: string[]): Promise<void> {
-  if (dropping.length > 0) await api.dropFromQueue(dropping).catch(() => undefined);
-  await api.removeFromIndex(paths);
 }
 
 export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: ConfirmContext) => ConfirmationText> = {
@@ -43,15 +37,15 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     ],
     run: api.indexEverything,
   }),
-  removeFromIndex: (subject, { paths, dropping }) => ({
+  removeFromIndex: (subject, { paths, stops }) => ({
     title: `Remove ${subject} from the index?`,
     confirmLabel: "Remove",
     danger: true,
-    stopsIndexing: dropping.length > 0,
+    stopsIndexing: stops,
     message: [
       `This will remove ${subject} from the index. Your files themselves are not touched.`,
     ],
-    run: () => removeItems(paths, dropping),
+    run: () => api.removeFromIndex(paths),
   }),
   excludeFromIndex: (subject, { paths, withData, stops }) => ({
     title: `Exclude ${subject}?`,

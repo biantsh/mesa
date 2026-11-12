@@ -1,14 +1,12 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { api, errorText, type Entry, type Listed } from "./api";
-import { CONFIRMATIONS, removeItems, type Confirmation, type ConfirmContext } from "./confirmations";
+import { CONFIRMATIONS, type Confirmation, type ConfirmContext } from "./confirmations";
 import { describeKinds, excludeLabel, menuTargets, whenAdding } from "./menuTargets";
 
 interface Inputs {
   folder: string | null;
   entries: Entry[];
-  rereadFolder: () => Promise<void>;
-  refreshProgress: () => Promise<void>;
-  refreshLists: () => Promise<void>;
+  refresh: () => Promise<void>;
   clearSelection: () => void;
   clearListSelection: () => void;
   setError: (message: string | null) => void;
@@ -24,9 +22,7 @@ export type IndexActions = ReturnType<ReturnType<typeof useIndexActions>["action
 export function useIndexActions({
   folder,
   entries,
-  rereadFolder,
-  refreshProgress,
-  refreshLists,
+  refresh,
   clearSelection,
   clearListSelection,
   setError,
@@ -38,29 +34,34 @@ export function useIndexActions({
     async (action: () => Promise<void>, afterwards?: () => void) => {
       try {
         await action();
-        await refreshProgress();
-        afterwards?.();
-        await Promise.all([rereadFolder(), refreshLists()]);
       } catch (e) {
         setError(`Couldn't update the index. ${errorText(e)}`);
+        return;
       }
+      await refresh();
+      afterwards?.();
     },
-    [rereadFolder, refreshProgress, refreshLists, setError],
+    [refresh, setError],
   );
 
   const changeSelection = (action: () => Promise<void>) => changeIndex(action, clearSelection);
 
   const actionsFor = (targets: Entry[]) => {
-    const { add, drop, remove, inside, exclude, stop } = menuTargets(targets);
+    const { add, remove, inside, exclude, stop } = menuTargets(targets);
     const paths = (of: Entry[]) => of.map((entry) => entry.path);
-    const doRemove = () =>
-      remove.length > 1
-        ? setAsking({ which: "removeFromIndex", subject: `${remove.length} items`, paths: paths(remove) })
-        : changeSelection(() => api.removeFromIndex(paths(remove)));
+    const doRemove = () => {
+      const stops = remove.some((entry) => entry.queued);
+      if (remove.length > 1) {
+        setAsking({ which: "removeFromIndex", subject: `${remove.length} items`, paths: paths(remove), stops });
+        return Promise.resolve();
+      }
+      if (stops) markStopped();
+      return changeSelection(() => api.removeFromIndex(paths(remove)));
+    };
     const excludeEntries = async (which: Entry[]) => {
       try {
         const withData = await api.countWithData(paths(which));
-        const stops = which.some((entry) => entry.droppable);
+        const stops = which.some((entry) => entry.queued);
         if (withData > 1) {
           setAsking({ which: "excludeFromIndex", subject: describeKinds(which), paths: paths(which), withData, stops });
         } else {
@@ -73,7 +74,6 @@ export function useIndexActions({
     };
     return {
       add: add.length,
-      drop: drop.length,
       remove: remove.length,
       takeOut: remove.length + inside.length,
       exclude: exclude.length,
@@ -94,10 +94,6 @@ export function useIndexActions({
         }
         return changeSelection(() => api.addToIndex(paths(add)));
       },
-      doDrop: () => {
-        markStopped();
-        return changeSelection(() => api.dropFromQueue(paths(drop)));
-      },
       doRemove,
       doExclude: () => excludeEntries(exclude),
       doTakeOut: () => (remove.length > 0 ? doRemove() : excludeEntries(inside)),
@@ -108,13 +104,13 @@ export function useIndexActions({
   const listActions = useMemo(() => ({
     unindex: (items: Listed[]) => {
       const paths = items.map((item) => item.path);
-      const dropping = items.filter((item) => item.droppable).map((item) => item.path);
+      const stops = items.some((item) => item.queued);
       if (items.length > 1) {
-        setAsking({ which: "removeFromIndex", subject: describeKinds(items), paths, dropping });
+        setAsking({ which: "removeFromIndex", subject: describeKinds(items), paths, stops });
         return;
       }
-      if (dropping.length > 0) markStopped();
-      void changeIndex(() => removeItems(paths, dropping), clearListSelection);
+      if (stops) markStopped();
+      void changeIndex(() => api.removeFromIndex(paths), clearListSelection);
     },
     stopExcluding: (items: Listed[]) =>
       void changeIndex(() => api.stopExcluding(items.map((item) => item.path)), clearListSelection),
@@ -139,7 +135,7 @@ export function useIndexActions({
       lastStopped.current = {
         path: entry.path,
         at: Date.now(),
-        done: changeIndex(() => removeItems([entry.path], [entry.path])),
+        done: changeIndex(() => api.removeFromIndex([entry.path])),
       };
     },
     [changeIndex, markStopped],
@@ -153,12 +149,12 @@ export function useIndexActions({
       try {
         await stopped.done;
         await api.addToIndex([entry.path]);
-        await Promise.all([refreshProgress(), refreshLists()]);
+        await refresh();
       } catch (e) {
         setError(`Couldn't update the index. ${errorText(e)}`);
       }
     },
-    [refreshProgress, refreshLists, setError],
+    [refresh, setError],
   );
 
   const undoRecentAdd = useCallback(
@@ -169,13 +165,13 @@ export function useIndexActions({
       markStopped();
       try {
         await added.done;
-        await removeItems([entry.path], [entry.path]);
-        await Promise.all([refreshProgress(), refreshLists()]);
+        await api.removeFromIndex([entry.path]);
+        await refresh();
       } catch (e) {
         setError(`Couldn't update the index. ${errorText(e)}`);
       }
     },
-    [markStopped, refreshProgress, refreshLists, setError],
+    [markStopped, refresh, setError],
   );
 
   const askAboutIndexAll = async () => {
@@ -192,7 +188,6 @@ export function useIndexActions({
         exclusions: asking.exclusions ?? 0,
         withData: asking.withData ?? 0,
         stops: asking.stops ?? false,
-        dropping: asking.dropping ?? [],
         folder: asking.folder ?? "",
         completing: asking.completing ?? false,
         everything: asking.everything ?? false,

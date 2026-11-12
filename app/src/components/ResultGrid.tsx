@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject, type UIEvent, type WheelEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject, type UIEvent, type WheelEvent } from "react";
 import { Check, FileText, Film, Image as ImageIcon, Music, X, type LucideProps } from "lucide-react";
 import { type Category, type SearchHit } from "../api";
 import { cx } from "../cx";
@@ -7,6 +7,7 @@ import type { ResultActions } from "../resultMenu";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { usePreview } from "../usePreview";
 import { pressProps } from "./entryProps";
+import { resultWindow, type Layout, type ResultWindow } from "../resultWindow";
 import styles from "./ResultGrid.module.css";
 import { fileManager, shortcut } from "../platform";
 
@@ -17,16 +18,32 @@ export const CATEGORY_ICONS: Record<Category, ComponentType<LucideProps>> = {
   document: FileText,
 };
 
+export interface ResultMessage {
+  text: string;
+  hint?: ReactNode;
+}
+
+export function MessageLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" className={styles.messageLink} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
 interface Props {
   paneRef: RefObject<HTMLDivElement | null>;
   batches: SearchHit[][];
   searchId: number;
   more: boolean;
+  moreClose: boolean;
+  stalled: boolean;
+  weakFrom: number | null;
   loadingMore: boolean;
   onMore: () => void;
   shown: boolean;
   busy: boolean;
-  message: string | null;
+  message: ResultMessage | null;
   progress: boolean;
   selected: ReadonlySet<string>;
   selection: SearchHit[];
@@ -39,15 +56,36 @@ interface Props {
   onAway: (away: boolean) => void;
 }
 
+const AHEAD_PX = 800;
+const OVERSCAN_ROWS = 3;
+const FIRST = 48;
+const MESSAGE_MOVES_MS = 360;
+const MOST_MEASURES = 3;
+const DIVIDER_PX = 40;
+const ENTERING_MS = 700;
+
+interface Measured extends Layout {
+  top: number;
+}
+
+function sameWindow(a: ResultWindow, b: ResultWindow): boolean {
+  return a.start === b.start && a.end === b.end && a.divider === b.divider && a.before === b.before && a.after === b.after;
+}
+
+function sameMeasure(a: Measured | null, b: Measured): boolean {
+  return a !== null && a.columns === b.columns && (["stride", "divider", "gap", "top"] as const).every((key) => Math.abs(a[key] - b[key]) < 0.5);
+}
+
 const ALWAYS_SHOWN_ABOVE_PX = 48;
 const SCROLL_DOWN_PX = 24;
 const SCROLL_UP_PX = 10;
 
-export function ResultGrid({ paneRef, batches, searchId, more, loadingMore, onMore, shown, busy, message, progress, selected, selection, actions, onClearSelection, onSelect, onOpen, onContextMenu, away, onAway }: Props) {
+export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalled, weakFrom, loadingMore, onMore, shown, busy, message, progress, selected, selection, actions, onClearSelection, onSelect, onOpen, onContextMenu, away, onAway }: Props) {
   const last = useRef(0);
   const run = useRef(0);
   const scrolled = (e: UIEvent<HTMLDivElement>) => {
     const top = e.currentTarget.scrollTop;
+    see();
     const moved = top - last.current;
     last.current = top;
     if (top < ALWAYS_SHOWN_ABOVE_PX) {
@@ -63,6 +101,129 @@ export function ResultGrid({ paneRef, batches, searchId, more, loadingMore, onMo
     paneRef.current?.scrollTo({ top: 0 });
   }, [paneRef, searchId]);
   const forwardWheel = useForwardedWheel(paneRef);
+  const hits = useMemo(() => batches.flat(), [batches]);
+  const weakAt = useMemo(() => {
+    if (weakFrom === null || !batches.slice(0, weakFrom).some((before) => before.length > 0)) return null;
+    return batches.slice(0, weakFrom).reduce((count, batch) => count + batch.length, 0);
+  }, [batches, weakFrom]);
+  const placeInPage = useMemo(() => batches.flatMap((batch, page) => batch.map((_, index) => ({ page, index }))), [batches]);
+  const came = useRef<{ search: number; at: number[] }>({ search: searchId, at: [] });
+  if (came.current.search !== searchId) came.current = { search: searchId, at: [] };
+  while (came.current.at.length < batches.length) came.current.at.push(performance.now());
+
+  const weakerLine = (
+    <div key="weaker" className={styles.weakDivider} role="separator">
+      Weaker matches
+    </div>
+  );
+
+  const grid = useRef<HTMLDivElement>(null);
+  const alone = message !== null && hits.length === 0;
+  const messageBox = useRef<HTMLDivElement>(null);
+  const messageWas = useRef<{ top: number; alone: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const box = messageBox.current;
+    const top = box?.getBoundingClientRect().top;
+    const was = messageWas.current;
+    messageWas.current = box && top !== undefined ? { top, alone } : null;
+    if (!box || top === undefined || !was?.alone || alone || Math.abs(was.top - top) < 1) return;
+    box.animate([{ transform: `translateY(${was.top - top}px)` }, { transform: "none" }], {
+      duration: MESSAGE_MOVES_MS,
+      easing: "cubic-bezier(0.32, 0.72, 0, 1)",
+    });
+  });
+  const [measured, setMeasured] = useState<Measured | null>(null);
+  const windowAt = (view: { scrollTop: number; height: number }): ResultWindow =>
+    measured
+      ? resultWindow(hits.length, weakAt, measured, view.scrollTop - measured.top, view.scrollTop - measured.top + view.height, OVERSCAN_ROWS)
+      : { start: 0, end: Math.min(hits.length, FIRST), divider: weakAt !== null && weakAt < FIRST, before: 0, after: 0 };
+  const view = useRef({ scrollTop: 0, height: 0 });
+  const made = windowAt(view.current);
+  const madeNow = useRef(made);
+  madeNow.current = made;
+  const windowAtNow = useRef(windowAt);
+  windowAtNow.current = windowAt;
+  const [, redraw] = useState(0);
+  const seeing = useRef(0);
+  const see = () => {
+    if (seeing.current) return;
+    seeing.current = requestAnimationFrame(() => {
+      seeing.current = 0;
+      const pane = paneRef.current;
+      if (!pane) return;
+      view.current = { scrollTop: pane.scrollTop, height: pane.clientHeight };
+      if (!sameWindow(madeNow.current, windowAtNow.current(view.current))) redraw((n) => n + 1);
+    });
+  };
+  const [resized, setResized] = useState(0);
+  useEffect(() => {
+    const pane = paneRef.current;
+    const element = grid.current;
+    if (!pane || !element) return;
+    const watching = new ResizeObserver(() => {
+      see();
+      setResized((n) => n + 1);
+    });
+    watching.observe(pane);
+    watching.observe(element);
+    return () => {
+      watching.disconnect();
+      cancelAnimationFrame(seeing.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paneRef]);
+  const remeasured = useRef(0);
+  const measuredFor = useRef("");
+  useLayoutEffect(() => {
+    const element = grid.current;
+    const pane = paneRef.current;
+    if (!element || !pane) return;
+    const what = `${made.start} ${made.end} ${made.divider} ${hits.length} ${weakAt} ${resized}`;
+    if (measured && what === measuredFor.current) return;
+    measuredFor.current = what;
+    const tiles = Array.from(element.querySelectorAll<HTMLElement>("[data-result]"));
+    if (tiles.length === 0) return;
+    const style = getComputedStyle(element);
+    const columns = Math.max(1, style.gridTemplateColumns.split(" ").filter(Boolean).length);
+    const gap = parseFloat(style.rowGap) || 0;
+    const at = (tile: HTMLElement) => Number(tile.dataset.result);
+    const topOf = (tile: HTMLElement) => tile.getBoundingClientRect().top;
+    const first = tiles[0];
+    const below = tiles.find((tile) => at(tile) === at(first) + columns && (weakAt === null || (at(first) < weakAt) === (at(tile) < weakAt)));
+    const stride = below ? topOf(below) - topOf(first) : first.getBoundingClientRect().height + gap;
+    if (stride <= 0) return;
+    let divider = measured?.divider ?? DIVIDER_PX;
+    if (weakAt !== null) {
+      const lastClose = tiles.find((tile) => at(tile) === weakAt - 1);
+      const firstRest = tiles.find((tile) => at(tile) === weakAt);
+      if (lastClose && firstRest) divider = topOf(firstRest) - (topOf(lastClose) + stride);
+    }
+    const start = element.querySelector<HTMLElement>("[data-rows-start]") ?? first;
+    const paneTop = pane.getBoundingClientRect().top + pane.clientTop - pane.scrollTop;
+    const next: Measured = { columns, stride, divider, gap, top: topOf(start) - paneTop };
+    if (!sameMeasure(measured, next) && remeasured.current < MOST_MEASURES) {
+      remeasured.current += 1;
+      if (remeasured.current === 1) requestAnimationFrame(() => (remeasured.current = 0));
+      setMeasured(next);
+    }
+    if (view.current.height === 0) see();
+  });
+  const asking = more && (stalled || (!moreClose && weakFrom === null));
+  const endless = more && !asking;
+  const button = asking && !(message && batches.length === 1 && (batches[0]?.length ?? 0) === 0);
+  const end = useRef<HTMLDivElement>(null);
+  const [nearEnd, setNearEnd] = useState(false);
+  useEffect(() => {
+    const pane = paneRef.current;
+    const target = end.current;
+    if (!pane || !target) return;
+    const watching = new IntersectionObserver(([entry]) => setNearEnd(entry.isIntersecting), { root: pane, rootMargin: `0px 0px ${AHEAD_PX}px 0px` });
+    watching.observe(target);
+    return () => watching.disconnect();
+  }, [paneRef]);
+  useEffect(() => {
+    if (nearEnd && endless && shown && !loadingMore) onMore();
+  }, [nearEnd, endless, shown, loadingMore, batches.length, onMore]);
   const counting = shown && selection.length > 0;
   return (
     <>
@@ -79,32 +240,43 @@ export function ResultGrid({ paneRef, batches, searchId, more, loadingMore, onMo
         inert={!shown}
         onScroll={scrolled}
       >
-        <div className={styles.grid}>
-          {batches.map((batch, number) => (
-            <Fragment key={number}>
-              {number > 0 && <div className={styles.divider} role="separator" />}
-              {batch.map((hit, index) => (
-                <Result
-                  key={hit.path}
-                  hit={hit}
-                  index={index}
-                  selected={selected.has(hit.path)}
-                  onSelect={onSelect}
-                  onOpen={onOpen}
-                  onContextMenu={onContextMenu}
-                />
-              ))}
-            </Fragment>
-          ))}
+        <div ref={grid} className={cx(styles.grid, alone && styles.alone)}>
+          {message && (batches[0]?.length ?? 0) === 0 && (
+            <div ref={messageBox} className={styles.message} role="status">
+              <p className={styles.messageText}>{message.text}</p>
+              {message.hint && <p className={styles.hint}>{message.hint}</p>}
+            </div>
+          )}
+          {made.before > 0 && <div className={styles.space} style={{ height: made.before }} data-rows-start aria-hidden />}
+          {hits.slice(made.start, made.end).flatMap((hit, offset) => {
+            const at = made.start + offset;
+            const { page, index } = placeInPage[at];
+            return [
+              at === weakAt && made.divider && weakerLine,
+              <Result
+                key={hit.path}
+                hit={hit}
+                at={at}
+                index={index}
+                entering={performance.now() - came.current.at[page] < ENTERING_MS}
+                selected={selected.has(hit.path)}
+                onSelect={onSelect}
+                onOpen={onOpen}
+                onContextMenu={onContextMenu}
+              />,
+            ];
+          })}
+          {made.divider && made.end === weakAt && weakerLine}
+          {made.after > 0 && <div className={styles.space} style={{ height: made.after }} aria-hidden />}
         </div>
-        {more && (
+        {button && (
           <div className={styles.more}>
             <button type="button" className={styles.moreButton} onClick={onMore} disabled={loadingMore}>
               View more
             </button>
           </div>
         )}
-        {message && batches.length === 0 && <p className={styles.message}>{message}</p>}
+        <div ref={end} aria-hidden />
       </div>
       <SelectionBar
         hits={selection}
@@ -219,21 +391,24 @@ function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: Ba
 
 interface ResultProps {
   hit: SearchHit;
+  at: number;
   index: number;
+  entering: boolean;
   selected: boolean;
   onSelect: (path: string, toggle: boolean) => void;
   onOpen: (hit: SearchHit) => void;
   onContextMenu: (hit: SearchHit, x: number, y: number) => void;
 }
 
-function Result({ hit, index, selected, onSelect, onOpen, onContextMenu }: ResultProps) {
+const Result = memo(function Result({ hit, at, index, entering, selected, onSelect, onOpen, onContextMenu }: ResultProps) {
   const Icon = CATEGORY_ICONS[hit.category];
   const { wanted, src, loaded, onLoad, onError } = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
   return (
     <button
       type="button"
-      className={cx(styles.tile, selected && styles.selected)}
+      className={cx(styles.tile, selected && styles.selected, !entering && styles.still)}
       style={{ "--i": index } as CSSProperties}
+      data-result={at}
       {...pressProps(hit, true, hit.path, { selected, onSelect, onOpen, onContextMenu })}
     >
       <span className={styles.preview}>
@@ -259,4 +434,4 @@ function Result({ hit, index, selected, onSelect, onOpen, onContextMenu }: Resul
       </span>
     </button>
   );
-}
+});

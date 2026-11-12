@@ -14,7 +14,7 @@ use crate::{
     estimate::{Estimate, Estimator},
     folder_access::{FolderAccess, Pane},
     hotkey::{self, Hotkey},
-    index::{Index, IndexState, IndexStatus, Page, Stats},
+    index::{Index, IndexStatus, Page, Stats},
     main_window,
     progress::Progress,
     settings::{Settings, SettingsStore},
@@ -54,15 +54,6 @@ pub async fn refresh_folder(path: String, generation: u64, app: AppHandle) -> Re
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command(async)]
-pub fn folder_statuses(
-    generation: u64,
-    index: State<'_, Index>,
-    shown: State<'_, ShownListing>,
-) -> shown_listing::Statuses {
-    shown.statuses(generation, &index)
-}
-
 #[tauri::command]
 pub fn watch_shown_folder(path: Option<String>, app: AppHandle, shown: State<'_, ShownFolder>) -> Result<(), String> {
     shown.set(path.filter(|path| !path.is_empty()).map(PathBuf::from), move |folder| {
@@ -72,17 +63,6 @@ pub fn watch_shown_folder(path: Option<String>, app: AppHandle, shown: State<'_,
             folder.to_string_lossy(),
         );
     })
-}
-
-#[tauri::command(async)]
-pub fn index_statuses(paths: Vec<String>, index: State<'_, Index>) -> Vec<IndexState> {
-    let paths: Vec<(&Path, Option<bool>)> = paths.iter().map(|path| (Path::new(path.as_str()), None)).collect();
-    index.states_of(&paths)
-}
-
-#[tauri::command(async)]
-pub fn index_progress(index: State<'_, Index>) -> Option<Progress> {
-    index.progress()
 }
 
 #[derive(Serialize)]
@@ -95,14 +75,38 @@ pub struct Overview {
     pub stats: Stats,
 }
 
-#[tauri::command(async)]
-pub fn index_overview(app: AppHandle, index: State<'_, Index>) -> Overview {
+fn overview(app: &AppHandle, index: &Index) -> Overview {
     let progress = index.progress();
     Overview {
         empty: progress.is_none() && index.is_empty(),
         progress,
-        everything_indexed: index.has_everything(&everything_roots(&app)),
+        everything_indexed: index.has_everything(&everything_roots(app)),
         stats: index.stats(),
+    }
+}
+
+#[derive(Serialize)]
+pub struct IndexView {
+    overview: Overview,
+    folder: Option<shown_listing::Statuses>,
+    lists: Option<ListStates>,
+}
+
+#[tauri::command(async)]
+pub fn index_view(
+    listing: Option<u64>,
+    lists: Option<u64>,
+    list_states: bool,
+    app: AppHandle,
+    index: State<'_, Index>,
+    shown: State<'_, ShownListing>,
+) -> IndexView {
+    let folder = listing.map(|generation| shown.statuses(generation, &index));
+    let lists = lists.map(|version| list_states_of(version, list_states, &index));
+    IndexView {
+        overview: overview(&app, &index),
+        folder,
+        lists,
     }
 }
 
@@ -142,6 +146,8 @@ pub struct SearchPage {
     pub id: u64,
     pub hits: Vec<SearchHit>,
     pub more: bool,
+    pub close: bool,
+    pub more_close: bool,
 }
 
 impl From<Page> for SearchPage {
@@ -150,6 +156,8 @@ impl From<Page> for SearchPage {
             id: page.id,
             hits: page.hits.into_iter().map(SearchHit::from).collect(),
             more: page.more,
+            close: page.close,
+            more_close: page.more_close,
         }
     }
 }
@@ -161,6 +169,7 @@ pub fn search(
     from: Option<i64>,
     to: Option<i64>,
     files: Option<Vec<String>>,
+    window: tauri::WebviewWindow,
     index: State<'_, Index>,
 ) -> Result<SearchPage, String> {
     let filter = Filter {
@@ -169,7 +178,7 @@ pub fn search(
         to_ms: to,
     };
     Ok(index
-        .search_like(&query, &to_paths(files.unwrap_or_default()), filter)?
+        .search_for(window.label(), &query, &to_paths(files.unwrap_or_default()), filter)?
         .into())
 }
 
@@ -199,18 +208,13 @@ pub fn add_to_index(
     access.indexing(paths.iter().map(PathBuf::as_path));
     match completing {
         Some(folder) => index.add_completing(&paths, Path::new(&folder)),
-        None => index.set_many(&paths, true),
+        None => index.add_many(&paths),
     }
 }
 
 #[tauri::command(async)]
-pub fn drop_from_queue(paths: Vec<String>, index: State<'_, Index>) -> Result<(), String> {
-    index.drop_jobs(&to_paths(paths))
-}
-
-#[tauri::command(async)]
 pub fn remove_from_index(paths: Vec<String>, index: State<'_, Index>) -> Result<(), String> {
-    index.set_many(&to_paths(paths), false)
+    index.remove_many(&to_paths(paths))
 }
 
 #[tauri::command(async)]
@@ -325,7 +329,7 @@ async fn listed(items: Vec<PathBuf>, index: &Index) -> Result<Vec<Listed>, Strin
         .zip(states)
         .map(|(mut item, state)| {
             item.entry.index = state.status;
-            item.entry.droppable = state.droppable;
+            item.entry.queued = state.queued;
             item.entry.excluded_here = state.excluded_here;
             item.entry.removable = state.removable;
             item
@@ -371,32 +375,34 @@ pub async fn index_lists(index: State<'_, Index>) -> Result<Lists, String> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListStates {
     version: u64,
+    stale: bool,
     states: Option<Vec<(IndexStatus, bool, bool)>>,
 }
 
-#[tauri::command(async)]
-pub fn index_list_states(version: u64, index: State<'_, Index>) -> ListStates {
+fn list_states_of(version: u64, states: bool, index: &Index) -> ListStates {
     let now = index.lists_version();
-    let states = (now == version).then(|| {
+    let stale = now != version;
+    let read = (!stale && states).then(|| {
         index
             .indexed_states()
             .into_iter()
-            .map(|s| (s.status, s.droppable, s.removable))
+            .map(|s| (s.status, s.queued, s.removable))
             .collect()
     });
-    let states = states.filter(|_| index.lists_version() == now);
-    ListStates { version: now, states }
+    let stale = stale || index.lists_version() != now;
+    ListStates {
+        version: now,
+        stale,
+        states: read.filter(|_| !stale),
+    }
 }
 
 #[tauri::command(async)]
-pub fn queued_roots(index: State<'_, Index>) -> Vec<String> {
-    index
-        .queued_roots()
-        .into_iter()
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect()
+pub fn stop_indexing(index: State<'_, Index>) -> Result<(), String> {
+    index.stop_indexing()
 }
 
 fn to_paths(paths: Vec<String>) -> Vec<PathBuf> {
@@ -431,14 +437,17 @@ pub fn index_everything(
     if roots.is_empty() {
         return Err("Couldn't find your folders.".into());
     }
-    let counted = estimator.counted(index.indexed_types());
+    let counted = estimator.counted(index.indexed_types(), &index.excluded_paths());
     access.indexing(roots.iter().map(PathBuf::as_path));
     index.set_everything_counted(&roots, |root| {
-        counted
-            .as_ref()?
-            .iter()
-            .find(|(counted_root, _)| counted_root == root)
-            .map(|&(_, files)| files)
+        let folders = counted.as_ref()?;
+        Some(
+            folders
+                .iter()
+                .filter(|(folder, _)| folder.starts_with(root))
+                .cloned()
+                .collect(),
+        )
     })
 }
 
@@ -461,11 +470,12 @@ pub fn survey_user_files(
         .filter(|folder| !folder.asked)
         .map(|folder| folder.name.clone())
         .collect();
-    let survey = match estimator.recent_survey(&not_asked) {
+    let excluded = index.excluded_paths();
+    let survey = match estimator.recent_survey(&not_asked, &excluded) {
         Some(survey) => survey,
         None => {
             let survey = survey::survey(&everything_roots(&app), &folders, |path| index.is_excluded(path));
-            estimator.keep(survey.clone(), not_asked);
+            estimator.keep(survey.clone(), not_asked, excluded);
             survey
         }
     };
@@ -489,23 +499,13 @@ pub fn get_indexed_types(index: State<'_, Index>) -> Vec<Category> {
 }
 
 #[tauri::command(async)]
-pub fn set_indexed_types(
-    types: Vec<Category>,
-    settings: State<'_, SettingsStore>,
-    index: State<'_, Index>,
-) -> Result<Vec<Category>, String> {
+pub fn set_indexed_types(types: Vec<Category>, index: State<'_, Index>) -> Result<Vec<Category>, String> {
     let chosen = Categories::of(&types);
     let before = index.indexed_types();
     if chosen == before {
         return Ok(chosen.to_vec());
     }
     let empty = index.is_empty();
-    settings
-        .set(Settings {
-            indexed_types: chosen.to_vec(),
-            ..settings.get()
-        })
-        .map_err(|e| format!("Couldn't save the setting. {e}"))?;
     index.set_indexed_types(chosen)?;
     if !empty && !before.includes(chosen) {
         index.check_for_changes();
@@ -608,6 +608,11 @@ pub fn page_painted(window: tauri::WebviewWindow) {
 #[tauri::command]
 pub fn reveal_main(app: AppHandle) {
     crate::main_window::reveal(&app);
+}
+
+#[tauri::command]
+pub fn report_page_error(window: tauri::WebviewWindow, message: String) {
+    eprintln!("Mesa: the page of the {} window failed: {message}", window.label());
 }
 
 #[tauri::command]

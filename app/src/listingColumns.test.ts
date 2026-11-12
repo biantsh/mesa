@@ -10,7 +10,7 @@ const entry = (fields: Partial<Entry>): Entry => ({
   readable: true,
   hasContents: false,
   index: "notIndexed",
-  droppable: false,
+  queued: false,
   excludedHere: false,
   removable: false,
   size: null,

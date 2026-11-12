@@ -2,21 +2,34 @@
 //! unreferenced vectors at the end of the file but never a row pointing at a missing one. Opening trims the leftovers.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     fmt, fs, io,
     path::{Component, MAIN_SEPARATOR, Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicI64, AtomicU64, Ordering},
+    },
 };
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params, params_from_iter, types::Value};
 
 use crate::{
-    browse::Category,
+    browse::{Categories, Category},
     embed,
+    relevance::{self, Ranked},
     vectors::{DIMS, Located, Record, VectorFile, similarity, to_floats},
 };
 
 const CONFIG_ID: u32 = 3;
-const MIGRATIONS: &[&str] = &[SCHEMA, ADD_META, ADD_EMBEDDED_WITH, ADD_LOCATOR, ADD_EXCLUSIONS];
+const MIGRATIONS: &[&str] = &[
+    SCHEMA,
+    ADD_META,
+    ADD_EMBEDDED_WITH,
+    ADD_LOCATOR,
+    ADD_EXCLUSIONS,
+    DROP_RULES_INDEXED,
+    ADD_FILE_COUNT,
+];
 
 const SCHEMA: &str = "
 CREATE TABLE dirs (
@@ -76,6 +89,14 @@ const ADD_META: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT 
 const ADD_EMBEDDED_WITH: &str = "ALTER TABLE files ADD COLUMN embedded_with INTEGER NOT NULL DEFAULT 0;";
 const ADD_LOCATOR: &str = "ALTER TABLE embeddings ADD COLUMN locator INTEGER NOT NULL DEFAULT 0;";
 const ADD_EXCLUSIONS: &str = "CREATE TABLE exclusions (path TEXT PRIMARY KEY) WITHOUT ROWID;";
+const DROP_RULES_INDEXED: &str = "DELETE FROM rules WHERE indexed = 0; ALTER TABLE rules DROP COLUMN indexed;";
+
+const ADD_FILE_COUNT: &str = "
+CREATE TABLE file_count (n INTEGER NOT NULL);
+INSERT INTO file_count SELECT COUNT(*) FROM files;
+CREATE TRIGGER files_counted_in AFTER INSERT ON files BEGIN UPDATE file_count SET n = n + 1; END;
+CREATE TRIGGER files_counted_out AFTER DELETE ON files BEGIN UPDATE file_count SET n = n - 1; END;
+";
 
 #[derive(Debug)]
 pub enum Error {
@@ -149,6 +170,32 @@ pub struct ScannedDir {
 pub struct Store {
     conn: Connection,
     vectors: VectorFile,
+    counts: Arc<Counts>,
+    files: i64,
+}
+
+#[derive(Default)]
+pub struct Counts {
+    pub files: AtomicI64,
+    pub bytes: AtomicU64,
+}
+
+impl Counts {
+    pub fn made(&self) {
+        self.files.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn not_stored(&self, made: u64) {
+        self.files.fetch_sub(made as i64, Ordering::SeqCst);
+    }
+
+    pub fn files(&self) -> u64 {
+        self.files.load(Ordering::SeqCst).max(0) as u64
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.bytes.load(Ordering::SeqCst)
+    }
 }
 
 impl Store {
@@ -171,21 +218,28 @@ impl Store {
             vectors.truncate_to(expected)?;
             heal_free_slots(&conn)?;
         }
-        Ok(Self { conn, vectors })
+        let mut store = Self {
+            conn,
+            vectors,
+            counts: Arc::default(),
+            files: 0,
+        };
+        store.publish_counts(0);
+        Ok(store)
     }
 
-    pub fn load_rules(&self) -> Result<HashSet<PathBuf>> {
-        let mut statement = self.conn.prepare("SELECT path FROM rules WHERE indexed = 1")?;
+    pub fn load_rules(&self) -> Result<BTreeSet<PathBuf>> {
+        let mut statement = self.conn.prepare("SELECT path FROM rules")?;
         let rows = statement.query_map([], |r| Ok(PathBuf::from(r.get::<_, String>(0)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     #[cfg(test)]
-    pub fn save_rules(&mut self, rules: &HashSet<PathBuf>) -> Result<()> {
+    pub fn save_rules(&mut self, rules: &BTreeSet<PathBuf>) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM rules", [])?;
         {
-            let mut insert = tx.prepare("INSERT INTO rules (path, indexed) VALUES (?1, 1)")?;
+            let mut insert = tx.prepare("INSERT INTO rules (path) VALUES (?1)")?;
             for path in rules {
                 insert.execute(params![path.to_string_lossy()])?;
             }
@@ -193,27 +247,31 @@ impl Store {
         Ok(tx.commit()?)
     }
 
-    pub fn save_rules_changes(&mut self, before: &HashSet<PathBuf>, after: &HashSet<PathBuf>) -> Result<()> {
+    pub fn save_rules_diff<'a>(
+        &mut self,
+        gone: impl Iterator<Item = &'a PathBuf>,
+        new: impl Iterator<Item = &'a PathBuf>,
+    ) -> Result<()> {
         save_changes(
             &mut self.conn,
             "rules",
-            "INSERT INTO rules (path, indexed) VALUES (?1, 1)",
-            before,
-            after,
+            "INSERT INTO rules (path) VALUES (?1)",
+            gone,
+            new,
         )
     }
 
-    pub fn save_exclusions_changes(&mut self, before: &HashSet<PathBuf>, after: &HashSet<PathBuf>) -> Result<()> {
+    pub fn save_exclusions_changes(&mut self, before: &BTreeSet<PathBuf>, after: &BTreeSet<PathBuf>) -> Result<()> {
         save_changes(
             &mut self.conn,
             "exclusions",
             "INSERT INTO exclusions (path) VALUES (?1)",
-            before,
-            after,
+            before.difference(after),
+            after.difference(before),
         )
     }
 
-    pub fn load_exclusions(&self) -> Result<HashSet<PathBuf>> {
+    pub fn load_exclusions(&self) -> Result<BTreeSet<PathBuf>> {
         let mut statement = self.conn.prepare("SELECT path FROM exclusions")?;
         let rows = statement.query_map([], |r| Ok(PathBuf::from(r.get::<_, String>(0)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -234,6 +292,22 @@ impl Store {
         } else {
             self.conn.execute("DELETE FROM meta WHERE key = 'paused'", [])?;
         }
+        Ok(())
+    }
+
+    pub fn indexed_types(&self) -> Result<Option<Categories>> {
+        let kept: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = 'indexed_types'", [], |r| r.get(0))
+            .optional()?;
+        Ok(kept.and_then(|bits| bits.parse().ok()).map(Categories::from_bits))
+    }
+
+    pub fn set_indexed_types(&self, types: Categories) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('indexed_types', ?1)",
+            [types.bits().to_string()],
+        )?;
         Ok(())
     }
 
@@ -282,14 +356,35 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    pub fn write_scans(&mut self, scans: &[ScannedDir], wanted: &dyn Fn(&Path) -> bool) -> Result<()> {
+    pub fn write_scans(&mut self, scans: &[ScannedDir], wanted: &dyn Fn(&Path) -> bool, made: u64) -> Result<()> {
         let result = self.write_scans_inner(scans, wanted);
         if result.is_err() {
             if let Ok(slots) = extent(&self.conn) {
                 let _ = self.vectors.truncate_to(slots);
             }
         }
+        self.publish_counts(made);
         result
+    }
+
+    pub fn counts(&self) -> Arc<Counts> {
+        Arc::clone(&self.counts)
+    }
+
+    fn publish_counts(&mut self, made: u64) {
+        let Ok(files) = self
+            .conn
+            .query_row("SELECT n FROM file_count", [], |r| r.get::<_, i64>(0))
+        else {
+            return;
+        };
+        self.counts
+            .files
+            .fetch_add(files - self.files - made as i64, Ordering::SeqCst);
+        self.files = files;
+        if let Ok(bytes) = self.live_bytes() {
+            self.counts.bytes.store(bytes, Ordering::SeqCst);
+        }
     }
 
     fn write_scans_inner(&mut self, scans: &[ScannedDir], wanted: &dyn Fn(&Path) -> bool) -> Result<()> {
@@ -456,6 +551,7 @@ impl Store {
                 params![parent, to_name, id],
             )?;
             tx.commit()?;
+            self.publish_counts(0);
             return Ok(true);
         }
 
@@ -490,6 +586,7 @@ impl Store {
             }
         }
         tx.commit()?;
+        self.publish_counts(0);
         Ok(true)
     }
 
@@ -507,7 +604,9 @@ impl Store {
         for &category in categories {
             tx.execute("DELETE FROM files WHERE category = ?1", [category_code(category)])?;
         }
-        Ok(tx.commit()?)
+        tx.commit()?;
+        self.publish_counts(0);
+        Ok(())
     }
 
     pub fn remove_paths(&mut self, paths: &[PathBuf]) -> Result<()> {
@@ -552,7 +651,9 @@ impl Store {
                     .execute(params![dir, names])?;
             }
         }
-        Ok(tx.commit()?)
+        tx.commit()?;
+        self.publish_counts(0);
+        Ok(())
     }
 
     pub fn live_bytes(&self) -> Result<u64> {
@@ -680,43 +781,41 @@ impl Store {
             .execute_batch(&format!("PRAGMA incremental_vacuum({pages})"))?)
     }
 
-    pub fn file_count(&self) -> Result<u64> {
-        Ok(self.conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?)
-    }
-
-    pub fn rank(&mut self, query: &Record, filter: Filter) -> Result<Vec<(i64, f32)>> {
+    pub fn rank(&mut self, query: &Record, filter: Filter) -> Result<Ranked> {
         let mut sql = String::from(
-            "SELECT e.slot, e.file_id FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?",
+            "SELECT e.slot, e.file_id, f.category FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?",
         );
         let mut values: Vec<Value> = vec![i64::from(CONFIG_ID).into()];
         push_filter(filter, &mut sql, &mut values);
-        let mut candidates: Vec<(u64, i64)> = {
+        let mut candidates: Vec<(u64, i64, i64)> = {
             let mut statement = self.conn.prepare(&sql)?;
             let rows = statement.query_map(params_from_iter(values), |r| {
-                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)?))
+                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
             })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         candidates.sort_unstable();
-        let slots: Vec<u64> = candidates.iter().map(|(slot, _)| *slot).collect();
+        let slots: Vec<u64> = candidates.iter().map(|(slot, _, _)| *slot).collect();
 
         let query = to_floats(query);
-        let mut closest: HashMap<i64, f32> = HashMap::new();
+        let mut closest: HashMap<i64, (i64, f32)> = HashMap::new();
         let mut next = 0;
         self.vectors.read_each(&slots, &mut |slot, record| {
-            let (expected, file) = candidates[next];
+            let (expected, file, category) = candidates[next];
             debug_assert_eq!(slot, expected);
             next += 1;
             let score = similarity(&query, record);
             closest
                 .entry(file)
-                .and_modify(|best| *best = best.max(score))
-                .or_insert(score);
+                .and_modify(|(_, best)| *best = best.max(score))
+                .or_insert((category, score));
         })?;
 
-        let mut ranked: Vec<(i64, f32)> = closest.into_iter().collect();
-        ranked.sort_unstable_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
-        Ok(ranked)
+        let scored: Vec<(i64, i64, f32)> = closest
+            .into_iter()
+            .map(|(file, (category, score))| (file, category, score))
+            .collect();
+        Ok(relevance::rank(&scored))
     }
 
     pub fn newest(&self, filter: Filter) -> Result<Vec<(i64, f32)>> {
@@ -984,21 +1083,21 @@ fn child_dir(conn: &Connection, parent: i64, name: &str) -> Result<Option<i64>> 
         .optional()?)
 }
 
-fn save_changes(
+fn save_changes<'a>(
     conn: &mut Connection,
     table: &str,
     insert: &str,
-    before: &HashSet<PathBuf>,
-    after: &HashSet<PathBuf>,
+    gone: impl Iterator<Item = &'a PathBuf>,
+    new: impl Iterator<Item = &'a PathBuf>,
 ) -> Result<()> {
     let tx = conn.transaction()?;
     {
         let mut delete = tx.prepare(&format!("DELETE FROM {table} WHERE path = ?1"))?;
-        for path in before.difference(after) {
+        for path in gone {
             delete.execute(params![path.to_string_lossy()])?;
         }
         let mut insert = tx.prepare(insert)?;
-        for path in after.difference(before) {
+        for path in new {
             insert.execute(params![path.to_string_lossy()])?;
         }
     }
@@ -1227,7 +1326,7 @@ mod tests {
     }
 
     fn write(store: &mut Store, scans: &[ScannedDir]) {
-        store.write_scans(scans, &|_| true).unwrap();
+        store.write_scans(scans, &|_| true, 0).unwrap();
     }
 
     fn count(store: &Store, table: &str) -> i64 {
@@ -1411,7 +1510,7 @@ mod tests {
     };
 
     fn top(store: &mut Store, query: &Record, filter: Filter, limit: usize) -> Result<Vec<Hit>> {
-        let ranked = store.rank(query, filter)?;
+        let ranked = store.rank(query, filter)?.files;
         store.hits(&ranked[..limit.min(ranked.len())])
     }
 

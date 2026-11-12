@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ListStates, type Listed } from "./api";
-import { usePoll } from "./usePoll";
+import { useLatest } from "./useLatest";
 
 const NOTHING: Listed[] = [];
 
@@ -9,19 +9,14 @@ interface Lists {
   excluded: Listed[];
 }
 
-export function useIndexLists(trigger: string, active: boolean) {
+export function useIndexLists(active: boolean, indexing: boolean) {
   const [lists, setLists] = useState<Lists>({ indexed: NOTHING, excluded: NOTHING });
   const [loaded, setLoaded] = useState(false);
-  const asked = useRef(0);
-  const applied = useRef(0);
   const version = useRef<number | null>(null);
-
-  const refresh = useCallback(async () => {
-    const mine = ++asked.current;
+  const reading = useRef<Promise<void> | null>(null);
+  const read = useCallback(async () => {
     try {
       const read = await api.indexLists();
-      if (mine < applied.current) return;
-      applied.current = mine;
       version.current = read.version;
       setLists((current) => ({
         indexed: sameItems(current.indexed, read.indexed) ? current.indexed : read.indexed,
@@ -31,37 +26,40 @@ export function useIndexLists(trigger: string, active: boolean) {
     } catch {
     }
   }, []);
-
-  const syncStates = useCallback(async () => {
-    const known = version.current;
-    if (known === null) return;
-    let answer: ListStates;
-    try {
-      answer = await api.indexListStates(known);
-    } catch {
-      return;
-    }
-    if (version.current !== known) return;
-    if (answer.states === null) return void refresh();
-    const states = answer.states;
-    setLists((current) => {
-      const indexed = withStates(current.indexed, states);
-      return indexed === current.indexed ? current : { ...current, indexed };
+  const refresh = useCallback(() => {
+    reading.current ??= read().finally(() => {
+      reading.current = null;
     });
-  }, [refresh]);
+    return reading.current;
+  }, [read]);
 
   useEffect(() => {
     if (active) void refresh();
   }, [active, refresh]);
 
-  useEffect(() => {
-    if (active) void syncStates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trigger]);
+  const unfinished = lists.indexed.some(isUnfinished);
+  const wanted = useLatest(unfinished || indexing);
+  const ask = useCallback(
+    (now: boolean) => (version.current === null ? null : { version: version.current, states: now || wanted.current }),
+    [wanted],
+  );
+  const take = useCallback(
+    (answer: ListStates) => {
+      if (answer.version !== version.current) {
+        if (answer.stale) void refresh();
+        return;
+      }
+      const states = answer.states;
+      if (!states) return;
+      setLists((current) => {
+        const indexed = withStates(current.indexed, states);
+        return indexed === current.indexed ? current : { ...current, indexed };
+      });
+    },
+    [refresh],
+  );
 
-  usePoll(syncStates, { active: active && lists.indexed.some(isUnfinished) });
-
-  return { ...lists, loaded, refresh };
+  return { ...lists, loaded, refresh, ask, take };
 }
 
 export function withStates(indexed: Listed[], states: ListStates["states"] & object): Listed[] {
@@ -69,15 +67,15 @@ export function withStates(indexed: Listed[], states: ListStates["states"] & obj
   const next = indexed.map((item) => {
     const state = states[item.slot];
     if (!state) return item;
-    const [index, droppable, removable] = state;
-    if (item.index === index && item.droppable === droppable && item.removable === removable) return item;
+    const [index, queued, removable] = state;
+    if (item.index === index && item.queued === queued && item.removable === removable) return item;
     changed = true;
-    return { ...item, index, droppable, removable };
+    return { ...item, index, queued, removable };
   });
   return changed ? next : indexed;
 }
 
-const isUnfinished = (item: Listed) => item.index === "indexing" || item.index === "paused" || item.droppable;
+const isUnfinished = (item: Listed) => item.index === "indexing" || item.index === "paused" || item.queued;
 
 export function sameItems(a: readonly Listed[], b: readonly Listed[]): boolean {
   if (a.length !== b.length) return false;

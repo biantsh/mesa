@@ -8,7 +8,7 @@ import { ExampleButton } from "../components/ExampleButton";
 import { MonthPicker, TypePicker } from "../components/FilterPickers";
 import { IndexStatus } from "../components/IndexStatus";
 import { SlidingIcon } from "../components/SlidingIcon";
-import { CATEGORY_ICONS, ResultGrid } from "../components/ResultGrid";
+import { CATEGORY_ICONS, MessageLink, ResultGrid, type ResultMessage } from "../components/ResultGrid";
 import { cx } from "../cx";
 import { fitQuoted } from "../fitText";
 import { addExamples, countByKind, categoryOfPath, distinctNames, dropHint, dropIcon, shortName } from "../examples";
@@ -43,7 +43,12 @@ interface Found {
   id: number;
   batches: SearchHit[][];
   more: boolean;
+  moreClose: boolean;
+  stalled?: boolean;
+  weakFrom: number | null;
 }
+
+const MAX_QUOTED = 80;
 
 export interface HomeHandle {
   restoreFocus: () => boolean;
@@ -372,7 +377,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       api
         .search(text, { category: fileType, from: fromMs, to: toMs }, examples)
         .then(
-          (page: SearchPage) => current && setFound({ id: page.id, batches: [page.hits], more: page.more }),
+          (page: SearchPage) =>
+            current &&
+            setFound({ id: page.id, batches: [page.hits], more: page.more, moreClose: page.moreClose, weakFrom: page.close ? null : 0 }),
           (error) => current && setFound({ error: errorText(error) }),
         )
         .finally(() => current && setSearching(false));
@@ -393,10 +400,19 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       .searchMore(id)
       .then((page) =>
         setFound((now) =>
-          now && "id" in now && now.id === id ? { ...now, batches: [...now.batches, page.hits], more: page.more } : now,
+          now && "id" in now && now.id === id
+            ? {
+                ...now,
+                batches: [...now.batches, page.hits],
+                more: page.more,
+                moreClose: page.moreClose,
+                stalled: false,
+                weakFrom: now.weakFrom ?? (page.close ? null : now.batches.length),
+              }
+            : now,
         ),
       )
-      .catch(() => {})
+      .catch(() => setFound((now) => (now && "id" in now && now.id === id ? { ...now, stalled: true } : now)))
       .finally(() => setLoadingMore(false));
   }, [found, loadingMore]);
 
@@ -450,11 +466,29 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [results, selectedHits, selectAll, clearSelection, resultActions]);
-  let message: string | null = null;
-  if (exampleNotice) message = exampleNotice;
-  else if (!searchable) message = model?.state === "failed" ? "Search isn’t available." : "Waiting for the search model to load…";
-  else if (found && "error" in found) message = `The search failed: ${found.error}`;
-  else if (found && !searching && hits.length === 0) message = "Nothing found.";
+  let message: ResultMessage | null = null;
+  if (exampleNotice) message = { text: exampleNotice };
+  else if (!searchable) message = { text: model?.state === "failed" ? "Search isn’t available." : "Waiting for the search model to load…" };
+  else if (found && "error" in found) message = { text: `The search failed: ${found.error}` };
+  else if (found && !searching && batches[0]?.length === 0) {
+    if (found.more || batches.length > 1) {
+      const quoted = text.length > MAX_QUOTED ? `${text.slice(0, MAX_QUOTED).trimEnd()}…` : text;
+      message = {
+        text: quoted ? `No strong matches for “${quoted}”` : "No strong matches",
+        hint:
+          batches.length > 1 ? (
+            "These are the closest anyway."
+          ) : (
+            <>
+              Try other words, or <MessageLink onClick={viewMore}>look through the closest</MessageLink> anyway.
+            </>
+          ),
+      };
+    } else {
+      const filtered = fileType !== null || fromMs !== null || toMs !== null;
+      message = { text: "Nothing found", hint: filtered ? "Nothing indexed is of that type or from that time." : undefined };
+    }
+  }
   const setFocus = useCallback((next: boolean) => {
     setFocused(next);
     const empty = query.trim() === "" && examples.length === 0;
@@ -624,6 +658,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         batches={batches}
         searchId={found && "id" in found ? found.id : 0}
         more={found !== null && "more" in found && found.more}
+        moreClose={found !== null && "moreClose" in found && found.moreClose}
+        stalled={found !== null && "stalled" in found && found.stalled === true}
+        weakFrom={found !== null && "weakFrom" in found ? found.weakFrom : null}
         loadingMore={loadingMore}
         onMore={viewMore}
         shown={results}
