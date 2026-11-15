@@ -20,7 +20,8 @@
 }
 
 .indexing svg > * {
-  transform-origin: 12px 12px;
+  transform-box: view-box;
+  transform-origin: 50% 50%;
   animation: spin 900ms linear infinite;
 }
 

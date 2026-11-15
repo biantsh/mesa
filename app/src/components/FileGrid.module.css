@@ -145,26 +145,28 @@
 .addDisc {
   display: grid;
   place-items: center;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
+  border: 2px solid transparent;
   background: transparent;
+  background-clip: padding-box;
   color: transparent;
-  box-shadow: 0 0 0 2px transparent;
   transition:
     background-color 120ms ease,
     color 120ms ease,
-    box-shadow 120ms ease;
+    border-color 120ms ease;
 }
 
 .tile:hover .addDisc {
   background: var(--color-primary);
+  background-clip: padding-box;
   color: var(--color-on-primary);
-  box-shadow: 0 0 0 2px var(--color-on-primary);
+  border-color: var(--color-on-primary);
 }
 
 .tile:hover .add:hover .addDisc {
-  background: var(--color-primary-hover);
+  background-color: var(--color-primary-hover);
 }
 
 .addDisc {
@@ -175,7 +177,7 @@
   from {
     background-color: transparent;
     color: transparent;
-    box-shadow: 0 0 0 2px transparent;
+    border-color: transparent;
   }
 }
 
@@ -185,7 +187,7 @@
 
 .tile:hover .addOff .addDisc,
 .tile:hover .addOff:hover .addDisc {
-  background: var(--color-paused);
+  background-color: var(--color-paused);
 }
 
 .stoppable {
@@ -227,16 +229,17 @@
 .stopDisc {
   display: grid;
   place-items: center;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
+  border: 2px solid var(--color-on-primary);
   background: var(--color-danger);
+  background-clip: padding-box;
   color: var(--color-on-danger);
-  box-shadow: 0 0 0 2px var(--color-on-primary);
 }
 
 .stop:hover .stopDisc {
-  background: var(--color-danger-hover);
+  background-color: var(--color-danger-hover);
 }
 
 .stoppable:hover .stop {
@@ -262,7 +265,7 @@
 
 @keyframes fromPlus {
   from {
-    background: var(--color-primary);
+    background-color: var(--color-primary);
   }
 }
 

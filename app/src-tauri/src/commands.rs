@@ -528,9 +528,19 @@ pub fn retry_model_setup(index: State<'_, Index>) {
     index.retry_model_setup();
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddingGpu {
+    name: String,
+    shared: bool,
+}
+
 #[tauri::command(async)]
-pub fn embedding_gpu(index: State<'_, Index>) -> Option<String> {
-    index.gpu()
+pub fn embedding_gpu(index: State<'_, Index>) -> Option<EmbeddingGpu> {
+    if let Some(name) = index.gpu() {
+        return Some(EmbeddingGpu { name, shared: false });
+    }
+    index.shared_gpu().map(|name| EmbeddingGpu { name, shared: true })
 }
 
 #[tauri::command(async)]

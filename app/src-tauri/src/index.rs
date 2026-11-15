@@ -814,6 +814,10 @@ impl Index {
         self.shared.embedder.gpu()
     }
 
+    pub fn shared_gpu(&self) -> Option<String> {
+        self.shared.embedder.shared_gpu()
+    }
+
     pub fn model_status(&self) -> ModelStatus {
         self.shared.embedder.model_status()
     }

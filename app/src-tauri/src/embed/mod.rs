@@ -129,6 +129,10 @@ pub trait Embedder: Send + Sync {
         None
     }
 
+    fn shared_gpu(&self) -> Option<String> {
+        None
+    }
+
     fn model_status(&self) -> ModelStatus {
         ModelStatus::Ready
     }

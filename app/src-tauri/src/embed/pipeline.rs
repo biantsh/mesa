@@ -35,6 +35,10 @@ pub trait Backend: Send + Sync + 'static {
         None
     }
 
+    fn shared_gpu(&self) -> Option<String> {
+        None
+    }
+
     fn model_status(&self) -> ModelStatus {
         ModelStatus::Ready
     }
@@ -647,6 +651,10 @@ impl<B: Backend> Embedder for Pipeline<B> {
 
     fn gpu(&self) -> Option<String> {
         self.backend.gpu()
+    }
+
+    fn shared_gpu(&self) -> Option<String> {
+        self.backend.shared_gpu()
     }
 
     fn model_status(&self) -> ModelStatus {

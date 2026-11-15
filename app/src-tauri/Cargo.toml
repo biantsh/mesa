@@ -94,5 +94,8 @@ gstreamer = "0.25"
 gstreamer-app = "0.25"
 gstreamer-video = "0.25"
 
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+
 [dev-dependencies]
 fastrand = "2"

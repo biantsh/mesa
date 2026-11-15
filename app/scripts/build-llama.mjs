@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { cmake as findCmake, vulkanSdk } from './linux-tools.mjs';
 
 const TAG = 'b12024';
 const COMMIT = 'ddf48f85c933c1f438212a02eb21e7b001d2d37d';
@@ -69,21 +70,27 @@ if (!force && existsSync(program) && existsSync(stampFile) && readFileSync(stamp
 }
 
 console.log(`build-llama: building llama.cpp ${TAG} (${backend})`);
+const linuxLog = (message) => console.log(`build-llama: ${message}`);
+const cmake = process.platform === 'linux' ? await findCmake([3, 14], linuxLog).catch((e) => fail(e.message)) : 'cmake';
+const vulkan = process.platform === 'linux' && backend === 'vulkan' ? await vulkanSdk(linuxLog).catch((e) => fail(e.message)) : null;
 const tools = findTools();
 
 mkdirSync(work, { recursive: true });
-if (!existsSync(join(source, '.git'))) {
-  rmSync(source, { recursive: true, force: true });
+if (capture('git', ['-C', source, 'rev-parse', 'HEAD']) !== COMMIT) {
+  const partial = `${source}.partial`;
+  rmSync(partial, { recursive: true, force: true });
   run('git', ['-c', 'advice.detachedHead=false', '-c', 'core.autocrlf=false', 'clone', '--quiet', '--depth', '1',
-    '--branch', TAG, 'https://github.com/ggml-org/llama.cpp', source]);
+    '--branch', TAG, 'https://github.com/ggml-org/llama.cpp', partial]);
+  const head = capture('git', ['-C', partial, 'rev-parse', 'HEAD']);
+  if (head !== COMMIT) fail(`${TAG} of llama.cpp is at ${head}, not ${COMMIT}: the tag was moved (see this script's header)`);
+  rmSync(source, { recursive: true, force: true });
+  renameSync(partial, source);
 }
-const head = capture('git', ['-C', source, 'rev-parse', 'HEAD']);
-if (head !== COMMIT) fail(`${source} is at ${head}, not ${COMMIT} (${TAG}); delete it and build again`);
 
 const parallel = String(Math.max(1, cpus().length));
 tools.run([
-  ['cmake', '-S', source, '-B', build, '-G', tools.generator, ...flags],
-  ['cmake', '--build', build, '--config', 'Release', '--parallel', parallel],
+  [cmake, '-S', source, '-B', build, '-G', tools.generator, ...flags],
+  [cmake, '--build', build, '--config', 'Release', '--parallel', parallel],
 ]);
 
 rmSync(out, { recursive: true, force: true });
@@ -146,18 +153,9 @@ function onPath(command) {
 function findTools() {
   if (!isWindows) {
     const env = { ...process.env };
-    if (backend === 'vulkan' && process.platform === 'linux') {
-      const sdkBin = process.env.VULKAN_SDK ? join(process.env.VULKAN_SDK, 'bin') : null;
-      if (sdkBin && existsSync(join(sdkBin, 'glslc'))) {
-        env.PATH = `${sdkBin}${delimiter}${env.PATH ?? ''}`;
-      } else if (!onPath('glslc')) {
-        fail(
-          'glslc, the shader compiler that the Vulkan backend is built with, was not found.\n' +
-            '  Install it (the `glslc` package on Debian 12, Ubuntu 23.04 and Fedora; `shaderc` on Arch), or the Vulkan SDK from\n' +
-            '  https://vulkan.lunarg.com/sdk/home and set VULKAN_SDK to its x86_64 folder (Ubuntu 22.04 has no package for it);\n' +
-            '  or use --backend=cpu for a build without GPU support.',
-        );
-      }
+    if (vulkan) {
+      env.PATH = `${vulkan.bin}${delimiter}${env.PATH ?? ''}`;
+      if (vulkan.sdk) env.VULKAN_SDK = vulkan.sdk;
     }
     return {
       generator: onPath('ninja') ? 'Ninja' : 'Unix Makefiles',

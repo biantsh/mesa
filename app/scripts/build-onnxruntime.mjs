@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildJobs, cmake as findCmake } from './linux-tools.mjs';
 
 const TAG = 'v1.31.0';
 const COMMIT = '402979ac1bef89dcd55add41eaa7277c407599eb';
@@ -43,25 +44,23 @@ if (!force && existsSync(library) && existsSync(stampFile) && readFileSync(stamp
   process.exit(0);
 }
 
-const cmake = process.env.MESA_CMAKE || 'cmake';
-const version = (capture(cmake, ['--version']).match(/version (\d+)\.(\d+)/) ?? []).slice(1).map(Number);
-if (version.length !== 2) fail(`${cmake} wasn't found (CMake ${CMAKE_MINIMUM.join('.')} or newer is needed: see this script's header)`);
-if (version[0] < CMAKE_MINIMUM[0] || (version[0] === CMAKE_MINIMUM[0] && version[1] < CMAKE_MINIMUM[1])) {
-  fail(`${cmake} is CMake ${version.join('.')}; ONNX Runtime needs ${CMAKE_MINIMUM.join('.')} or newer (see this script's header)`);
-}
+const cmake = await findCmake(CMAKE_MINIMUM, (message) => console.log(`build-onnxruntime: ${message}`)).catch((e) => fail(e.message));
 
 console.log(`build-onnxruntime: building ONNX Runtime ${TAG} with WebGPU (about 20 minutes, once)`);
 
 mkdirSync(work, { recursive: true });
-if (!existsSync(join(source, '.git'))) {
-  rmSync(source, { recursive: true, force: true });
+if (capture('git', ['-C', source, 'rev-parse', 'HEAD']) !== COMMIT) {
+  const partial = `${source}.partial`;
+  rmSync(partial, { recursive: true, force: true });
   run('git', ['-c', 'advice.detachedHead=false', 'clone', '--quiet', '--depth', '1', '--branch', TAG,
-    'https://github.com/microsoft/onnxruntime', source]);
+    'https://github.com/microsoft/onnxruntime', partial]);
+  const head = capture('git', ['-C', partial, 'rev-parse', 'HEAD']);
+  if (head !== COMMIT) fail(`${TAG} of ONNX Runtime is at ${head}, not ${COMMIT}: the tag was moved (see this script's header)`);
+  rmSync(source, { recursive: true, force: true });
+  renameSync(partial, source);
 }
-const head = capture('git', ['-C', source, 'rev-parse', 'HEAD']);
-if (head !== COMMIT) fail(`${source} is at ${head}, not ${COMMIT} (${TAG}); delete it and build again`);
 
-const parallel = String(Math.max(1, cpus().length));
+const parallel = String(buildJobs(cpus().length));
 run('python3', [join(source, 'tools', 'ci_build', 'build.py'), '--build_dir', build, '--cmake_path', cmake,
   '--parallel', parallel, '--update', '--build', ...flags]);
 

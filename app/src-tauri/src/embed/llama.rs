@@ -149,7 +149,7 @@ pub struct LlamaServer {
     device: Mutex<Device>,
     running: Mutex<Option<Running>>,
     generation: AtomicU64,
-    gpu: OnceLock<Option<String>>,
+    gpu: OnceLock<Option<FoundGpu>>,
     model: Arc<ModelState>,
     source: Option<model::Sources>,
     files: Vec<model::ModelFile>,
@@ -266,7 +266,16 @@ impl LlamaServer {
         Ok(connection)
     }
 
+    fn found_gpu(&self) -> Option<FoundGpu> {
+        self.gpu.get_or_init(|| find_gpu(&self.locations)).clone()
+    }
+
     fn launch_new(&self, device: Device) -> Result<Running, Error> {
+        let device = if self.shared_gpu().is_some() {
+            Device::Cpu
+        } else {
+            device
+        };
         self.model.set(ModelStatus::Starting);
         let mut server = launch(&self.locations, device).inspect_err(|e| {
             self.model.set(ModelStatus::Failed {
@@ -419,7 +428,11 @@ impl Backend for LlamaServer {
     }
 
     fn gpu(&self) -> Option<String> {
-        self.gpu.get_or_init(|| find_gpu(&self.locations)).clone()
+        self.found_gpu().filter(|gpu| !gpu.integrated).map(|gpu| gpu.name)
+    }
+
+    fn shared_gpu(&self) -> Option<String> {
+        self.found_gpu().filter(|gpu| gpu.integrated).map(|gpu| gpu.name)
     }
 
     fn model_status(&self) -> ModelStatus {
@@ -465,7 +478,13 @@ fn device_args(device: Device) -> &'static [&'static str] {
     }
 }
 
-fn find_gpu(locations: &Locations) -> Option<String> {
+#[derive(Clone, Debug, PartialEq)]
+struct FoundGpu {
+    name: String,
+    integrated: bool,
+}
+
+fn find_gpu(locations: &Locations) -> Option<FoundGpu> {
     let mut command = Command::new(locations.server());
     command
         .current_dir(&locations.runtime)
@@ -479,10 +498,48 @@ fn find_gpu(locations: &Locations) -> Option<String> {
         command.creation_flags(CREATE_NO_WINDOW);
     }
     let output = command.output().ok()?;
-    parse_gpu(&String::from_utf8_lossy(&output.stdout))
+    let name = listed_gpu(&String::from_utf8_lossy(&output.stdout))?;
+    Some(FoundGpu {
+        integrated: is_integrated(&name),
+        name: tidy_gpu_name(&name),
+    })
 }
 
+#[cfg(any(target_os = "linux", windows))]
+fn is_integrated(name: &str) -> bool {
+    use ash::vk;
+    unsafe {
+        let Ok(entry) = ash::Entry::load() else { return false };
+        let app = vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_0);
+        let Ok(instance) = entry.create_instance(&vk::InstanceCreateInfo::default().application_info(&app), None)
+        else {
+            return false;
+        };
+        let integrated = instance
+            .enumerate_physical_devices()
+            .unwrap_or_default()
+            .into_iter()
+            .find_map(|device| {
+                let properties = instance.get_physical_device_properties(device);
+                let device_name = properties.device_name_as_c_str().ok()?.to_str().ok()?;
+                (device_name == name).then_some(properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU)
+            });
+        instance.destroy_instance(None);
+        integrated.unwrap_or(false)
+    }
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn is_integrated(_name: &str) -> bool {
+    false
+}
+
+#[cfg(test)]
 fn parse_gpu(listing: &str) -> Option<String> {
+    listed_gpu(listing).map(|name| tidy_gpu_name(&name))
+}
+
+fn listed_gpu(listing: &str) -> Option<String> {
     let mut devices = listing
         .lines()
         .skip_while(|line| !line.trim().starts_with("Available devices"))
@@ -493,7 +550,7 @@ fn parse_gpu(listing: &str) -> Option<String> {
             return None;
         }
         let name = rest.rfind(" (").map_or(rest, |end| &rest[..end]).trim();
-        (!name.is_empty()).then(|| tidy_gpu_name(name))
+        (!name.is_empty()).then(|| name.to_owned())
     })
 }
 

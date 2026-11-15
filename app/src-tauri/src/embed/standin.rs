@@ -10,7 +10,7 @@ use super::{
     Device, Embedder,
     llama::{LlamaServer, Locations},
     model::{self, ModelFile, Sources},
-    pipeline::Pipeline,
+    pipeline::{Backend, Pipeline},
 };
 
 const MOST_HEADER: usize = 64 * 1024 * 1024;
@@ -27,9 +27,10 @@ pub fn embedder(data_dir: &Path, resource_dir: Option<&Path>, device: Device) ->
     };
     let server = LlamaServer::new(locations);
     server.choose_device(device);
+    let on_gpu = device == Device::Auto && server.gpu().is_some();
     Ok(Arc::new(Pipeline::new(server).reading_text(crate::ocr::Lazy::new(
         crate::ocr::folder(data_dir),
-        device == Device::Auto,
+        on_gpu,
     ))))
 }
 

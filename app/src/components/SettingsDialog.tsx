@@ -177,18 +177,19 @@ function RecordedHotkeyRow({ status, recording, held, refused, error, saving, fi
   );
 }
 
-function GpuRow({ enabled, gpu, pending, error, change }: ReturnType<typeof useGpuAcceleration>) {
+function GpuRow({ enabled, gpu, sharedGpu, pending, error, change }: ReturnType<typeof useGpuAcceleration>) {
   const on = pending ?? (enabled === true && gpu != null);
   const known = enabled !== null && gpu !== undefined;
   const disabled = !known || gpu === null || pending !== null;
 
-  const note = !known ? "\u00a0" : (gpu ? `Use your “${gpu}” GPU.` : "No usable GPU found.");
+  const note = !known ? "\u00a0" : gpu ? `Use your “${gpu}” GPU.` : sharedGpu ? "Not available on integrated GPUs." : "No usable GPU found.";
 
   return (
     <>
       <Row
         title="GPU acceleration"
         note={note}
+        disabled={sharedGpu !== null}
         control={(ids) =>
           known ? (
             <Switch checked={on} disabled={disabled} onChange={change} {...ids} />
