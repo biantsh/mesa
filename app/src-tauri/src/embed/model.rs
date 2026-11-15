@@ -2,7 +2,7 @@ use std::{
     cell::Cell,
     fs::{self, File, OpenOptions},
     io::{self, BufReader, Read, Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Mutex,
     thread,
     time::{Duration, Instant, UNIX_EPOCH},
@@ -72,6 +72,38 @@ pub const FILES: [ModelFile; 2] = [
     },
 ];
 
+pub const OCR_FILES: [ModelFile; 3] = [
+    ocr_file(
+        "PP-OCRv6_det_tiny.onnx",
+        1_760_696,
+        "e987bf563858fea8c3480f4a0377d70d170cd231cab8348f1928b1d29525635f",
+        &[1_569_537],
+    ),
+    ocr_file(
+        "mesa_line_filter.onnx",
+        720_412,
+        "60f707748d1282b48ee19eeec4b81cc7e01218d1bfc38622824ee4e83f8fc2f4",
+        &[664_540],
+    ),
+    ocr_file(
+        "PP-OCRv6_rec_tiny.onnx",
+        4_470_077,
+        "356408c28c7d7134b79bb34da8794ba34b43995d36bc9c161e27650fe8085833",
+        &[4_115_337],
+    ),
+];
+
+const fn ocr_file(name: &'static str, bytes: u64, sha256: &'static str, sizes: &'static [u64]) -> ModelFile {
+    ModelFile {
+        name,
+        bytes,
+        sha256,
+        packed: Some(Packed { piece: PIECE, sizes }),
+    }
+}
+
+pub const OCR_PACKED_SOURCE: &str =
+    "https://huggingface.co/biantsh/mesa-ocr/resolve/46645e90dd0c1aa9f704747d09aa7254d9a7d74a";
 pub const SOURCE: &str =
     "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/6ea3e3a309d12a4779cfda98b8c19800d2d5da71";
 pub const PACKED_SOURCE: &str =
@@ -104,6 +136,20 @@ impl Sources {
         self.packed
             .as_deref()
             .filter(|_| files.iter().all(|f| f.packed.is_some()))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Group {
+    pub dir: PathBuf,
+    pub files: Vec<ModelFile>,
+    pub sources: Sources,
+    pub optional: bool,
+}
+
+impl Group {
+    fn packed(&self) -> bool {
+        self.sources.packed_for(&self.files).is_some()
     }
 }
 
@@ -213,17 +259,20 @@ pub fn check(dir: &Path, files: &[ModelFile]) -> Check {
     if known { Check::Good } else { Check::NeedsVerifying }
 }
 
-pub fn initial_status(dir: &Path, files: &[ModelFile], sources: &Sources) -> ModelStatus {
-    match check(dir, files) {
-        Check::Good => ModelStatus::Starting,
-        Check::NeedsVerifying => ModelStatus::Verifying,
-        Check::Missing => downloading(dir, files, sources.packed_for(files).is_some()),
+pub fn initial_status_of(groups: &[Group]) -> ModelStatus {
+    let checks: Vec<Check> = groups.iter().map(|g| check(&g.dir, &g.files)).collect();
+    if checks.contains(&Check::Missing) {
+        let packed: Vec<bool> = groups.iter().map(Group::packed).collect();
+        downloading(groups, &packed)
+    } else if checks.contains(&Check::NeedsVerifying) {
+        ModelStatus::Verifying
+    } else {
+        ModelStatus::Starting
     }
 }
 
-fn downloading(dir: &Path, files: &[ModelFile], packed: bool) -> ModelStatus {
-    let total = files.iter().map(|f| download_size(f, packed)).sum();
-    let done = files.iter().map(|f| downloaded(dir, f, packed)).sum::<u64>().min(total);
+fn downloading(groups: &[Group], packed: &[bool]) -> ModelStatus {
+    let (done, total) = progress_around(groups, packed, None);
     ModelStatus::Downloading { done, total }
 }
 
@@ -251,13 +300,103 @@ fn part_path(dir: &Path, file: &ModelFile) -> std::path::PathBuf {
     dir.join(format!("{}.part", file.name))
 }
 
+#[cfg(test)]
 pub fn ensure(dir: &Path, files: &[ModelFile], sources: &Sources, state: &ModelState) -> Result<(), String> {
+    ensure_all(
+        &[Group {
+            dir: dir.to_owned(),
+            files: files.to_vec(),
+            sources: sources.clone(),
+            optional: false,
+        }],
+        state,
+    )
+}
+
+pub fn ensure_all(groups: &[Group], state: &ModelState) -> Result<(), String> {
+    let mut markers = Vec::with_capacity(groups.len());
+    let mut missing: Vec<Vec<ModelFile>> = Vec::with_capacity(groups.len());
+    let mut without = vec![false; groups.len()];
+    for (n, group) in groups.iter().enumerate() {
+        match what_is_there(group, state) {
+            Ok((marker, files)) => {
+                markers.push(marker);
+                missing.push(files);
+            }
+            Err(why) if group.optional => {
+                eprintln!(
+                    "Mesa: the files in {} can't be kept there, so the app goes without them for now: {why}",
+                    group.dir.display()
+                );
+                without[n] = true;
+                markers.push(Verified::default());
+                missing.push(Vec::new());
+            }
+            Err(why) => return Err(why),
+        }
+    }
+    if missing.iter().all(Vec::is_empty) {
+        return Ok(());
+    }
+
+    let kept = || {
+        groups
+            .iter()
+            .zip(&without)
+            .filter(|(_, gone)| !**gone)
+            .map(|(group, _)| group)
+    };
+    let total: u64 = kept().flat_map(|g| &g.files).map(|f| f.bytes).sum();
+    let already: u64 = kept()
+        .flat_map(|g| g.files.iter().map(|f| present_bytes(&g.dir, f)))
+        .sum();
+    let needed = total.saturating_sub(already);
+    if let Some(free) = kept().next().and_then(|group| free_space(&group.dir))
+        && free < needed + SPARE_BYTES
+    {
+        return Err(format!(
+            "There isn't enough room on the disk to download the search model: {} are needed, and {} are free.",
+            megabytes(needed + SPARE_BYTES),
+            megabytes(free)
+        ));
+    }
+
+    let mut packed: Vec<bool> = groups.iter().map(Group::packed).collect();
+    let last = missing.iter().rposition(|files| !files.is_empty());
+    for (n, group) in groups.iter().enumerate() {
+        if missing[n].is_empty() {
+            continue;
+        }
+        match fetch_group(
+            groups,
+            n,
+            &missing[n],
+            &mut packed,
+            &mut markers[n],
+            state,
+            Some(n) == last,
+        ) {
+            Ok(()) => {}
+            Err(why) if group.optional => {
+                eprintln!(
+                    "Mesa: the files in {} couldn't be had, so the app goes without them for now: {why}",
+                    group.dir.display()
+                );
+            }
+            Err(why) => return Err(why),
+        }
+    }
+    Ok(())
+}
+
+fn what_is_there(group: &Group, state: &ModelState) -> Result<(Verified, Vec<ModelFile>), String> {
+    let dir = &group.dir;
     fs::create_dir_all(dir).map_err(|e| format!("Couldn't make the folder {}: {e}", dir.display()))?;
     let mut marker = read_marker(dir);
 
     let mut good = Vec::new();
     let mut to_verify = Vec::new();
-    for file in files {
+    for file in &group.files {
         match stamp_of(dir, file) {
             Some(stamp) if marker.files.contains(&stamp) => good.push(file.name),
             Some(stamp) => to_verify.push((file, stamp)),
@@ -279,36 +418,44 @@ pub fn ensure(dir: &Path, files: &[ModelFile], sources: &Sources, state: &ModelS
         }
         write_marker(dir, &marker)?;
     }
+    let missing = group
+        .files
+        .iter()
+        .filter(|f| !good.contains(&f.name))
+        .copied()
+        .collect();
+    Ok((marker, missing))
+}
 
-    let missing: Vec<&ModelFile> = files.iter().filter(|f| !good.contains(&f.name)).collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    let total: u64 = files.iter().map(|f| f.bytes).sum();
-    let already: u64 = files.iter().map(|f| present_bytes(dir, f)).sum();
-    let needed = total.saturating_sub(already);
-    if let Some(free) = free_space(dir)
-        && free < needed + SPARE_BYTES
-    {
-        return Err(format!(
-            "There isn't enough room on the disk to download the search model: {} are needed, and {} are free.",
-            megabytes(needed + SPARE_BYTES),
-            megabytes(free)
-        ));
-    }
-
-    let mut packed = sources.packed_for(files);
-    let mut came_packed = Vec::new();
+#[allow(clippy::too_many_arguments)]
+fn fetch_group(
+    groups: &[Group],
+    n: usize,
+    missing: &[ModelFile],
+    packed: &mut [bool],
+    marker: &mut Verified,
+    state: &ModelState,
+    last: bool,
+) -> Result<(), String> {
+    let group = &groups[n];
     let received = Cell::new(false);
-    for file in &missing {
-        if let Some(from) = packed {
-            let copy = file.packed.expect("every file has a packed copy (`packed_for`)");
+    let mut came_packed: Vec<&str> = Vec::new();
+    for file in missing {
+        if packed[n] {
+            let from = group
+                .sources
+                .packed
+                .as_deref()
+                .expect("a group downloaded packed has a place for it");
+            let copy = file
+                .packed
+                .expect("every file of a group downloaded packed has a packed copy (`packed_for`)");
             match download_packed(
                 &format!("{from}/{}.zst", file.name),
                 copy,
-                dir,
-                files,
+                groups,
+                packed,
+                n,
                 file,
                 state,
                 &received,
@@ -318,30 +465,40 @@ pub fn ensure(dir: &Path, files: &[ModelFile], sources: &Sources, state: &ModelS
                     continue;
                 }
                 Err(Failure::Again(last)) if received.get() => return Err(unfinished(&last)),
+                Err(Failure::Again(why) | Failure::Final(why)) if group.optional => return Err(why),
                 Err(Failure::Again(why) | Failure::Final(why)) => {
                     eprintln!(
                         "Mesa: the packed copy of {} couldn't be had, so it is downloaded as it is: {why}",
                         file.name
                     );
-                    packed = None;
+                    packed[n] = false;
                 }
             }
         }
-        download_plain(&sources.plain, dir, files, file, state)?;
+        if group.optional {
+            return Err(format!("{} has no packed copy", file.name));
+        }
+        download_plain(groups, packed, n, file, state)?;
     }
 
-    state.set(ModelStatus::Verifying);
+    if last {
+        state.set(ModelStatus::Verifying);
+    }
+    let dir = &group.dir;
     for file in missing {
         let part = part_path(dir, file);
         let mut right = sha256_of(&part).is_ok_and(|hash| hash == file.sha256);
-        if !right && came_packed.contains(&file.name) {
+        if !right && came_packed.contains(&file.name) && !group.optional {
             eprintln!(
                 "Mesa: the packed copy of {} isn't the model, so it is downloaded as it is",
                 file.name
             );
             let _ = fs::remove_file(&part);
-            download_plain(&sources.plain, dir, files, file, state)?;
-            state.set(ModelStatus::Verifying);
+            packed[n] = false;
+            download_plain(groups, packed, n, file, state)?;
+            if last {
+                state.set(ModelStatus::Verifying);
+            }
             right = sha256_of(&part).is_ok_and(|hash| hash == file.sha256);
         }
         if !right {
@@ -357,16 +514,20 @@ pub fn ensure(dir: &Path, files: &[ModelFile], sources: &Sources, state: &ModelS
         marker.files.retain(|s| s.name != file.name);
         marker.files.push(stamp);
     }
-    write_marker(dir, &marker)
+    write_marker(dir, marker)
 }
 
-fn progress_around(dir: &Path, files: &[ModelFile], file: &ModelFile, packed: bool) -> (u64, u64) {
-    let others = files
-        .iter()
-        .filter(|f| f.name != file.name)
-        .map(|f| downloaded(dir, f, packed))
-        .sum();
-    (others, files.iter().map(|f| download_size(f, packed)).sum())
+fn progress_around(groups: &[Group], packed: &[bool], except: Option<(usize, &str)>) -> (u64, u64) {
+    let (mut done, mut total) = (0, 0);
+    for (n, group) in groups.iter().enumerate() {
+        for file in &group.files {
+            total += download_size(file, packed[n]);
+            if except != Some((n, file.name)) {
+                done += downloaded(&group.dir, file, packed[n]);
+            }
+        }
+    }
+    (done.min(total), total)
 }
 
 fn unfinished(last: &str) -> String {
@@ -374,15 +535,19 @@ fn unfinished(last: &str) -> String {
 }
 
 fn download_plain(
-    source: &str,
-    dir: &Path,
-    files: &[ModelFile],
+    groups: &[Group],
+    packed: &[bool],
+    n: usize,
     file: &ModelFile,
     state: &ModelState,
 ) -> Result<(), String> {
-    let (done_before, total) = progress_around(dir, files, file, false);
-    let (url, part) = (format!("{source}/{}", file.name), part_path(dir, file));
-    state.set(downloading(dir, files, false));
+    let group = &groups[n];
+    let (done_before, total) = progress_around(groups, packed, Some((n, file.name)));
+    let (url, part) = (
+        format!("{}/{}", group.sources.plain, file.name),
+        part_path(&group.dir, file),
+    );
+    state.set(downloading(groups, packed));
     with_retries(|agent| try_download(agent, &url, &part, file.bytes, done_before, total, state)).map_err(|failure| {
         match failure {
             Failure::Again(last) => unfinished(&last),
@@ -391,18 +556,20 @@ fn download_plain(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn download_packed(
     url: &str,
     copy: Packed,
-    dir: &Path,
-    files: &[ModelFile],
+    groups: &[Group],
+    packed: &[bool],
+    n: usize,
     file: &ModelFile,
     state: &ModelState,
     received: &Cell<bool>,
 ) -> Result<(), Failure> {
-    let (done_before, total) = progress_around(dir, files, file, true);
-    let part = part_path(dir, file);
-    state.set(downloading(dir, files, true));
+    let (done_before, total) = progress_around(groups, packed, Some((n, file.name)));
+    let part = part_path(&groups[n].dir, file);
+    state.set(downloading(groups, packed));
     with_retries(|agent| {
         try_packed(
             agent,

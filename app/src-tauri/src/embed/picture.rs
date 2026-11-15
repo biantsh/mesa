@@ -1,6 +1,9 @@
 use std::{cell::RefCell, path::Path};
 
-use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer, images::Image};
+use fast_image_resize::{
+    FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer,
+    images::{Image, ImageRef},
+};
 use image::{DynamicImage, ImageDecoder, ImageReader};
 
 use super::IMAGE_TOKENS;
@@ -9,7 +12,13 @@ const PATCH: u32 = 16;
 const POOLING: u32 = 3;
 const SIDE: u32 = PATCH * POOLING;
 
+#[cfg(test)]
 pub fn from_file(path: &Path) -> Result<Vec<u8>, String> {
+    let (rgb, width, height) = decode(path)?;
+    from_rgb(&rgb, width, height)
+}
+
+pub fn decode(path: &Path) -> Result<(Vec<u8>, u32, u32), String> {
     let mut decoder = ImageReader::open(path)
         .and_then(|reader| reader.with_guessed_format())
         .map_err(|e| format!("can't open the picture: {e}"))?
@@ -22,18 +31,20 @@ pub fn from_file(path: &Path) -> Result<Vec<u8>, String> {
     }
     let rgb = picture.into_rgb8();
     let (width, height) = rgb.dimensions();
-    from_rgb(rgb.into_raw(), width, height)
+    Ok((rgb.into_raw(), width, height))
 }
 
-pub fn from_rgb(rgb: Vec<u8>, width: u32, height: u32) -> Result<Vec<u8>, String> {
+pub fn from_rgb(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
     let (target_width, target_height) = target_size(width, height, IMAGE_TOKENS)
         .ok_or_else(|| format!("the picture is too thin to read ({width} x {height})"))?;
-    let pixels = if (target_width, target_height) == (width, height) {
-        rgb
-    } else {
-        resize(rgb, (width, height), (target_width, target_height))?
-    };
-    Ok(bitmap(target_width, target_height, &pixels))
+    if (target_width, target_height) == (width, height) {
+        return Ok(bitmap(target_width, target_height, rgb));
+    }
+    Ok(bitmap(
+        target_width,
+        target_height,
+        &resize(rgb, (width, height), (target_width, target_height))?,
+    ))
 }
 
 fn target_size(width: u32, height: u32, tokens: u32) -> Option<(u32, u32)> {
@@ -62,8 +73,8 @@ thread_local! {
     static RESIZER: RefCell<Resizer> = RefCell::new(Resizer::new());
 }
 
-fn resize(rgb: Vec<u8>, from: (u32, u32), to: (u32, u32)) -> Result<Vec<u8>, String> {
-    let source = Image::from_vec_u8(from.0, from.1, rgb, PixelType::U8x3).map_err(|e| e.to_string())?;
+fn resize(rgb: &[u8], from: (u32, u32), to: (u32, u32)) -> Result<Vec<u8>, String> {
+    let source = ImageRef::new(from.0, from.1, rgb, PixelType::U8x3).map_err(|e| e.to_string())?;
     let mut target = Image::new(to.0, to.1, PixelType::U8x3);
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
     RESIZER

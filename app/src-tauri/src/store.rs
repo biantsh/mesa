@@ -18,6 +18,7 @@ use crate::{
     embed,
     relevance::{self, Ranked},
     vectors::{DIMS, Located, Record, VectorFile, similarity, to_floats},
+    words,
 };
 
 const CONFIG_ID: u32 = 3;
@@ -29,7 +30,9 @@ const MIGRATIONS: &[&str] = &[
     ADD_EXCLUSIONS,
     DROP_RULES_INDEXED,
     ADD_FILE_COUNT,
+    ADD_WORDS,
 ];
+const WORDS_ID: u32 = 1;
 
 const SCHEMA: &str = "
 CREATE TABLE dirs (
@@ -98,6 +101,18 @@ CREATE TRIGGER files_counted_in AFTER INSERT ON files BEGIN UPDATE file_count SE
 CREATE TRIGGER files_counted_out AFTER DELETE ON files BEGIN UPDATE file_count SET n = n - 1; END;
 ";
 
+const ADD_WORDS: &str = "
+ALTER TABLE files ADD COLUMN read_with INTEGER NOT NULL DEFAULT 0;
+CREATE VIRTUAL TABLE picture_words USING fts5(folded, text UNINDEXED, tokenize = 'trigram remove_diacritics 1');
+CREATE VIRTUAL TABLE document_words USING fts5(folded, content = '', contentless_delete = 1, tokenize = 'trigram remove_diacritics 1');
+CREATE VIRTUAL TABLE short_words USING fts5(pieces, content = '', contentless_delete = 1, tokenize = 'unicode61 remove_diacritics 2');
+CREATE TRIGGER files_words_out AFTER DELETE ON files BEGIN
+    DELETE FROM picture_words WHERE rowid = old.id;
+    DELETE FROM document_words WHERE rowid = old.id;
+    DELETE FROM short_words WHERE rowid = old.id;
+END;
+";
+
 #[derive(Debug)]
 pub enum Error {
     Db(rusqlite::Error),
@@ -140,6 +155,8 @@ pub struct ScannedFile {
     pub modified_ms: i64,
     pub size: u64,
     pub vectors: Vec<Located>,
+    pub words: Option<String>,
+    pub words_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -172,6 +189,7 @@ pub struct Store {
     vectors: VectorFile,
     counts: Arc<Counts>,
     files: i64,
+    reading_pictures: Box<dyn Fn() -> bool + Send>,
 }
 
 #[derive(Default)]
@@ -223,6 +241,7 @@ impl Store {
             vectors,
             counts: Arc::default(),
             files: 0,
+            reading_pictures: Box::new(|| true),
         };
         store.publish_counts(0);
         Ok(store)
@@ -367,6 +386,10 @@ impl Store {
         result
     }
 
+    pub fn read_pictures_if(&mut self, reading: impl Fn() -> bool + Send + 'static) {
+        self.reading_pictures = Box::new(reading);
+    }
+
     pub fn counts(&self) -> Arc<Counts> {
         Arc::clone(&self.counts)
     }
@@ -388,6 +411,7 @@ impl Store {
     }
 
     fn write_scans_inner(&mut self, scans: &[ScannedDir], wanted: &dyn Fn(&Path) -> bool) -> Result<()> {
+        let reading = (self.reading_pictures)();
         let tx = self.conn.transaction()?;
         let mut next_slot = self.vectors.next_slot();
         let mut writes: Vec<(u64, Record)> = Vec::new();
@@ -403,10 +427,18 @@ impl Store {
             for file in &scan.files {
                 seen.insert(file.name.as_str());
                 let old = existing.get(&file.name);
-                if old.is_some_and(|old| is_current(old, file)) {
+                if old.is_some_and(|old| is_current(old, file, reading)) {
                     continue;
                 }
                 if !wanted(&scan.path.join(&file.name)) {
+                    continue;
+                }
+                if file.words_only {
+                    if let Some(old) = old
+                        && vectors_current(old, file)
+                    {
+                        write_words(&tx, old.id, file.category, file.words.as_deref(), reading)?;
+                    }
                     continue;
                 }
                 let dir = match dir_id {
@@ -426,6 +458,7 @@ impl Store {
                     .execute(params![CONFIG_ID, slot as i64, file_id, vector.locator as i64])?;
                     writes.push((slot, vector.record));
                 }
+                write_words(&tx, file_id, file.category, file.words.as_deref(), reading)?;
             }
 
             if scan.complete {
@@ -499,9 +532,15 @@ impl Store {
     }
 
     pub fn has_stale_files(&self) -> Result<bool> {
+        let pictures = if (self.reading_pictures)() {
+            category_code(Category::Image)
+        } else {
+            -1
+        };
         Ok(self.conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM files WHERE embedded_with != ?1)",
-            [CONFIG_ID],
+            "SELECT EXISTS (SELECT 1 FROM files WHERE embedded_with != ?1)
+                 OR EXISTS (SELECT 1 FROM files WHERE read_with != ?2 AND category IN (?3, ?4))",
+            params![CONFIG_ID, WORDS_ID, pictures, category_code(Category::Document)],
             |r| r.get(0),
         )?)
     }
@@ -512,9 +551,14 @@ impl Store {
             None => HashMap::new(),
         };
         let mut changes = Changes::default();
+        let reading = (self.reading_pictures)();
         for file in &scan.files {
             match existing.get(&file.name) {
-                Some(old) if is_current(old, file) => {}
+                Some(old) if is_current(old, file, reading) => {}
+                Some(old) if vectors_current(old, file) => {
+                    changes.changed.insert(file.name.clone());
+                    changes.reread.insert(file.name.clone());
+                }
                 Some(_) => {
                     changes.changed.insert(file.name.clone());
                 }
@@ -782,40 +826,51 @@ impl Store {
     }
 
     pub fn rank(&mut self, query: &Record, filter: Filter) -> Result<Ranked> {
-        let mut sql = String::from(
-            "SELECT e.slot, e.file_id, f.category FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?",
+        let mut values: Vec<Value> = Vec::new();
+        let passes = filter_condition(filter, &mut values);
+        let sql = format!(
+            "SELECT e.slot, e.file_id, f.category, ({passes}) FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?"
         );
-        let mut values: Vec<Value> = vec![i64::from(CONFIG_ID).into()];
-        push_filter(filter, &mut sql, &mut values);
-        let mut candidates: Vec<(u64, i64, i64)> = {
+        values.push(i64::from(CONFIG_ID).into());
+        let mut candidates: Vec<(u64, i64, i64, bool)> = {
             let mut statement = self.conn.prepare(&sql)?;
             let rows = statement.query_map(params_from_iter(values), |r| {
-                Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+                Ok((
+                    r.get::<_, i64>(0)? as u64,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, bool>(3)?,
+                ))
             })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         candidates.sort_unstable();
-        let slots: Vec<u64> = candidates.iter().map(|(slot, _, _)| *slot).collect();
+        let slots: Vec<u64> = candidates.iter().map(|(slot, _, _, _)| *slot).collect();
 
         let query = to_floats(query);
-        let mut closest: HashMap<i64, (i64, f32)> = HashMap::new();
+        let mut closest: HashMap<i64, (i64, f32, bool)> = HashMap::new();
         let mut next = 0;
         self.vectors.read_each(&slots, &mut |slot, record| {
-            let (expected, file, category) = candidates[next];
+            let (expected, file, category, passes) = candidates[next];
             debug_assert_eq!(slot, expected);
             next += 1;
             let score = similarity(&query, record);
             closest
                 .entry(file)
-                .and_modify(|(_, best)| *best = best.max(score))
-                .or_insert((category, score));
+                .and_modify(|(_, best, _)| *best = best.max(score))
+                .or_insert((category, score, passes));
         })?;
 
+        let among: Vec<(i64, i64, f32)> = closest
+            .iter()
+            .map(|(&file, &(category, score, _))| (file, category, score))
+            .collect();
         let scored: Vec<(i64, i64, f32)> = closest
             .into_iter()
-            .map(|(file, (category, score))| (file, category, score))
+            .filter(|(_, (_, _, passes))| *passes)
+            .map(|(file, (category, score, _))| (file, category, score))
             .collect();
-        Ok(relevance::rank(&scored))
+        Ok(relevance::rank(&scored, &among))
     }
 
     pub fn newest(&self, filter: Filter) -> Result<Vec<(i64, f32)>> {
@@ -826,6 +881,48 @@ impl Store {
         let mut statement = self.conn.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(values), |r| Ok((r.get::<_, i64>(0)?, 0.0)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn exact(&self, query: &str, filter: Filter) -> Result<Vec<i64>> {
+        let terms = words::terms(query);
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let all = |terms: &[&String]| {
+            terms
+                .iter()
+                .map(|term| format!("\"{term}\""))
+                .collect::<Vec<_>>()
+                .join(" AND ")
+        };
+        let (long, short): (Vec<&String>, Vec<&String>) = terms.iter().partition(|term| term.chars().count() >= 3);
+        let mut found = Vec::new();
+        for table in ["picture_words", "document_words"] {
+            let mut values: Vec<Value> = Vec::new();
+            let mut conditions = Vec::new();
+            let from = if long.is_empty() {
+                conditions.push("s.short_words MATCH ?".to_owned());
+                values.push(all(&short).into());
+                format!("short_words s JOIN files f ON f.id = s.rowid JOIN {table} w ON w.rowid = s.rowid")
+            } else {
+                conditions.push(format!("w.{table} MATCH ?"));
+                values.push(all(&long).into());
+                if !short.is_empty() {
+                    conditions.push("w.rowid IN (SELECT rowid FROM short_words WHERE short_words MATCH ?)".to_owned());
+                    values.push(all(&short).into());
+                }
+                format!("{table} w JOIN files f ON f.id = w.rowid")
+            };
+            let passes = filter_condition(filter, &mut values);
+            let sql = format!(
+                "SELECT f.id FROM {from} WHERE {} AND {passes}",
+                conditions.join(" AND ")
+            );
+            let mut statement = self.conn.prepare_cached(&sql)?;
+            let rows = statement.query_map(params_from_iter(values), |r| r.get::<_, i64>(0))?;
+            found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+        }
+        Ok(found)
     }
 
     pub fn hits(&self, ranked: &[(i64, f32)]) -> Result<Vec<Hit>> {
@@ -867,17 +964,28 @@ impl Store {
 }
 
 fn push_filter(filter: Filter, sql: &mut String, values: &mut Vec<Value>) {
+    sql.push_str(" AND ");
+    sql.push_str(&filter_condition(filter, values));
+}
+
+fn filter_condition(filter: Filter, values: &mut Vec<Value>) -> String {
+    let mut parts = Vec::new();
     if let Some(category) = filter.category {
-        sql.push_str(" AND f.category = ?");
+        parts.push("f.category = ?");
         values.push(category_code(category).into());
     }
     if let Some(from) = filter.from_ms {
-        sql.push_str(" AND f.modified_ms >= ?");
+        parts.push("f.modified_ms >= ?");
         values.push(from.into());
     }
     if let Some(to) = filter.to_ms {
-        sql.push_str(" AND f.modified_ms < ?");
+        parts.push("f.modified_ms < ?");
         values.push(to.into());
+    }
+    if parts.is_empty() {
+        "1".to_owned()
+    } else {
+        parts.join(" AND ")
     }
 }
 
@@ -894,6 +1002,7 @@ impl Store {
 pub struct Changes {
     pub changed: HashSet<String>,
     pub new: HashSet<String>,
+    pub reread: HashSet<String>,
 }
 
 fn read_records(vectors: &mut VectorFile, slots: impl Iterator<Item = u64>) -> Result<HashMap<u64, Record>> {
@@ -1180,20 +1289,37 @@ struct StoredFile {
     modified_ms: i64,
     size: i64,
     embedded_with: i64,
+    category: i64,
+    read_with: i64,
 }
 
-fn is_current(stored: &StoredFile, file: &ScannedFile) -> bool {
+fn is_current(stored: &StoredFile, file: &ScannedFile, reading_pictures: bool) -> bool {
+    vectors_current(stored, file) && words_current(stored, reading_pictures)
+}
+
+fn vectors_current(stored: &StoredFile, file: &ScannedFile) -> bool {
     stored.modified_ms == file.modified_ms
         && stored.size == file.size as i64
         && stored.embedded_with == i64::from(CONFIG_ID)
+}
+
+fn words_current(stored: &StoredFile, reading_pictures: bool) -> bool {
+    stored.read_with == i64::from(WORDS_ID)
+        || !has_words(stored.category)
+        || (!reading_pictures && stored.category == category_code(Category::Image))
+}
+
+fn has_words(category: i64) -> bool {
+    category == category_code(Category::Image) || category == category_code(Category::Document)
 }
 
 fn existing_of(conn: &Connection, dir_id: i64, scan: &ScannedDir) -> Result<HashMap<String, StoredFile>> {
     if scan.complete {
         return existing_files(conn, dir_id);
     }
-    let mut statement =
-        conn.prepare_cached("SELECT id, modified_ms, size, embedded_with FROM files WHERE dir_id = ?1 AND name = ?2")?;
+    let mut statement = conn.prepare_cached(
+        "SELECT id, modified_ms, size, embedded_with, category, read_with FROM files WHERE dir_id = ?1 AND name = ?2",
+    )?;
     let mut found = HashMap::with_capacity(scan.files.len());
     for file in &scan.files {
         let stored = statement
@@ -1203,6 +1329,8 @@ fn existing_of(conn: &Connection, dir_id: i64, scan: &ScannedDir) -> Result<Hash
                     modified_ms: r.get(1)?,
                     size: r.get(2)?,
                     embedded_with: r.get(3)?,
+                    category: r.get(4)?,
+                    read_with: r.get(5)?,
                 })
             })
             .optional()?;
@@ -1214,8 +1342,9 @@ fn existing_of(conn: &Connection, dir_id: i64, scan: &ScannedDir) -> Result<Hash
 }
 
 fn existing_files(conn: &Connection, dir_id: i64) -> Result<HashMap<String, StoredFile>> {
-    let mut statement =
-        conn.prepare_cached("SELECT name, id, modified_ms, size, embedded_with FROM files WHERE dir_id = ?1")?;
+    let mut statement = conn.prepare_cached(
+        "SELECT name, id, modified_ms, size, embedded_with, category, read_with FROM files WHERE dir_id = ?1",
+    )?;
     let rows = statement.query_map([dir_id], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -1224,6 +1353,8 @@ fn existing_files(conn: &Connection, dir_id: i64) -> Result<HashMap<String, Stor
                 modified_ms: r.get(2)?,
                 size: r.get(3)?,
                 embedded_with: r.get(4)?,
+                category: r.get(5)?,
+                read_with: r.get(6)?,
             },
         ))
     })?;
@@ -1253,6 +1384,44 @@ fn upsert_file(tx: &Transaction, dir_id: i64, file: &ScannedFile) -> Result<i64>
             ],
             |r| r.get(0),
         )?)
+}
+
+fn write_words(
+    tx: &Transaction,
+    id: i64,
+    category: Category,
+    words: Option<&str>,
+    reading_pictures: bool,
+) -> Result<()> {
+    tx.prepare_cached("DELETE FROM picture_words WHERE rowid = ?1")?
+        .execute([id])?;
+    tx.prepare_cached("DELETE FROM document_words WHERE rowid = ?1")?
+        .execute([id])?;
+    tx.prepare_cached("DELETE FROM short_words WHERE rowid = ?1")?
+        .execute([id])?;
+    if category == Category::Image && !reading_pictures {
+        tx.prepare_cached("UPDATE files SET read_with = 0 WHERE id = ?1")?
+            .execute([id])?;
+        return Ok(());
+    }
+    let folded = words.map(words::fold).filter(|folded| !folded.is_empty());
+    let Some(folded) = folded.filter(|_| matches!(category, Category::Image | Category::Document)) else {
+        tx.prepare_cached("UPDATE files SET read_with = ?2 WHERE id = ?1")?
+            .execute(params![id, WORDS_ID])?;
+        return Ok(());
+    };
+    if category == Category::Image {
+        tx.prepare_cached("INSERT INTO picture_words (rowid, folded, text) VALUES (?1, ?2, ?3)")?
+            .execute(params![id, folded, words])?;
+    } else {
+        tx.prepare_cached("INSERT INTO document_words (rowid, folded) VALUES (?1, ?2)")?
+            .execute(params![id, folded])?;
+    }
+    tx.prepare_cached("INSERT INTO short_words (rowid, pieces) VALUES (?1, ?2)")?
+        .execute(params![id, words::short(&folded)])?;
+    tx.prepare_cached("UPDATE files SET read_with = ?2 WHERE id = ?1")?
+        .execute(params![id, WORDS_ID])?;
+    Ok(())
 }
 
 fn take_slot(tx: &Transaction, next_slot: &mut u64) -> Result<u64> {
@@ -1299,6 +1468,8 @@ mod tests {
                 locator: 0,
                 record: vectors::random_record(),
             }],
+            words: None,
+            words_only: false,
         }
     }
 

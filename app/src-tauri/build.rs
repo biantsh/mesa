@@ -10,6 +10,20 @@ fn main() {
         );
     }
     println!("cargo:rerun-if-changed={folder}");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        let folder = "runtime/ocr";
+        let _ = fs::create_dir_all(folder);
+        if fs::read_dir(folder).map_or(true, |mut files| files.next().is_none()) {
+            let _ = fs::write(
+                format!("{folder}/NOT-COPIED.txt"),
+                "The OCR's DLLs are copied here by `node scripts/copy-ocr-runtime.mjs` in app/, which `tauri build` runs.\n",
+            );
+        }
+        println!("cargo:rerun-if-changed={folder}");
+    }
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/Mesa/onnxruntime:$ORIGIN/onnxruntime:$ORIGIN");
+    }
     println!("cargo:rerun-if-changed=icons");
     tauri_build::build()
 }

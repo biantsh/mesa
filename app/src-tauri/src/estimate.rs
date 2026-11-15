@@ -24,15 +24,17 @@ const ORDER: [Category; 4] = [Category::Image, Category::Document, Category::Aud
 const FINALIZE_LIMIT: Duration = Duration::from_secs(15);
 const START_LIMIT: Duration = Duration::from_secs(120);
 const RETRY_AFTER: Duration = Duration::from_secs(10 * 60);
+const OCR_WAIT: Duration = Duration::from_secs(90);
 const SURVEY_FRESH: Duration = Duration::from_secs(10 * 60);
-
-const FILE: &str = "costs.json";
+const FILE: &str = "costs-4.json";
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Cost {
     pub per_file: f64,
     pub per_byte: f64,
+    #[serde(default)]
+    pub with_text: bool,
 }
 
 type Costs = BTreeMap<String, PerType<Option<Cost>>>;
@@ -213,23 +215,49 @@ impl Estimator {
         device: Device,
     ) -> Result<(), String> {
         let embedder = embed::standin::embedder(&self.data_dir, self.resource_dir.as_deref(), device)?;
-        let result = measure(
-            &*embedder,
-            samples,
-            wanted,
-            BUDGET,
-            &measurement.cancel,
-            |kind, cost| self.keep_cost(device, kind, cost),
-        );
+        let ocr = crate::ocr::folder(&self.data_dir);
+        let later = !crate::ocr::present(&ocr) && wanted.contains(&Category::Image);
+        let first: Vec<Category> = wanted
+            .iter()
+            .copied()
+            .filter(|&kind| !(later && kind == Category::Image))
+            .collect();
+        let keep = |kind, cost: Cost| {
+            let with_text = kind == Category::Image && crate::ocr::present(&ocr);
+            self.keep_cost(device, kind, Cost { with_text, ..cost });
+        };
+        let mut result = measure(&*embedder, samples, &first, BUDGET, &measurement.cancel, keep);
+        if result.is_ok() && later {
+            let waited = Instant::now();
+            while !crate::ocr::present(&ocr)
+                && waited.elapsed() < OCR_WAIT
+                && !measurement.cancel.load(Ordering::Relaxed)
+            {
+                thread::sleep(Duration::from_millis(200));
+            }
+            if !measurement.cancel.load(Ordering::Relaxed) {
+                result = measure(
+                    &*embedder,
+                    samples,
+                    &[Category::Image],
+                    BUDGET,
+                    &measurement.cancel,
+                    keep,
+                );
+            }
+        }
         embedder.release();
         embed::standin::remove(&self.data_dir);
         result
     }
 
     fn cost(&self, device: Device, kind: Category) -> Option<Cost> {
-        lock(&self.costs)
+        let cost = lock(&self.costs)
             .get(device_key(device))
-            .and_then(|costs| *costs.get(kind))
+            .and_then(|costs| *costs.get(kind))?;
+        let stale =
+            kind == Category::Image && !cost.with_text && crate::ocr::present(&crate::ocr::folder(&self.data_dir));
+        (!stale).then_some(cost)
     }
 
     fn keep_cost(&self, device: Device, kind: Category, cost: Cost) {
@@ -289,7 +317,10 @@ fn measure(
     };
     embedder
         .embed(
-            &[Item { path: first.0.clone() }],
+            &[Item {
+                path: first.0.clone(),
+                words_only: false,
+            }],
             &|| cancel.load(Ordering::Relaxed),
             &mut |_, _| {},
         )
@@ -311,7 +342,13 @@ fn measure(
             continue;
         }
         files.sort_by_key(|&(_, size)| size);
-        let items: Vec<Item> = files.iter().map(|(path, _)| Item { path: path.clone() }).collect();
+        let items: Vec<Item> = files
+            .iter()
+            .map(|(path, _)| Item {
+                path: path.clone(),
+                words_only: false,
+            })
+            .collect();
         let started = Instant::now();
         let (mut done, mut bytes, mut last) = (0u64, 0u64, Duration::ZERO);
         embedder
@@ -335,6 +372,7 @@ fn measure(
                 Cost {
                     per_file: seconds / done as f64,
                     per_byte: seconds / bytes.max(1) as f64,
+                    with_text: false,
                 },
             );
         }

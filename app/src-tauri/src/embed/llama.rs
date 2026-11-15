@@ -153,6 +153,7 @@ pub struct LlamaServer {
     model: Arc<ModelState>,
     source: Option<model::Sources>,
     files: Vec<model::ModelFile>,
+    more: Vec<model::Group>,
     files_ok: AtomicBool,
     setting_up: Mutex<()>,
 }
@@ -172,20 +173,42 @@ impl LlamaServer {
             model: Arc::new(ModelState::new(ModelStatus::Starting)),
             source: None,
             files: model::FILES.to_vec(),
+            more: Vec::new(),
             files_ok: AtomicBool::new(false),
             setting_up: Mutex::new(()),
         }
     }
 
     pub fn download_from(mut self, sources: model::Sources) -> Self {
-        self.model
-            .set(model::initial_status(&self.locations.models, &self.files, &sources));
         self.source = Some(sources);
+        self.model.set(model::initial_status_of(&self.groups()));
         self
     }
 
+    pub fn download_too(mut self, group: model::Group) -> Self {
+        self.more.push(group);
+        if self.source.is_some() {
+            self.model.set(model::initial_status_of(&self.groups()));
+        }
+        self
+    }
+
+    fn groups(&self) -> Vec<model::Group> {
+        let Some(sources) = &self.source else { return Vec::new() };
+        let mut groups = self.more.clone();
+        groups.push(model::Group {
+            dir: self.locations.models.clone(),
+            files: self.files.clone(),
+            sources: sources.clone(),
+            optional: false,
+        });
+        groups
+    }
+
     fn ensure_model(&self) -> Result<(), Error> {
-        let Some(source) = &self.source else { return Ok(()) };
+        if self.source.is_none() {
+            return Ok(());
+        }
         if self.files_ok.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -200,7 +223,7 @@ impl LlamaServer {
             self.model.get(),
             ModelStatus::Downloading { .. } | ModelStatus::Verifying
         );
-        match model::ensure(&self.locations.models, &self.files, source, &self.model) {
+        match model::ensure_all(&self.groups(), &self.model) {
             Ok(()) => {
                 if getting {
                     crate::estimate::before_model_starts(&self.model);
@@ -405,9 +428,8 @@ impl Backend for LlamaServer {
 
     fn retry_setup(&self) -> bool {
         match self.model.get() {
-            ModelStatus::Failed { setup: true, .. } if let Some(sources) = &self.source => {
-                self.model
-                    .set(model::initial_status(&self.locations.models, &self.files, sources));
+            ModelStatus::Failed { setup: true, .. } if self.source.is_some() => {
+                self.model.set(model::initial_status_of(&self.groups()));
             }
             ModelStatus::Failed { setup: false, .. } => self.model.set(ModelStatus::Starting),
             _ => return false,

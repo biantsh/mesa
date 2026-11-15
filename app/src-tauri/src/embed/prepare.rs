@@ -5,6 +5,8 @@ use std::{
 
 use super::{Item, audio, documents, picture};
 
+pub type ReadText<'a> = Option<&'a mut dyn FnMut(Vec<u8>, u32, u32)>;
+
 pub enum Prepared {
     Image(Vec<u8>),
     Audio(Vec<u8>),
@@ -51,8 +53,13 @@ pub fn is_supported(item: &Item) -> bool {
 }
 
 /// A panic while reading one file fails only that file, not the whole run.
-pub fn prepare(item: &Item, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
-    catch_unwind(AssertUnwindSafe(|| read(item, emit))).unwrap_or_else(|panic| {
+pub fn prepare(
+    item: &Item,
+    text: ReadText,
+    emit: &mut dyn FnMut(Unit) -> bool,
+    words: &mut String,
+) -> Result<(), String> {
+    catch_unwind(AssertUnwindSafe(|| read(item, text, emit, words))).unwrap_or_else(|panic| {
         let why = panic
             .downcast_ref::<String>()
             .map(String::as_str)
@@ -64,32 +71,19 @@ pub fn prepare(item: &Item, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), St
     })
 }
 
-fn read(item: &Item, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+fn read(item: &Item, text: ReadText, emit: &mut dyn FnMut(Unit) -> bool, words: &mut String) -> Result<(), String> {
     let path = &item.path;
-    let one = |input: Prepared, emit: &mut dyn FnMut(Unit) -> bool| {
-        emit(Unit { locator: 0, input });
-        Ok(())
-    };
     match kind(path) {
-        Some(Kind::Picture) => one(Prepared::Image(picture::from_file(path)?), emit),
+        Some(Kind::Picture) => one_picture(item, picture::decode(path)?, text, emit),
         #[cfg(windows)]
-        Some(Kind::SystemPicture) => {
-            let (rgb, width, height) = super::wic::decode(path)?;
-            one(Prepared::Image(picture::from_rgb(rgb, width, height)?), emit)
-        }
+        Some(Kind::SystemPicture) => one_picture(item, super::wic::decode(path)?, text, emit),
         #[cfg(target_os = "macos")]
-        Some(Kind::SystemPicture) => {
-            let (rgb, width, height) = super::imageio::decode(path)?;
-            one(Prepared::Image(picture::from_rgb(rgb, width, height)?), emit)
-        }
+        Some(Kind::SystemPicture) => one_picture(item, super::imageio::decode(path)?, text, emit),
         #[cfg(target_os = "linux")]
-        Some(Kind::SystemPicture) => {
-            let (rgb, width, height) = super::heif::decode(path)?;
-            one(Prepared::Image(picture::from_rgb(rgb, width, height)?), emit)
-        }
-        Some(Kind::Text) => documents::plain(path, emit),
-        Some(Kind::Word) => documents::docx(path, emit),
-        Some(Kind::Pdf) => documents::pdf(path, emit),
+        Some(Kind::SystemPicture) => one_picture(item, super::heif::decode(path)?, text, emit),
+        Some(Kind::Text) => documents::plain(path, emit, words),
+        Some(Kind::Word) => documents::docx(path, emit, words),
+        Some(Kind::Pdf) => documents::pdf(path, emit, words),
         Some(Kind::Sound) => audio::file(path, emit),
         #[cfg(windows)]
         Some(Kind::Video) => super::video::frames(path, emit),
@@ -103,6 +97,23 @@ fn read(item: &Item, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
         Some(Kind::Video) => Err("this kind of file isn't read on this platform yet".into()),
         None => Err("this kind of file isn't read".into()),
     }
+}
+
+fn one_picture(
+    item: &Item,
+    (rgb, width, height): (Vec<u8>, u32, u32),
+    text: ReadText,
+    emit: &mut dyn FnMut(Unit) -> bool,
+) -> Result<(), String> {
+    let wanted = item.words_only
+        || emit(Unit {
+            locator: 0,
+            input: Prepared::Image(picture::from_rgb(&rgb, width, height)?),
+        });
+    if wanted && let Some(text) = text {
+        text(rgb, width, height);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -130,7 +141,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
         std::fs::write(&path, "some words").unwrap();
-        let why = prepare(&Item { path }, &mut emit).unwrap_err();
+        let why = prepare(
+            &Item {
+                path,
+                words_only: false,
+            },
+            None,
+            &mut emit,
+            &mut String::new(),
+        )
+        .unwrap_err();
         assert!(why.contains("boom"), "{why}");
     }
 }

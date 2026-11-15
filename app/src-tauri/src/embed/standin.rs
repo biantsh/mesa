@@ -27,7 +27,10 @@ pub fn embedder(data_dir: &Path, resource_dir: Option<&Path>, device: Device) ->
     };
     let server = LlamaServer::new(locations);
     server.choose_device(device);
-    Ok(Arc::new(Pipeline::new(server)))
+    Ok(Arc::new(Pipeline::new(server).reading_text(crate::ocr::Lazy::new(
+        crate::ocr::folder(data_dir),
+        device == Device::Auto,
+    ))))
 }
 
 pub fn make(files: &[ModelFile], models: &Path, sources: &Sources, folder: &Path) -> Result<(), String> {

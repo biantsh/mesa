@@ -331,7 +331,9 @@ impl Index {
         chosen: Option<Categories>,
     ) -> store::Result<Self> {
         embedder.set_eco(!turbo);
-        let store = Store::open(dir)?;
+        let mut store = Store::open(dir)?;
+        let reader = embedder.clone();
+        store.read_pictures_if(move || reader.reads_text());
         let rules = store.load_rules()?;
         let types = match store.indexed_types()? {
             Some(kept) => kept,
@@ -722,7 +724,13 @@ impl Index {
     ) -> Result<Page, String> {
         let query = self.query_vector(text, files)?;
         let ranked = if let Some(query) = query {
-            lock(&self.shared.store).rank(&query, filter)?
+            let mut store = lock(&self.shared.store);
+            let ranked = store.rank(&query, filter)?;
+            if text.trim().is_empty() {
+                ranked
+            } else {
+                crate::words::merge(ranked, &store.exact(text, filter)?)
+            }
         } else if filter != Filter::default() {
             Ranked::all_close(lock(&self.shared.store).newest(filter)?)
         } else {
@@ -1586,6 +1594,8 @@ mod tests {
                 locator: 0,
                 record: crate::vectors::random_record(),
             }],
+            words: None,
+            words_only: false,
         };
         let scan = ScannedDir {
             path: photos.clone(),

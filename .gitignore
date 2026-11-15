@@ -6,3 +6,5 @@ app/src-tauri/target
 app/src-tauri/runtime
 
 *.tsbuildinfo
+
+__pycache__/

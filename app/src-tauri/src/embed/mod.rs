@@ -48,6 +48,7 @@ pub enum Device {
 #[derive(Clone, Debug)]
 pub struct Item {
     pub path: PathBuf,
+    pub words_only: bool,
 }
 
 fn display_name(path: &Path) -> String {
@@ -59,8 +60,9 @@ fn display_name(path: &Path) -> String {
 
 #[derive(Debug, PartialEq)]
 pub enum Outcome {
-    Vectors(Vec<Located>),
+    Vectors(Vec<Located>, Option<String>),
     NoVector(String),
+    Words(Option<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,21 +90,32 @@ pub trait Embedder: Send + Sync {
 
     fn embed_example(&self, path: &Path, max_pieces: usize) -> Result<Vec<Record>, Error> {
         let mut outcome = None;
-        self.embed(&[Item { path: path.to_owned() }], &|| false, &mut |_, made| {
-            outcome = Some(made)
-        })?;
+        self.embed(
+            &[Item {
+                path: path.to_owned(),
+                words_only: false,
+            }],
+            &|| false,
+            &mut |_, made| outcome = Some(made),
+        )?;
         match outcome {
-            Some(Outcome::Vectors(vectors)) => Ok(vectors
+            Some(Outcome::Vectors(vectors, _)) => Ok(vectors
                 .into_iter()
                 .take(max_pieces)
                 .map(|located| located.record)
                 .collect()),
             Some(Outcome::NoVector(why)) => Err(Error(format!("{} can't be searched with: {why}", display_name(path)))),
-            None => Err(Error(format!("the model gave no answer for {}", display_name(path)))),
+            Some(Outcome::Words(_)) | None => {
+                Err(Error(format!("the model gave no answer for {}", display_name(path))))
+            }
         }
     }
 
     fn warm_up(&self) {}
+
+    fn reads_text(&self) -> bool {
+        true
+    }
 
     fn release(&self) {}
 
@@ -125,11 +138,31 @@ pub trait Embedder: Send + Sync {
 
 pub fn for_this_platform(data_dir: &Path, resource_dir: Option<&Path>, device: Device) -> Arc<dyn Embedder> {
     let mut server = llama::LlamaServer::new(Locations::new(data_dir, resource_dir));
+    let reading = !(cfg!(test) && std::env::var_os("MESA_REAL_NO_OCR").is_some());
     if std::env::var_os("MESA_MODELS_DIR").is_none_or(|dir| dir.is_empty()) {
         server = server.download_from(model::Sources::ours());
     }
+    if reading && std::env::var_os("MESA_MODELS_DIR").is_none_or(|dir| dir.is_empty()) {
+        server = server.download_too(model::Group {
+            dir: crate::ocr::folder(data_dir),
+            files: model::OCR_FILES.to_vec(),
+            sources: model::Sources {
+                packed: Some(model::OCR_PACKED_SOURCE.to_owned()),
+                plain: String::new(),
+            },
+            optional: true,
+        });
+    }
     server.choose_device(device);
-    Arc::new(Pipeline::new(server))
+    let pipeline = Pipeline::new(server);
+    Arc::new(if reading {
+        pipeline.reading_text(crate::ocr::Lazy::new(
+            crate::ocr::folder(data_dir),
+            device == Device::Auto,
+        ))
+    } else {
+        pipeline
+    })
 }
 
 #[cfg(test)]
@@ -148,10 +181,13 @@ pub mod testing {
             for i in 0..items.len() {
                 done(
                     i,
-                    Outcome::Vectors(vec![Located {
-                        locator: 0,
-                        record: crate::vectors::random_record(),
-                    }]),
+                    Outcome::Vectors(
+                        vec![Located {
+                            locator: 0,
+                            record: crate::vectors::random_record(),
+                        }],
+                        None,
+                    ),
                 );
             }
             Ok(())

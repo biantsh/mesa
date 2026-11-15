@@ -37,19 +37,20 @@ export function SetupScreen({ status, leaving }: Props) {
   const access = useFolderAccessStep(downloading);
   const percent = downloading && status.total > 0 ? Math.min(100, Math.floor((status.done / status.total) * 100)) : 0;
   const determinate = downloading || status.state === "ready";
+  const step = downloading ? "Downloading model weights…" : "Setting up EmbeddingGemma 2…";
 
   return (
     <div className={cx(styles.screen, leaving && styles.leaving)} role="status" aria-live="polite">
       <img className={styles.logo} src={logo} alt="Mesa" draggable={false} />
       <div className={styles.block}>
         <p className={styles.title}>
-          {failed ? "Search couldn’t be set up" : downloading ? "Downloading EmbeddingGemma 2" : "Setting up EmbeddingGemma 2"}
+          {failed ? "Search couldn’t be set up" : step}
         </p>
         {!failed && (
           <div
             className={cx(styles.track, !determinate && styles.indeterminate)}
             role="progressbar"
-            aria-label={downloading ? "Downloading EmbeddingGemma 2" : "Setting up EmbeddingGemma 2"}
+            aria-label={step}
             aria-valuemin={0}
             aria-valuemax={downloading ? status.total : undefined}
             aria-valuenow={downloading ? status.done : undefined}
@@ -76,7 +77,7 @@ export function SetupScreen({ status, leaving }: Props) {
         )}
       </div>
       {(downloading || failed) && (
-        <p className={styles.note}>The search model is downloaded once. Everything else stays on your computer.</p>
+        <p className={styles.note}>The models are downloaded once. Everything else stays on your computer.</p>
       )}
     </div>
   );

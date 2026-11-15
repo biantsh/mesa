@@ -18,15 +18,22 @@ const MAX_PDF_BYTES: u64 = 200 * 1024 * 1024;
 
 type Emit<'a> = &'a mut dyn FnMut(Unit) -> bool;
 
-pub fn plain(path: &Path, emit: Emit) -> Result<(), String> {
+pub fn plain(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
     let mut bytes = Vec::new();
     File::open(path)
         .and_then(|file| file.take(TEXT_BYTES).read_to_end(&mut bytes))
         .map_err(|e| format!("can't read the file: {e}"))?;
-    send_passages(path, &String::from_utf8_lossy(&bytes), |n| n as u64, MAX_PASSAGES, emit)
+    send_passages(
+        path,
+        &String::from_utf8_lossy(&bytes),
+        |n| n as u64,
+        MAX_PASSAGES,
+        emit,
+        words,
+    )
 }
 
-pub fn docx(path: &Path, emit: Emit) -> Result<(), String> {
+pub fn docx(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
     let file = File::open(path).map_err(|e| format!("can't read the file: {e}"))?;
     let mut archive = zip::ZipArchive::new(BufReader::new(file)).map_err(|e| format!("not a Word document: {e}"))?;
     let mut xml = Vec::new();
@@ -36,7 +43,7 @@ pub fn docx(path: &Path, emit: Emit) -> Result<(), String> {
         .take(MAX_DOCX_XML_BYTES)
         .read_to_end(&mut xml)
         .map_err(|e| format!("can't read the document: {e}"))?;
-    send_passages(path, &docx_text(&xml)?, |n| n as u64, MAX_PASSAGES, emit)
+    send_passages(path, &docx_text(&xml)?, |n| n as u64, MAX_PASSAGES, emit, words)
 }
 
 fn docx_text(xml: &[u8]) -> Result<String, String> {
@@ -90,7 +97,7 @@ fn docx_text(xml: &[u8]) -> Result<String, String> {
     Ok(text)
 }
 
-pub fn pdf(path: &Path, emit: Emit) -> Result<(), String> {
+pub fn pdf(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
     let mut bytes = Vec::new();
     File::open(path)
         .and_then(|file| file.take(MAX_PDF_BYTES).read_to_end(&mut bytes))
@@ -118,6 +125,7 @@ pub fn pdf(path: &Path, emit: Emit) -> Result<(), String> {
                 return Ok(());
             }
             sent += 1;
+            add_words(words, &passage);
             if !emit(Unit {
                 locator: page as u64 + 1,
                 input: Prepared::Text(titled(path, &passage)),
@@ -133,18 +141,27 @@ pub fn pdf(path: &Path, emit: Emit) -> Result<(), String> {
     }
 }
 
+fn add_words(words: &mut String, passage: &str) {
+    if !words.is_empty() {
+        words.push('\n');
+    }
+    words.push_str(passage);
+}
+
 fn send_passages(
     path: &Path,
     text: &str,
     locator: impl Fn(usize) -> u64,
     most: usize,
     emit: Emit,
+    words: &mut String,
 ) -> Result<(), String> {
     let passages = passages(&normalise(text));
     if passages.is_empty() {
         return Err("there is no text in it".into());
     }
     for (n, passage) in passages.into_iter().take(most).enumerate() {
+        add_words(words, &passage);
         if !emit(Unit {
             locator: locator(n),
             input: Prepared::Text(titled(path, &passage)),
@@ -248,7 +265,7 @@ mod tests {
         let path = dir.join("book.txt");
         let paragraph = "word ".repeat(100);
         fs::write(&path, vec![paragraph.trim(); 10].join("\n\n")).unwrap();
-        let units = collect(|emit| plain(&path, emit)).unwrap();
+        let units = collect(|emit| plain(&path, emit, &mut String::new())).unwrap();
         assert_eq!(
             units.len(),
             4,

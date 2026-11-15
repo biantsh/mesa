@@ -379,6 +379,7 @@ struct Walker<'a> {
     stored: bool,
     warmed_up: bool,
     new_files: HashSet<PathBuf>,
+    rereads: HashSet<PathBuf>,
     root: PathBuf,
 }
 
@@ -394,6 +395,7 @@ impl<'a> Walker<'a> {
             stored: true,
             warmed_up: false,
             new_files: HashSet::new(),
+            rereads: HashSet::new(),
         }
     }
 
@@ -446,6 +448,12 @@ impl<'a> Walker<'a> {
             } else {
                 if changes.as_ref().is_some_and(|changes| changes.new.contains(&file.name)) {
                     self.new_files.insert(scan.path.join(&file.name));
+                }
+                if changes
+                    .as_ref()
+                    .is_some_and(|changes| changes.reread.contains(&file.name))
+                {
+                    self.rereads.insert(scan.path.join(&file.name));
                 }
                 self.waiting.push((index, n));
             }
@@ -512,8 +520,10 @@ impl<'a> Walker<'a> {
             let epoch = shared.control.epoch();
             let items: Vec<Item> = left
                 .iter()
-                .map(|&n| Item {
-                    path: path_of(&folders, places[n]),
+                .map(|&n| {
+                    let path = path_of(&folders, places[n]);
+                    let words_only = self.rereads.contains(&path);
+                    Item { path, words_only }
                 })
                 .collect();
             let mut finished = vec![false; items.len()];
@@ -526,10 +536,11 @@ impl<'a> Walker<'a> {
                 .embed(&items, &|| shared.control.changed_since(epoch), &mut |i, outcome| {
                     let (folder, file) = places[left[i]];
                     let mut file = folders[folder].files[file].clone();
-                    file.vectors = match outcome {
-                        Outcome::Vectors(vectors) => vectors,
-                        Outcome::NoVector(_) => Vec::new(),
-                    };
+                    match outcome {
+                        Outcome::Vectors(vectors, words) => (file.vectors, file.words) = (vectors, words),
+                        Outcome::NoVector(_) => file.vectors = Vec::new(),
+                        Outcome::Words(words) => (file.words, file.words_only) = (words, true),
+                    }
                     if new_files.remove(&items[i].path) {
                         batch.new += 1;
                         shared.counts.made();
@@ -565,6 +576,7 @@ impl<'a> Walker<'a> {
         }
 
         self.new_files.clear();
+        self.rereads.clear();
 
         if !self.failed {
             for folder in folders.drain(..).filter(|folder| folder.complete) {
@@ -771,6 +783,8 @@ fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
                 modified_ms,
                 size,
                 vectors: Vec::new(),
+                words: None,
+                words_only: false,
             }),
             None => unreadable_file = true,
         },
@@ -806,6 +820,8 @@ fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
             modified_ms,
             size,
             vectors: Vec::new(),
+            words: None,
+            words_only: false,
         }],
         complete: false,
         subfolders: None,
@@ -901,10 +917,13 @@ mod tests {
                     if unreadable {
                         Outcome::NoVector("not read yet".into())
                     } else {
-                        Outcome::Vectors(vec![Located {
-                            locator: 0,
-                            record: vectors::record_from(&[1.0; vectors::DIMS]).unwrap(),
-                        }])
+                        Outcome::Vectors(
+                            vec![Located {
+                                locator: 0,
+                                record: vectors::record_from(&[1.0; vectors::DIMS]).unwrap(),
+                            }],
+                            None,
+                        )
                     },
                 );
             }

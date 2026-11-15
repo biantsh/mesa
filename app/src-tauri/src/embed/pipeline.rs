@@ -16,6 +16,7 @@ use super::{
 };
 use crate::{
     index::lock,
+    ocr,
     vectors::{self, Located, Record},
 };
 
@@ -97,6 +98,8 @@ pub struct Pipeline<B: Backend> {
     parking: Parking,
     searching: AtomicUsize,
     unit_time: Mutex<Option<f64>>,
+    ocr: Option<Arc<ocr::Lazy>>,
+    ocr_preparing: Arc<AtomicUsize>,
 }
 
 struct Searching<'a> {
@@ -121,7 +124,14 @@ impl<B: Backend> Pipeline<B> {
             parking: Parking::default(),
             searching: AtomicUsize::new(0),
             unit_time: Mutex::new(None),
+            ocr: None,
+            ocr_preparing: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    pub fn reading_text(mut self, ocr: ocr::Lazy) -> Self {
+        self.ocr = Some(Arc::new(ocr));
+        self
     }
 
     fn search_first(&self) -> Searching<'_> {
@@ -156,6 +166,18 @@ impl<B: Backend> Pipeline<B> {
         }
     }
 
+    fn readers(&self) -> usize {
+        if self.eco.load(Ordering::Relaxed) {
+            1
+        } else {
+            self.most_readers()
+        }
+    }
+
+    fn most_readers(&self) -> usize {
+        (self.preparers / 2).max(1)
+    }
+
     fn in_flight(&self) -> usize {
         if self.eco.load(Ordering::Relaxed) {
             1
@@ -174,6 +196,12 @@ impl<B: Backend> Pipeline<B> {
     }
 }
 
+fn prepare_ocr(ocr: &ocr::Lazy, preparing: &AtomicUsize) {
+    preparing.fetch_add(1, Ordering::SeqCst);
+    ocr.prepare();
+    preparing.fetch_sub(1, Ordering::SeqCst);
+}
+
 enum Event {
     Unit {
         item: usize,
@@ -184,18 +212,38 @@ enum Event {
         item: usize,
         units: usize,
         error: Option<String>,
+        words: String,
+        text: bool,
+    },
+    Text {
+        item: usize,
+        words: Option<String>,
     },
 }
 
 #[derive(Default)]
 struct Partial {
+    words_only: bool,
     units: Option<usize>,
     answered: usize,
+    texts: Option<usize>,
+    texts_read: usize,
     vectors: Vec<Located>,
+    words: String,
     failure: Option<String>,
 }
 
 impl Partial {
+    fn add_words(&mut self, words: &str) {
+        if words.is_empty() {
+            return;
+        }
+        if !self.words.is_empty() {
+            self.words.push('\n');
+        }
+        self.words.push_str(words);
+    }
+
     fn take(&mut self, event: Event) -> Option<Outcome> {
         match event {
             Event::Unit { locator, output, .. } => {
@@ -213,15 +261,34 @@ impl Partial {
                     }
                 }
             }
-            Event::Read { units, error, .. } => {
+            Event::Read {
+                units,
+                error,
+                words,
+                text,
+                ..
+            } => {
                 self.units = Some(units);
+                self.texts = Some(usize::from(text));
+                self.add_words(&words);
                 if let Some(why) = error {
                     self.failure.get_or_insert(why);
                 }
             }
+            Event::Text { words, .. } => {
+                self.texts_read += 1;
+                if let Some(words) = words {
+                    self.add_words(&words);
+                }
+            }
         }
-        if self.units != Some(self.answered) {
+        if self.units != Some(self.answered) || self.texts != Some(self.texts_read) {
             return None;
+        }
+        if self.words_only {
+            return Some(Outcome::Words(
+                Some(std::mem::take(&mut self.words)).filter(|words| !words.is_empty()),
+            ));
         }
         let mut vectors = std::mem::take(&mut self.vectors);
         vectors.sort_by_key(|located| located.locator);
@@ -232,7 +299,10 @@ impl Partial {
                     .unwrap_or_else(|| "there is nothing in it for the model to read".into()),
             )
         } else {
-            Outcome::Vectors(vectors)
+            Outcome::Vectors(
+                vectors,
+                Some(std::mem::take(&mut self.words)).filter(|words| !words.is_empty()),
+            )
         })
     }
 }
@@ -272,7 +342,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
         if items.is_empty() || stop() {
             return Ok(());
         }
-        if items.iter().any(prepare::is_supported) {
+        if items.iter().any(|item| !item.words_only && prepare::is_supported(item)) {
             self.backend.start()?;
         }
 
@@ -284,11 +354,13 @@ impl<B: Backend> Embedder for Pipeline<B> {
         let queue = backend.max_batch() * in_flight * 2;
         let (ready_in, ready_out) = bounded::<(usize, Unit)>(queue);
         let (event_in, event_out) = unbounded::<Event>();
+        let (text_in, text_out) = bounded::<(usize, Vec<u8>, u32, u32)>(self.preparers);
+        let reading = self.ocr.as_deref();
         let preparing = AtomicUsize::new(self.preparers);
 
         thread::scope(|scope| {
             for number in 0..self.preparers {
-                let (ready_in, event_in) = (ready_in.clone(), event_in.clone());
+                let (ready_in, event_in, text_in) = (ready_in.clone(), event_in.clone(), text_in.clone());
                 let (next, cancel, preparing) = (&next, &cancel, &preparing);
                 scope.spawn(move || {
                     let _leaving = self.parking.waker();
@@ -306,13 +378,29 @@ impl<B: Backend> Embedder for Pipeline<B> {
                         let item = next.fetch_add(1, Ordering::Relaxed);
                         let Some(file) = items.get(item) else { break };
                         let mut units = 0;
-                        let result = prepare::prepare(file, &mut |unit| {
-                            if cancel.load(Ordering::Relaxed) || ready_in.send((item, unit)).is_err() {
-                                return false;
-                            }
-                            units += 1;
-                            true
-                        });
+                        let mut words = String::new();
+                        let mut text = false;
+                        let mut read_text = |rgb: Vec<u8>, width: u32, height: u32| {
+                            text = text_in.send((item, rgb, width, height)).is_ok();
+                        };
+                        let result = prepare::prepare(
+                            file,
+                            reading.map(|_| &mut read_text as &mut dyn FnMut(Vec<u8>, u32, u32)),
+                            &mut |unit| {
+                                if cancel.load(Ordering::Relaxed) {
+                                    return false;
+                                }
+                                if file.words_only {
+                                    return true;
+                                }
+                                if ready_in.send((item, unit)).is_err() {
+                                    return false;
+                                }
+                                units += 1;
+                                true
+                            },
+                            &mut words,
+                        );
                         if cancel.load(Ordering::Relaxed) {
                             break;
                         }
@@ -321,6 +409,8 @@ impl<B: Backend> Embedder for Pipeline<B> {
                                 item,
                                 units,
                                 error: result.err(),
+                                words,
+                                text,
                             })
                             .is_err()
                         {
@@ -328,6 +418,37 @@ impl<B: Backend> Embedder for Pipeline<B> {
                         }
                     }
                     preparing.fetch_sub(1, Ordering::Relaxed);
+                });
+            }
+            for number in 0..reading.map_or(0, |_| self.most_readers()) {
+                let (text_out, event_in) = (text_out.clone(), event_in.clone());
+                let (cancel, preparing) = (&cancel, &preparing);
+                let ocr = reading.expect("readers are only made with something to read with");
+                scope.spawn(move || {
+                    let _leaving = self.parking.waker();
+                    while !cancel.load(Ordering::Relaxed) {
+                        if number >= self.readers() {
+                            let nothing_more = || preparing.load(Ordering::Relaxed) == 0 && text_out.is_empty();
+                            if nothing_more() {
+                                break;
+                            }
+                            self.parking.wait_unless(|| {
+                                cancel.load(Ordering::Relaxed) || number < self.readers() || nothing_more()
+                            });
+                            continue;
+                        }
+                        let Ok((item, rgb, width, height)) = text_out.recv() else {
+                            break;
+                        };
+                        let words = ocr.text(ocr::Picture {
+                            rgb: &rgb,
+                            width: width as usize,
+                            height: height as usize,
+                        });
+                        if event_in.send(Event::Text { item, words }).is_err() {
+                            break;
+                        }
+                    }
                 });
             }
             for number in 0..in_flight {
@@ -389,14 +510,20 @@ impl<B: Backend> Embedder for Pipeline<B> {
                     }
                 });
             }
-            drop((ready_in, ready_out, event_in));
+            drop((ready_in, ready_out, event_in, text_in, text_out));
 
-            let mut partial: Vec<Partial> = items.iter().map(|_| Partial::default()).collect();
+            let mut partial: Vec<Partial> = items
+                .iter()
+                .map(|item| Partial {
+                    words_only: item.words_only,
+                    ..Partial::default()
+                })
+                .collect();
             loop {
                 match event_out.recv_timeout(Duration::from_millis(50)) {
                     Ok(event) => {
                         let item = match &event {
-                            Event::Unit { item, .. } | Event::Read { item, .. } => *item,
+                            Event::Unit { item, .. } | Event::Read { item, .. } | Event::Text { item, .. } => *item,
                         };
                         if let Some(outcome) = partial[item].take(event) {
                             done(item, outcome);
@@ -428,10 +555,18 @@ impl<B: Backend> Embedder for Pipeline<B> {
         let (made, read) = std::thread::scope(|scope| {
             let reader = scope.spawn(move || {
                 let mut sent = 0;
-                prepare::prepare(&Item { path: path.to_owned() }, &mut |unit| {
-                    sent += 1;
-                    send.send(unit).is_ok() && sent < max
-                })
+                prepare::prepare(
+                    &Item {
+                        path: path.to_owned(),
+                        words_only: false,
+                    },
+                    None,
+                    &mut |unit| {
+                        sent += 1;
+                        send.send(unit).is_ok() && sent < max
+                    },
+                    &mut String::new(),
+                )
             });
             let made = self.embed_units(&receive, batch_size);
             drop(receive);
@@ -473,9 +608,16 @@ impl<B: Backend> Embedder for Pipeline<B> {
 
     fn warm_up(&self) {
         let backend = self.backend.clone();
+        let (ocr, preparing) = (self.ocr.clone(), self.ocr_preparing.clone());
         let _ = thread::Builder::new().name("embedder-warm-up".into()).spawn(move || {
             if let Err(e) = backend.start() {
                 eprintln!("Mesa: couldn't start the embedding model: {e}");
+            }
+            if let Some(ocr) = ocr {
+                if backend.gpu().is_none() {
+                    ocr.set_gpu(false);
+                }
+                prepare_ocr(&ocr, &preparing);
             }
         });
     }
@@ -486,7 +628,13 @@ impl<B: Backend> Embedder for Pipeline<B> {
 
     fn set_device(&self, device: Device) -> Result<(), Error> {
         *lock(&self.unit_time) = None;
-        self.backend.set_device(device)
+        self.backend.set_device(device)?;
+        if let Some(ocr) = &self.ocr
+            && ocr.set_gpu(device == Device::Auto && self.backend.gpu().is_some())
+        {
+            prepare_ocr(ocr, &self.ocr_preparing);
+        }
+        Ok(())
     }
 
     fn set_eco(&self, eco: bool) {
@@ -499,7 +647,14 @@ impl<B: Backend> Embedder for Pipeline<B> {
     }
 
     fn model_status(&self) -> ModelStatus {
-        self.backend.model_status()
+        match self.backend.model_status() {
+            ModelStatus::Ready if self.ocr_preparing.load(Ordering::SeqCst) > 0 => ModelStatus::Preparing,
+            status => status,
+        }
+    }
+
+    fn reads_text(&self) -> bool {
+        self.ocr.as_ref().is_some_and(|ocr| ocr.present())
     }
 
     fn retry_model_setup(&self) {
@@ -525,6 +680,8 @@ mod tests {
         running: AtomicUsize,
         most_running: AtomicUsize,
         devices: Mutex<Vec<Device>>,
+        stays_put: bool,
+        no_gpu: bool,
         per_input: Duration,
         log: Mutex<Vec<(Instant, Instant, bool)>>,
         sized: Mutex<Vec<(thread::ThreadId, usize)>>,
@@ -564,12 +721,15 @@ mod tests {
         }
 
         fn set_device(&self, device: Device) -> Result<(), Error> {
+            if self.stays_put {
+                return Err(Error("it can't be started there".into()));
+            }
             lock(&self.devices).push(device);
             Ok(())
         }
 
         fn gpu(&self) -> Option<String> {
-            Some("A fake GPU".into())
+            (!self.no_gpu).then(|| "A fake GPU".into())
         }
 
         fn max_batch(&self) -> usize {
@@ -587,7 +747,10 @@ mod tests {
             .map(|(i, content)| {
                 let path = dir.join(format!("{i}.txt"));
                 fs::write(&path, content).unwrap();
-                Item { path }
+                Item {
+                    path,
+                    words_only: false,
+                }
             })
             .collect()
     }
@@ -604,7 +767,7 @@ mod tests {
     }
 
     fn vectors_of(outcome: &Option<Outcome>) -> &Vec<Located> {
-        let Some(Outcome::Vectors(vectors)) = outcome else {
+        let Some(Outcome::Vectors(vectors, _)) = outcome else {
             panic!("expected vectors, got {outcome:?}")
         };
         vectors

@@ -87,7 +87,7 @@ unsafe fn read(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), St
                 continue;
             };
             let (rgb, width, height) = upright(frame, rotation);
-            let bitmap = picture::from_rgb(rgb, width, height)?;
+            let bitmap = picture::from_rgb(&rgb, width, height)?;
             sent += 1;
             let locator = (seconds * 1000.0).round() as u64;
             if !emit(Unit {

@@ -24,7 +24,7 @@ fn picture() -> Prepared {
             rgb.extend_from_slice(&[x as u8, y as u8, (x + y) as u8]);
         }
     }
-    Prepared::Image(picture::from_rgb(rgb, PICTURE_SIDE, PICTURE_SIDE).expect("a square picture can be read"))
+    Prepared::Image(picture::from_rgb(&rgb, PICTURE_SIDE, PICTURE_SIDE).expect("a square picture can be read"))
 }
 
 fn sound() -> Prepared {

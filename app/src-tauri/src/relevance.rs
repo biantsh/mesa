@@ -64,9 +64,9 @@ pub fn cutoff(files: usize) -> f64 {
         .map_or(CLOSE, |&(_, cutoff)| cutoff)
 }
 
-pub fn rank(scored: &[(i64, i64, f32)]) -> Ranked {
+pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)]) -> Ranked {
     let mut by_kind: HashMap<i64, Vec<f64>> = HashMap::new();
-    for &(_, kind, score) in scored {
+    for &(_, kind, score) in among {
         by_kind.entry(kind).or_default().push(f64::from(score));
     }
     let kinds: HashMap<i64, Usual> = by_kind
@@ -76,7 +76,7 @@ pub fn rank(scored: &[(i64, i64, f32)]) -> Ranked {
     let all = kinds
         .values()
         .any(|usual| usual.count < 2.0)
-        .then(|| Usual::of(scored.iter().map(|&(_, _, score)| f64::from(score)).collect()));
+        .then(|| Usual::of(among.iter().map(|&(_, _, score)| f64::from(score)).collect()));
     let (spread, counted) = kinds
         .values()
         .filter(|usual| usual.count >= 2.0)
@@ -133,6 +133,33 @@ mod tests {
 
     fn ids(ranked: &Ranked) -> Vec<i64> {
         ranked.files.iter().map(|(file, _)| *file).collect()
+    }
+
+    fn rank(scored: &[(i64, i64, f32)]) -> Ranked {
+        super::rank(scored, scored)
+    }
+
+    fn close(ranked: &Ranked) -> Vec<i64> {
+        let mut close: Vec<i64> = ranked.files[..ranked.close].iter().map(|(file, _)| *file).collect();
+        close.sort_unstable();
+        close
+    }
+
+    #[test]
+    fn filter_keeps_close_matches() {
+        let mut photos = spread(0, 200, PICTURE, 0.50, 0.70);
+        let matches: Vec<_> = (0..7).map(|n| (1_000 + n, PICTURE, 0.74 + 0.01 * n as f32)).collect();
+        photos.extend(&matches);
+        let mut index = photos.clone();
+        index.extend(spread(2_000, 60, PICTURE, 0.56, 0.60));
+
+        let unfiltered = rank(&index);
+        let wanted: Vec<i64> = matches.iter().map(|&(file, _, _)| file).collect();
+        assert_eq!(close(&unfiltered), wanted);
+        let filtered = super::rank(&photos, &index);
+        assert_eq!(close(&filtered), wanted);
+        assert!(ids(&filtered).iter().all(|&file| file < 2_000));
+        assert_eq!(close(&super::rank(&photos, &photos)), vec![1_006]);
     }
 
     #[test]

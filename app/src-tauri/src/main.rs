@@ -41,8 +41,11 @@ mod watch;
 #[cfg(target_os = "linux")]
 mod wayland;
 mod widget;
+mod words;
 #[cfg(any(target_os = "linux", test))]
 mod xdg;
+
+use mesa_ocr as ocr;
 
 use tauri::{
     Manager, WindowEvent,
