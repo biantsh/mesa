@@ -676,6 +676,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         onSelect={select}
         onOpen={resultActions.open}
         onContextMenu={openMenu}
+        noted={incomplete && dragging === null}
         away={stowed}
         onAway={setBarAway}
       />

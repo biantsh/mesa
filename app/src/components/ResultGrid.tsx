@@ -52,6 +52,7 @@ interface Props {
   onSelect: (path: string, toggle: boolean) => void;
   onOpen: (hit: SearchHit) => void;
   onContextMenu: (hit: SearchHit, x: number, y: number) => void;
+  noted: boolean;
   away: boolean;
   onAway: (away: boolean) => void;
 }
@@ -80,7 +81,7 @@ const ALWAYS_SHOWN_ABOVE_PX = 48;
 const SCROLL_DOWN_PX = 24;
 const SCROLL_UP_PX = 10;
 
-export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalled, weakFrom, loadingMore, onMore, shown, busy, message, progress, selected, selection, actions, onClearSelection, onSelect, onOpen, onContextMenu, away, onAway }: Props) {
+export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalled, weakFrom, loadingMore, onMore, shown, busy, message, progress, selected, selection, actions, onClearSelection, onSelect, onOpen, onContextMenu, noted, away, onAway }: Props) {
   const last = useRef(0);
   const run = useRef(0);
   const scrolled = (e: UIEvent<HTMLDivElement>) => {
@@ -235,6 +236,7 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
           busy && styles.busy,
           progress && styles.progress,
           counting && styles.counting,
+          noted && styles.noted,
           away && styles.away,
         )}
         inert={!shown}

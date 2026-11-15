@@ -4,6 +4,12 @@
   initial-value: 0px;
 }
 
+@property --fade-length {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 12px;
+}
+
 .pane,
 .counter {
   --for-progress: 0px;
@@ -15,6 +21,7 @@
   --stagger: 22ms;
   --bar-room: calc(var(--top-gap) + var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px + var(--under-query));
   --fade-top: var(--bar-room);
+  --fade-length: 12px;
   position: absolute;
   z-index: 1;
   left: 0;
@@ -28,7 +35,7 @@
     linear-gradient(
       to bottom,
       transparent var(--fade-top),
-      #000 calc(var(--fade-top) + 12px),
+      #000 calc(var(--fade-top) + var(--fade-length)),
       #000 calc(100% - 12px),
       transparent
     ),
@@ -43,7 +50,8 @@
     opacity calc(var(--focus-time) * 0.3) ease-out,
     visibility 0s linear calc(var(--focus-time) * 0.3),
     bottom var(--focus-time) var(--focus-ease),
-    --fade-top var(--focus-time) var(--focus-ease);
+    --fade-top var(--focus-time) var(--focus-ease),
+    --fade-length var(--focus-time) var(--focus-ease);
 }
 
 .shown {
@@ -54,11 +62,18 @@
     opacity calc(var(--focus-time) * 0.5) ease var(--results-delay, calc(var(--focus-time) * 0.2)),
     visibility 0s,
     bottom var(--focus-time) var(--focus-ease),
-    --fade-top var(--focus-time) var(--focus-ease);
+    --fade-top var(--focus-time) var(--focus-ease),
+    --fade-length var(--focus-time) var(--focus-ease);
+}
+
+.noted {
+  --fade-top: calc(var(--bar-room) + 10px);
+  --fade-length: 8px;
 }
 
 .away {
   --fade-top: 0px;
+  --fade-length: 12px;
 }
 
 .progress {

@@ -8,3 +8,4 @@ app/src-tauri/runtime
 *.tsbuildinfo
 
 __pycache__/
+.idea
