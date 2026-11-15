@@ -231,6 +231,13 @@ impl State {
                 .collect();
         }
         let kind = directed(event.kind, &event.paths);
+        if let Some((from, _)) = &self.moved_from
+            && !matches!(kind, EventKind::Modify(ModifyKind::Name(_)))
+            && !event.paths.is_empty()
+            && event.paths.iter().all(|path| path == from)
+        {
+            return;
+        }
         let to_follows = matches!(kind, EventKind::Modify(ModifyKind::Name(RenameMode::To)));
         if !to_follows && let Some((from, _)) = self.moved_from.take() {
             self.note(from, What::Gone);
@@ -520,5 +527,50 @@ fn worth_a_look(path: &Path, what: What) -> bool {
         What::Gone => true,
         What::Changed => browse::has_listed_name(path),
         What::Arrived => browse::has_listed_name(path) || !name.contains('.') || path.is_dir(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn follows_split_rename() {
+        use notify::event::{DataChange, MetadataKind};
+        let root = std::env::temp_dir().join(format!("mesa-watch-rename-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let photos = root.join("photos");
+        fs::create_dir_all(&photos).unwrap();
+        let index = crate::index::Index::open(
+            &root.join("data"),
+            std::sync::Arc::new(crate::embed::testing::Everything),
+        )
+        .unwrap();
+        index.set(&photos, true).unwrap();
+        let mut state = State::new(index.chores(), Duration::from_millis(100));
+        fs::write(photos.join("first.jpg"), "x").unwrap();
+        let news = |kind: EventKind, name: &str| Ok(Event::new(kind).add_path(photos.join(name)));
+        state.hear(news(EventKind::Modify(ModifyKind::Name(RenameMode::Any)), "a.jpg"));
+        state.hear(news(
+            EventKind::Modify(ModifyKind::Metadata(MetadataKind::Extended)),
+            "a.jpg",
+        ));
+        state.hear(news(EventKind::Modify(ModifyKind::Data(DataChange::Content)), "a.jpg"));
+        state.hear(news(EventKind::Modify(ModifyKind::Name(RenameMode::Any)), "first.jpg"));
+        let moves: Vec<(PathBuf, PathBuf)> = state.moves.iter().map(|m| (m.from.clone(), m.to.clone())).collect();
+        assert_eq!(moves, [(photos.join("a.jpg"), photos.join("first.jpg"))]);
+        assert!(
+            state.heard.is_empty(),
+            "and nothing is looked at as made, changed or deleted: {:?}",
+            state.heard.keys()
+        );
+
+        state.moves.clear();
+        state.hear(news(EventKind::Modify(ModifyKind::Name(RenameMode::Any)), "b.jpg"));
+        state.hear(news(EventKind::Create(notify::event::CreateKind::File), "c.jpg"));
+        assert!(state.moved_from.is_none() && state.moves.is_empty());
+        assert!(state.heard.contains_key(&photos.join("b.jpg")));
+        drop(index);
+        let _ = fs::remove_dir_all(&root);
     }
 }

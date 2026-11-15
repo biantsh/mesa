@@ -197,6 +197,9 @@ impl<B: Backend> Pipeline<B> {
 }
 
 fn prepare_ocr(ocr: &ocr::Lazy, preparing: &AtomicUsize) {
+    if ocr.ready() {
+        return;
+    }
     preparing.fetch_add(1, Ordering::SeqCst);
     ocr.prepare();
     preparing.fetch_sub(1, Ordering::SeqCst);
@@ -737,6 +740,8 @@ mod tests {
         }
     }
 
+    const ENOUGH: &str = "and words enough for the model";
+
     fn texts(tag: &str, contents: &[&str]) -> Vec<Item> {
         let dir = std::env::temp_dir().join(format!("mesa-pipeline-{tag}"));
         let _ = fs::remove_dir_all(&dir);
@@ -746,7 +751,7 @@ mod tests {
             .enumerate()
             .map(|(i, content)| {
                 let path = dir.join(format!("{i}.txt"));
-                fs::write(&path, content).unwrap();
+                fs::write(&path, format!("{content}\n{ENOUGH}")).unwrap();
                 Item {
                     path,
                     words_only: false,

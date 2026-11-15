@@ -140,7 +140,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.txt");
-        std::fs::write(&path, "some words").unwrap();
+        std::fs::write(&path, "some words, enough of them for the model").unwrap();
         let why = prepare(
             &Item {
                 path,

@@ -64,7 +64,7 @@ pub fn cutoff(files: usize) -> f64 {
         .map_or(CLOSE, |&(_, cutoff)| cutoff)
 }
 
-pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)]) -> Ranked {
+pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)], by_words: &HashMap<i64, f64>) -> Ranked {
     let mut by_kind: HashMap<i64, Vec<f64>> = HashMap::new();
     for &(_, kind, score) in among {
         by_kind.entry(kind).or_default().push(f64::from(score));
@@ -85,6 +85,13 @@ pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)]) -> Ranked {
         });
     let shared = if counted > 0.0 { spread / counted } else { 0.0 };
 
+    let unscored: Vec<i64> = {
+        let listed: std::collections::HashSet<i64> = scored.iter().map(|&(file, _, _)| file).collect();
+        by_words.keys().copied().filter(|file| !listed.contains(file)).collect()
+    };
+    let searched = scored.len() + unscored.len();
+    let line = cutoff(searched);
+    let by_words = |file: i64| by_words.get(&file).map_or(f64::NEG_INFINITY, |margin| line + margin);
     let mut measured: Vec<(i64, f32, f64)> = scored
         .iter()
         .map(|&(file, kind, score)| {
@@ -96,16 +103,16 @@ pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)]) -> Ranked {
             };
             let variance = (own.variance * own.count + PRIOR_FILES * shared) / (own.count + PRIOR_FILES);
             let z = (f64::from(score) - middle) / variance.sqrt().max(MIN_SPREAD);
-            (file, score, z)
+            (file, score, z.max(by_words(file)))
         })
+        .chain(unscored.into_iter().map(|file| (file, 0.0, by_words(file))))
         .collect();
     measured.sort_unstable_by(|a, b| b.2.total_cmp(&a.2).then(a.0.cmp(&b.0)));
 
-    let close = if measured.len() < MIN_FILES {
-        measured.len()
+    let close = if searched < MIN_FILES {
+        searched
     } else {
-        let cutoff = cutoff(measured.len());
-        measured.iter().take_while(|(_, _, z)| *z >= cutoff).count()
+        measured.iter().take_while(|(_, _, z)| *z >= line).count()
     };
     Ranked {
         files: measured.into_iter().map(|(file, score, _)| (file, score)).collect(),
@@ -136,7 +143,7 @@ mod tests {
     }
 
     fn rank(scored: &[(i64, i64, f32)]) -> Ranked {
-        super::rank(scored, scored)
+        super::rank(scored, scored, &HashMap::new())
     }
 
     fn close(ranked: &Ranked) -> Vec<i64> {
@@ -156,10 +163,10 @@ mod tests {
         let unfiltered = rank(&index);
         let wanted: Vec<i64> = matches.iter().map(|&(file, _, _)| file).collect();
         assert_eq!(close(&unfiltered), wanted);
-        let filtered = super::rank(&photos, &index);
+        let filtered = super::rank(&photos, &index, &HashMap::new());
         assert_eq!(close(&filtered), wanted);
         assert!(ids(&filtered).iter().all(|&file| file < 2_000));
-        assert_eq!(close(&super::rank(&photos, &photos)), vec![1_006]);
+        assert_eq!(close(&super::rank(&photos, &photos, &HashMap::new())), vec![1_006]);
     }
 
     #[test]

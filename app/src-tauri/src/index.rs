@@ -725,12 +725,13 @@ impl Index {
         let query = self.query_vector(text, files)?;
         let ranked = if let Some(query) = query {
             let mut store = lock(&self.shared.store);
-            let ranked = store.rank(&query, filter)?;
-            if text.trim().is_empty() {
-                ranked
-            } else {
-                crate::words::merge(ranked, &store.exact(text, filter)?)
-            }
+            let exact = store.exact(text, filter)?;
+            let phrase = match crate::words::terms(text).len() {
+                _ if exact.is_empty() => Vec::new(),
+                1 => exact.iter().map(|&(file, _)| file).collect(),
+                _ => store.phrase(text, filter)?,
+            };
+            store.rank(&query, filter, &crate::words::margins(&exact, &phrase))?
         } else if filter != Filter::default() {
             Ranked::all_close(lock(&self.shared.store).newest(filter)?)
         } else {
@@ -1016,7 +1017,7 @@ impl Index {
         let _ = lock(&self.counter).send(());
     }
 
-    fn chores(&self) -> Chores {
+    pub(crate) fn chores(&self) -> Chores {
         Chores {
             shared: self.shared.clone(),
         }

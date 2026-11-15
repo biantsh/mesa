@@ -1,38 +1,64 @@
-use crate::relevance::Ranked;
+use std::collections::{HashMap, HashSet};
 
-const FIRST: usize = 30;
+const ON_THE_LINE: f64 = 30.0;
+const PER_FOLD: f64 = 0.75;
+const FLOOR: f64 = -1.0;
+const SCATTERED_IN_A_DOCUMENT: f64 = 0.5;
 
-pub fn fold(text: &str) -> String {
-    let mut folded = String::with_capacity(text.len());
+pub fn words_of(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
     for word in text.split_whitespace() {
         let digits = word.chars().any(|c| c.is_ascii_digit());
+        let (mut current, mut numeric) = (String::new(), false);
+        let done = |current: &mut String, words: &mut Vec<String>| {
+            if !current.is_empty() {
+                words.push(std::mem::take(current));
+            }
+        };
         for c in word.chars().flat_map(char::to_lowercase) {
-            if c.is_alphanumeric() {
-                folded.push(if digits && c == 'o' { '0' } else { c });
+            let c = if digits && c == 'o' { '0' } else { c };
+            if !c.is_alphanumeric() {
+                done(&mut current, &mut words);
+            } else if written_without_spaces(c) {
+                done(&mut current, &mut words);
+                words.push(c.to_string());
+            } else {
+                if !current.is_empty() && c.is_numeric() != numeric {
+                    done(&mut current, &mut words);
+                }
+                numeric = c.is_numeric();
+                current.push(c);
             }
         }
+        done(&mut current, &mut words);
     }
-    folded
+    words
 }
 
-pub fn short(folded: &str) -> String {
-    let characters: Vec<char> = folded.chars().collect();
-    let singles = characters.iter().map(|&c| [c, '\0']);
-    let pairs = characters.windows(2).map(|pair| [pair[0], pair[1]]);
-    let mut seen = std::collections::HashSet::new();
-    let mut pieces = String::new();
-    for piece in singles.chain(pairs).filter(|piece| seen.insert(*piece)) {
-        if !pieces.is_empty() {
-            pieces.push(' ');
-        }
-        pieces.extend(piece.into_iter().filter(|&c| c != '\0'));
+fn written_without_spaces(c: char) -> bool {
+    matches!(c as u32,
+        0x3040..=0x30FF
+        | 0x31F0..=0x31FF
+        | 0x3400..=0x4DBF
+        | 0x4E00..=0x9FFF
+        | 0xF900..=0xFAFF
+        | 0xFF66..=0xFF9F
+        | 0x20000..=0x3FFFF
+    )
+}
+
+pub fn fold(text: &str) -> String {
+    let words = words_of(text);
+    if words.is_empty() {
+        String::new()
+    } else {
+        format!(" {} ", words.join(" "))
     }
-    pieces
 }
 
 pub fn terms(query: &str) -> Vec<String> {
     let mut terms: Vec<String> = Vec::new();
-    for term in query.split_whitespace().map(fold) {
+    for term in query.split_whitespace().map(|word| words_of(word).join(" ")) {
         if !term.is_empty() && !terms.contains(&term) {
             terms.push(term);
         }
@@ -40,37 +66,37 @@ pub fn terms(query: &str) -> Vec<String> {
     terms
 }
 
-pub fn merge(ranked: Ranked, exact: &[i64]) -> Ranked {
-    if exact.is_empty() {
-        return ranked;
-    }
-    let found: std::collections::HashSet<i64> = exact.iter().copied().collect();
-    let (mut close, mut rest) = (Vec::new(), Vec::new());
-    let mut by_words = Vec::with_capacity(exact.len());
-    for (n, &(file, score)) in ranked.files.iter().enumerate() {
-        if found.contains(&file) {
-            by_words.push((file, score));
-        } else if n < ranked.close {
-            close.push((file, score));
-        } else {
-            rest.push((file, score));
-        }
-    }
-    let listed: std::collections::HashSet<i64> = by_words.iter().map(|&(file, _)| file).collect();
-    let mut unlisted: Vec<i64> = exact.iter().copied().filter(|file| !listed.contains(file)).collect();
-    unlisted.sort_unstable();
-    by_words.extend(unlisted.into_iter().map(|file| (file, 0.0)));
+pub fn whole(term: &str) -> String {
+    format!("\" {term} \"")
+}
 
-    let close_count = close.len() + by_words.len();
-    let files = if by_words.len() <= FIRST {
-        by_words.into_iter().chain(close).chain(rest).collect()
-    } else {
-        close.into_iter().chain(by_words).chain(rest).collect()
-    };
-    Ranked {
-        files,
-        close: close_count,
+pub fn margins(exact: &[(i64, bool)], phrase: &[i64]) -> HashMap<i64, f64> {
+    let margin = |files: usize| PER_FOLD * (ON_THE_LINE / files.max(1) as f64).ln();
+    let in_order: HashSet<i64> = phrase.iter().copied().collect();
+    let (by_phrase, here_and_there) = (margin(in_order.len()), margin(exact.len()));
+    let mut margins: HashMap<i64, f64> = exact
+        .iter()
+        .map(|&(file, picture)| {
+            let scattered = if picture {
+                here_and_there
+            } else {
+                here_and_there.min(-SCATTERED_IN_A_DOCUMENT)
+            };
+            (
+                file,
+                if in_order.contains(&file) {
+                    by_phrase.max(scattered)
+                } else {
+                    scattered
+                },
+            )
+        })
+        .collect();
+    for &file in &in_order {
+        margins.entry(file).or_insert(by_phrase);
     }
+    margins.retain(|_, margin| *margin >= FLOOR);
+    margins
 }
 
 #[cfg(test)]
@@ -79,11 +105,15 @@ mod tests {
 
     #[test]
     fn folding() {
-        assert_eq!(fold("Invoice INV - 2024/11"), "invoiceinv202411");
-        assert_eq!(fold("INV-2O24"), fold("inv 2024"));
-        assert_eq!(fold("ORDER 1O5"), "order105");
-        assert_eq!(fold("Größe: 42 €"), "größe42");
-        assert_eq!(fold("東京 タワー"), "東京タワー");
+        assert_eq!(fold("Invoice INV - 2O24/11"), " invoice inv 2024 11 ");
+        assert_eq!(terms("inv-2024-11"), ["inv 2024 11"]);
+        assert_eq!(fold("ORDER 1O5"), " order 105 ");
+        assert_eq!(fold("yticklabels=L3,"), " yticklabels l 3 ");
+        assert_eq!(fold("ae4cl1c6"), " ae 4 cl 1 c 6 ");
+        assert_eq!(fold("Größe: 42 €"), " größe 42 ");
+        assert_eq!(fold("東京タワー 入口"), " 東 京 タ ワ ー 入 口 ");
+        assert_eq!(fold("  ...  "), "");
         assert_eq!(terms("  Kyoto  kyoto, 2024 "), ["kyoto", "2024"]);
+        assert_eq!(whole("inv 2024 11"), "\" inv 2024 11 \"");
     }
 }

@@ -22,6 +22,7 @@ use crate::{
 };
 
 const CONFIG_ID: u32 = 3;
+
 const MIGRATIONS: &[&str] = &[
     SCHEMA,
     ADD_META,
@@ -31,8 +32,10 @@ const MIGRATIONS: &[&str] = &[
     DROP_RULES_INDEXED,
     ADD_FILE_COUNT,
     ADD_WORDS,
+    REDO_TINY_DOCUMENTS,
 ];
-const WORDS_ID: u32 = 1;
+
+const WORDS_ID: u32 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE dirs (
@@ -105,13 +108,13 @@ const ADD_WORDS: &str = "
 ALTER TABLE files ADD COLUMN read_with INTEGER NOT NULL DEFAULT 0;
 CREATE VIRTUAL TABLE picture_words USING fts5(folded, text UNINDEXED, tokenize = 'trigram remove_diacritics 1');
 CREATE VIRTUAL TABLE document_words USING fts5(folded, content = '', contentless_delete = 1, tokenize = 'trigram remove_diacritics 1');
-CREATE VIRTUAL TABLE short_words USING fts5(pieces, content = '', contentless_delete = 1, tokenize = 'unicode61 remove_diacritics 2');
 CREATE TRIGGER files_words_out AFTER DELETE ON files BEGIN
     DELETE FROM picture_words WHERE rowid = old.id;
     DELETE FROM document_words WHERE rowid = old.id;
-    DELETE FROM short_words WHERE rowid = old.id;
 END;
 ";
+
+const REDO_TINY_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category = 3 AND size < 1024;";
 
 #[derive(Debug)]
 pub enum Error {
@@ -825,7 +828,7 @@ impl Store {
             .execute_batch(&format!("PRAGMA incremental_vacuum({pages})"))?)
     }
 
-    pub fn rank(&mut self, query: &Record, filter: Filter) -> Result<Ranked> {
+    pub fn rank(&mut self, query: &Record, filter: Filter, by_words: &HashMap<i64, f64>) -> Result<Ranked> {
         let mut values: Vec<Value> = Vec::new();
         let passes = filter_condition(filter, &mut values);
         let sql = format!(
@@ -870,7 +873,7 @@ impl Store {
             .filter(|(_, (_, _, passes))| *passes)
             .map(|(file, (category, score, _))| (file, category, score))
             .collect();
-        Ok(relevance::rank(&scored, &among))
+        Ok(relevance::rank(&scored, &among, by_words))
     }
 
     pub fn newest(&self, filter: Filter) -> Result<Vec<(i64, f32)>> {
@@ -883,46 +886,47 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    pub fn exact(&self, query: &str, filter: Filter) -> Result<Vec<i64>> {
+    pub fn exact(&self, query: &str, filter: Filter) -> Result<Vec<(i64, bool)>> {
         let terms = words::terms(query);
         if terms.is_empty() {
             return Ok(Vec::new());
         }
-        let all = |terms: &[&String]| {
-            terms
-                .iter()
-                .map(|term| format!("\"{term}\""))
-                .collect::<Vec<_>>()
-                .join(" AND ")
-        };
-        let (long, short): (Vec<&String>, Vec<&String>) = terms.iter().partition(|term| term.chars().count() >= 3);
-        let mut found = Vec::new();
-        for table in ["picture_words", "document_words"] {
-            let mut values: Vec<Value> = Vec::new();
-            let mut conditions = Vec::new();
-            let from = if long.is_empty() {
-                conditions.push("s.short_words MATCH ?".to_owned());
-                values.push(all(&short).into());
-                format!("short_words s JOIN files f ON f.id = s.rowid JOIN {table} w ON w.rowid = s.rowid")
-            } else {
-                conditions.push(format!("w.{table} MATCH ?"));
-                values.push(all(&long).into());
-                if !short.is_empty() {
-                    conditions.push("w.rowid IN (SELECT rowid FROM short_words WHERE short_words MATCH ?)".to_owned());
-                    values.push(all(&short).into());
-                }
-                format!("{table} w JOIN files f ON f.id = w.rowid")
-            };
+        let fts = terms
+            .iter()
+            .map(|term| words::whole(term))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let (pictures, documents) = self.words_matching(&fts, filter)?;
+        Ok(pictures
+            .into_iter()
+            .map(|file| (file, true))
+            .chain(documents.into_iter().map(|file| (file, false)))
+            .collect())
+    }
+
+    pub fn phrase(&self, query: &str, filter: Filter) -> Result<Vec<i64>> {
+        if words::terms(query).len() < 2 {
+            return Ok(Vec::new());
+        }
+        let (mut found, documents) = self.words_matching(&words::whole(&words::words_of(query).join(" ")), filter)?;
+        found.extend(documents);
+        Ok(found)
+    }
+
+    fn words_matching(&self, fts: &str, filter: Filter) -> Result<(Vec<i64>, Vec<i64>)> {
+        let mut found = [Vec::new(), Vec::new()];
+        for (table, found) in ["picture_words", "document_words"].into_iter().zip(&mut found) {
+            let mut values: Vec<Value> = vec![fts.to_owned().into()];
             let passes = filter_condition(filter, &mut values);
             let sql = format!(
-                "SELECT f.id FROM {from} WHERE {} AND {passes}",
-                conditions.join(" AND ")
+                "SELECT f.id FROM {table} w JOIN files f ON f.id = w.rowid WHERE w.{table} MATCH ? AND {passes}"
             );
             let mut statement = self.conn.prepare_cached(&sql)?;
             let rows = statement.query_map(params_from_iter(values), |r| r.get::<_, i64>(0))?;
             found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
         }
-        Ok(found)
+        let [pictures, documents] = found;
+        Ok((pictures, documents))
     }
 
     pub fn hits(&self, ranked: &[(i64, f32)]) -> Result<Vec<Hit>> {
@@ -1397,8 +1401,6 @@ fn write_words(
         .execute([id])?;
     tx.prepare_cached("DELETE FROM document_words WHERE rowid = ?1")?
         .execute([id])?;
-    tx.prepare_cached("DELETE FROM short_words WHERE rowid = ?1")?
-        .execute([id])?;
     if category == Category::Image && !reading_pictures {
         tx.prepare_cached("UPDATE files SET read_with = 0 WHERE id = ?1")?
             .execute([id])?;
@@ -1417,8 +1419,6 @@ fn write_words(
         tx.prepare_cached("INSERT INTO document_words (rowid, folded) VALUES (?1, ?2)")?
             .execute(params![id, folded])?;
     }
-    tx.prepare_cached("INSERT INTO short_words (rowid, pieces) VALUES (?1, ?2)")?
-        .execute(params![id, words::short(&folded)])?;
     tx.prepare_cached("UPDATE files SET read_with = ?2 WHERE id = ?1")?
         .execute(params![id, WORDS_ID])?;
     Ok(())
@@ -1681,7 +1681,7 @@ mod tests {
     };
 
     fn top(store: &mut Store, query: &Record, filter: Filter, limit: usize) -> Result<Vec<Hit>> {
-        let ranked = store.rank(query, filter)?.files;
+        let ranked = store.rank(query, filter, &HashMap::new())?.files;
         store.hits(&ranked[..limit.min(ranked.len())])
     }
 

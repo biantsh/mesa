@@ -146,6 +146,10 @@ impl Ocr {
         })
     }
 
+    pub fn on_gpu(&self) -> bool {
+        self.detector.on_gpu()
+    }
+
     pub fn detect(&self, picture: Picture) -> Result<Vec<[Point; 4]>, String> {
         detect::lines(&self.detector, picture)
     }
@@ -182,6 +186,7 @@ impl Ocr {
 pub struct Lazy {
     dir: PathBuf,
     loaded: Mutex<Loaded>,
+    preparing: Mutex<()>,
     complained: AtomicBool,
 }
 
@@ -189,11 +194,25 @@ struct Loaded {
     gpu: bool,
     fell_back: bool,
     ocr: Option<Arc<Ocr>>,
+    ready: bool,
 }
 
 impl Loaded {
+    fn new(gpu: bool) -> Self {
+        Self {
+            gpu,
+            fell_back: false,
+            ocr: None,
+            ready: false,
+        }
+    }
+
     fn on_gpu(&self) -> bool {
         self.gpu && !self.fell_back
+    }
+
+    fn is(&self, ocr: &Arc<Ocr>) -> bool {
+        self.ocr.as_ref().is_some_and(|loaded| Arc::ptr_eq(loaded, ocr))
     }
 }
 
@@ -201,11 +220,8 @@ impl Lazy {
     pub fn new(dir: PathBuf, gpu: bool) -> Self {
         Self {
             dir,
-            loaded: Mutex::new(Loaded {
-                gpu,
-                fell_back: false,
-                ocr: None,
-            }),
+            loaded: Mutex::new(Loaded::new(gpu)),
+            preparing: Mutex::new(()),
             complained: AtomicBool::new(false),
         }
     }
@@ -218,16 +234,16 @@ impl Lazy {
         self.lock().on_gpu()
     }
 
+    pub fn ready(&self) -> bool {
+        self.lock().ready
+    }
+
     pub fn set_gpu(&self, gpu: bool) -> bool {
         let mut loaded = self.lock();
         if loaded.gpu == gpu {
             return false;
         }
-        *loaded = Loaded {
-            gpu,
-            fell_back: false,
-            ocr: None,
-        };
+        *loaded = Loaded::new(gpu);
         self.complained.store(false, Ordering::Relaxed);
         true
     }
@@ -258,7 +274,8 @@ impl Lazy {
     }
 
     pub fn prepare(&self) {
-        if !self.present() {
+        let _one = self.preparing.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.ready() || !self.present() {
             return;
         }
         let Some(ocr) = self.get() else { return };
@@ -281,28 +298,51 @@ impl Lazy {
             Err(_) => Some("it went wrong inside Mesa".into()),
         };
         match failed {
-            None => eprintln!(
-                "Mesa: the text in pictures is ready to be read ({made} sizes made, {} ms)",
-                started.elapsed().as_millis()
-            ),
+            None => {
+                self.mark_ready(&ocr);
+                let place = if ocr.on_gpu() {
+                    "the graphics card"
+                } else {
+                    "the processor"
+                };
+                let kept = if made > 0 {
+                    format!(": made for Core ML at {made} sizes, and kept for next time")
+                } else {
+                    String::new()
+                };
+                eprintln!(
+                    "Mesa: the text in pictures is ready to be read on {place} ({} ms{kept})",
+                    started.elapsed().as_millis()
+                );
+            }
             Some(why) if self.fall_back(&ocr) => {
                 eprintln!(
                     "Mesa: the text in pictures can't be read on the graphics card, so the processor is used: {why}"
                 );
-                self.get();
+                if let Some(ocr) = self.get() {
+                    self.mark_ready(&ocr);
+                }
             }
             Some(why) => eprintln!("Mesa: what reads the text in pictures couldn't be made ready: {why}"),
         }
     }
 
+    fn mark_ready(&self, ocr: &Arc<Ocr>) {
+        let mut loaded = self.lock();
+        if loaded.is(ocr) {
+            loaded.ready = true;
+        }
+    }
+
     fn fall_back(&self, tried: &Arc<Ocr>) -> bool {
         let mut loaded = self.lock();
-        let current = loaded.ocr.as_ref().is_some_and(|ocr| Arc::ptr_eq(ocr, tried));
-        if !current || !loaded.on_gpu() {
+        if !loaded.is(tried) || !loaded.on_gpu() {
             return false;
         }
-        loaded.fell_back = true;
-        loaded.ocr = None;
+        *loaded = Loaded {
+            fell_back: true,
+            ..Loaded::new(loaded.gpu)
+        };
         true
     }
 

@@ -10,6 +10,7 @@ use quick_xml::{Reader, events::Event};
 use super::prepare::{Prepared, Unit};
 
 const PASSAGE_CHARS: usize = 1500;
+const MIN_LETTERS: usize = 20;
 const MAX_PASSAGES: usize = 32;
 const MAX_PDF_PASSAGES: usize = 120;
 const TEXT_BYTES: u64 = 256 * 1024;
@@ -117,7 +118,7 @@ pub fn pdf(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
         };
         readable += 1;
         let text = normalise(&text);
-        if text.chars().filter(|c| c.is_alphanumeric()).count() < 20 {
+        if !enough_text(&text) {
             continue;
         }
         for passage in passages(&text) {
@@ -148,6 +149,13 @@ fn add_words(words: &mut String, passage: &str) {
     words.push_str(passage);
 }
 
+fn enough_text(text: &str) -> bool {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .nth(MIN_LETTERS - 1)
+        .is_some()
+}
+
 fn send_passages(
     path: &Path,
     text: &str,
@@ -156,10 +164,14 @@ fn send_passages(
     emit: Emit,
     words: &mut String,
 ) -> Result<(), String> {
-    let passages = passages(&normalise(text));
-    if passages.is_empty() {
+    let text = normalise(text);
+    if text.is_empty() {
         return Err("there is no text in it".into());
     }
+    if !enough_text(&text) {
+        return Err("there is too little text in it to say what it is about".into());
+    }
+    let passages = passages(&text);
     for (n, passage) in passages.into_iter().take(most).enumerate() {
         add_words(words, &passage);
         if !emit(Unit {
