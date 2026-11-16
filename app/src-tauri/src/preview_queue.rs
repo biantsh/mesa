@@ -58,7 +58,7 @@ impl State {
     }
 
     fn file(&mut self, key: Key, parking: bool) {
-        if key.2 == Shape::Whole {
+        if !matches!(key.2, Shape::Box { .. }) {
             return self.other.push(key);
         }
         match self.folder.as_ref().map(|folder| folder.places.get(&key.0).copied()) {

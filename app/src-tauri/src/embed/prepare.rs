@@ -71,6 +71,21 @@ pub fn prepare(
     })
 }
 
+pub fn passages(path: &Path, each: &mut dyn FnMut(u64, &str) -> bool) -> Result<(), String> {
+    let mut words = String::new();
+    let mut emit = |unit: Unit| match &unit.input {
+        Prepared::Text(text) => each(unit.locator, documents::untitled(path, text)),
+        _ => true,
+    };
+    catch_unwind(AssertUnwindSafe(|| match kind(path) {
+        Some(Kind::Text) => documents::plain(path, &mut emit, &mut words),
+        Some(Kind::Word) => documents::docx(path, &mut emit, &mut words),
+        Some(Kind::Pdf) => documents::pdf(path, &mut emit, &mut words),
+        _ => Err("it isn't a document".into()),
+    }))
+    .unwrap_or_else(|_| Err("reading it went wrong inside Mesa".into()))
+}
+
 fn read(item: &Item, text: ReadText, emit: &mut dyn FnMut(Unit) -> bool, words: &mut String) -> Result<(), String> {
     let path = &item.path;
     match kind(path) {

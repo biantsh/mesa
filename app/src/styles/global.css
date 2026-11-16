@@ -142,6 +142,16 @@ button {
   transform-origin: var(--tip-origin, 50%) bottom;
 }
 
+.mesa-tooltip[data-side="right"] {
+  transform: translateX(-4px) scale(0.97);
+  transform-origin: left center;
+}
+
+.mesa-tooltip[data-side="left"] {
+  transform: translateX(4px) scale(0.97);
+  transform-origin: right center;
+}
+
 .mesa-tooltip[data-shown] {
   opacity: 1;
   transform: none;

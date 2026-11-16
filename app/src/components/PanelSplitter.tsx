@@ -8,8 +8,8 @@ import styles from "./PanelSplitter.module.css";
 const MIN = 220;
 const MAX = 520;
 const FILES_MIN = 320;
-const EASE_MS = 260;
-const EASE_CURVE = "cubic-bezier(0.32, 0.72, 0, 1)";
+export const EASE_MS = 260;
+export const EASE_CURVE = "cubic-bezier(0.32, 0.72, 0, 1)";
 const STEP = 16;
 const BIG_STEP = 64;
 

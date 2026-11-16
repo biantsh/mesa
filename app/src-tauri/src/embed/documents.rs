@@ -193,6 +193,10 @@ fn titled(path: &Path, passage: &str) -> String {
     format!("title: {name} | text: {passage}")
 }
 
+pub fn untitled<'a>(path: &Path, prompt: &'a str) -> &'a str {
+    prompt.strip_prefix(titled(path, "").as_str()).unwrap_or(prompt)
+}
+
 fn normalise(text: &str) -> String {
     text.replace('\r', "")
         .chars()

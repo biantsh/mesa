@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { ArrowRight, Ban, CircleDashed, Database, Files, Search, Settings, X } from "lucide-react";
 import { api, errorText, type Category, type ModelStatus, type Overview, type SearchHit, type SearchPage } from "../api";
 import { CATEGORY_LABELS } from "../format";
@@ -9,11 +9,14 @@ import { MonthPicker, TypePicker } from "../components/FilterPickers";
 import { IndexStatus } from "../components/IndexStatus";
 import { SlidingIcon } from "../components/SlidingIcon";
 import { CATEGORY_ICONS, MessageLink, ResultGrid, type ResultMessage } from "../components/ResultGrid";
+import { ResultPanel } from "../components/ResultPanel";
+import { prefetchDetails } from "../matchDetails";
 import { cx } from "../cx";
 import { fitQuoted } from "../fitText";
 import { addExamples, countByKind, categoryOfPath, distinctNames, dropHint, dropIcon, shortName } from "../examples";
 import logo from "../logo";
 import { resultMenuGroups, type ResultActions } from "../resultMenu";
+import { DEFAULT_PANEL_COLUMNS, PANEL_COLUMNS, panelBeside, panelLayout, panelRoom, panelWidth, previewHeight, resultColumns } from "../resultWindow";
 import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chosen, type Month, type Understood } from "../understand";
 import { BACKGROUND_PRESS } from "../background";
 import { MAIN_HIDDEN } from "../events";
@@ -34,6 +37,28 @@ const PROGRESS_BOTTOM_PX = 4;
 const ARRIVING_SNAP_MS = 300;
 const BOTTOM_GAP_WITH_CORNERS_PX = 36;
 const CLEAR_RESULTS_MS = 500;
+const PANEL_COLUMNS_KEY = "mesa.resultPanelColumns";
+
+function storedPanelColumns(): number {
+  try {
+    const columns = Number(localStorage.getItem(PANEL_COLUMNS_KEY));
+    return Number.isInteger(columns) && columns > 0 ? columns : DEFAULT_PANEL_COLUMNS;
+  } catch {
+    return DEFAULT_PANEL_COLUMNS;
+  }
+}
+
+function keepPanelColumns(columns: number) {
+  try {
+    localStorage.setItem(PANEL_COLUMNS_KEY, String(columns));
+  } catch {
+  }
+}
+
+const PANEL_GAP = 6;
+const SIDE_MARGIN = 24;
+const MOST_RESULTS_WIDTH = 968;
+const WIDGET_COLUMNS = 6;
 const SEARCH_DELAY_MS = 150;
 
 const NO_HITS: SearchHit[] = [];
@@ -46,6 +71,8 @@ interface Found {
   moreClose: boolean;
   stalled?: boolean;
   weakFrom: number | null;
+  text: string;
+  filtered: boolean;
 }
 
 const MAX_QUOTED = 80;
@@ -382,7 +409,15 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         .then(
           (page: SearchPage) =>
             current &&
-            setFound({ id: page.id, batches: [page.hits], more: page.more, moreClose: page.moreClose, weakFrom: page.close ? null : 0 }),
+            setFound({
+              id: page.id,
+              batches: [page.hits],
+              more: page.more,
+              moreClose: page.moreClose,
+              weakFrom: page.close ? null : 0,
+              text,
+              filtered: fileType !== null || fromMs !== null || toMs !== null,
+            }),
           (error) => current && setFound({ error: errorText(error) }),
         )
         .finally(() => current && setSearching(false));
@@ -425,8 +460,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   useEffect(() => {
     if (focused) setBarAway(false);
   }, [focused]);
-  const { selected, select, selectAll, clear: clearSelection } = useResultSelection(hits);
+  const { selected, active, select, move, selectAll, clear: clearSelection } = useResultSelection(hits);
   const selectedHits = useMemo(() => hits.filter((hit) => selected.has(hit.path)), [hits, selected]);
+  const keysFrom = active !== null && selected.has(active) ? active : (selectedHits[0]?.path ?? active);
   const resultActions = useMemo<ResultActions>(
     () => ({
       open: (hit) => {
@@ -443,6 +479,56 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       },
     }),
     [onDismiss],
+  );
+  const panelShown = results && selectedHits.length > 0;
+  const [panelColumns, setPanelColumns] = useState(storedPanelColumns);
+  const choosePanelColumns = useCallback((columns: number) => {
+    setPanelColumns(columns);
+    keepPanelColumns(columns);
+  }, []);
+  const [resultsBox, setResultsBox] = useState<{ column: number; pixelRatio: number; side: number; scrollbar: number } | null>(null);
+  const columns = resultsBox ? resultColumns(resultsBox.column, asWidget ? WIDGET_COLUMNS : undefined, panelColumns) : null;
+  const beside = columns && resultsBox && !asWidget ? panelBeside(resultsBox.side, columns.track) : null;
+  const panelTaken = beside ?? columns?.taken ?? PANEL_COLUMNS;
+  const panelSize = beside !== null && columns ? panelWidth(columns.track, beside) : (columns?.panel ?? 0);
+  const [aimedColumns, setAimedColumns] = useState<number | null>(null);
+  const layout = panelLayout(aimedColumns !== null && columns ? panelWidth(columns.track, aimedColumns) : panelSize);
+  const shift =
+    panelShown && beside !== null && resultsBox
+      ? Math.round(((resultsBox.scrollbar + PANEL_GAP + panelSize) / 2) * resultsBox.pixelRatio) / resultsBox.pixelRatio
+      : 0;
+  const columnStyle = useMemo(
+    () =>
+      columns && resultsBox
+        ? ({
+            "--result-track": `${columns.track}px`,
+            "--result-columns": String(columns.columns),
+            "--panel-width": `${panelSize}px`,
+            "--panel-room": `${beside !== null ? panelRoom(panelSize) : columns.room}px`,
+            "--panel-columns": String(columns.besidePanel),
+            "--preview-height": `${previewHeight(columns.track, resultsBox.pixelRatio)}px`,
+            "--device-px": `${1 / resultsBox.pixelRatio}px`,
+            "--results-shift": `${shift}px`,
+          } as CSSProperties)
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [columns?.track, columns?.columns, columns?.room, columns?.besidePanel, panelSize, beside !== null, resultsBox?.pixelRatio, shift],
+  );
+  const weakPaths = useMemo(() => {
+    const weakFrom = found && "weakFrom" in found ? found.weakFrom : null;
+    return new Set(weakFrom === null ? [] : batches.slice(weakFrom).flat().map((hit) => hit.path));
+  }, [found, batches]);
+  const isWeak = useCallback((path: string) => weakPaths.has(path), [weakPaths]);
+  const prefetch = useCallback((hit: SearchHit, pressed: boolean) => prefetchDetails(hit, text, pressed), [text]);
+  const findSimilar = useCallback(
+    (paths: string[]) => {
+      setQuery("");
+      setChosen({});
+      setExamples([]);
+      addExample(paths);
+      clearSelection();
+    },
+    [addExample, clearSelection],
   );
   const [menu, setMenu] = useState<{ hits: SearchHit[]; x: number; y: number } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
@@ -461,7 +547,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       if (key === "a") {
         if (e.shiftKey) clearSelection();
         else selectAll();
-      } else if (selectedHits.length > 0) {
+      } else if (selectedHits.length > 0 && !window.getSelection()?.toString()) {
         e.preventDefault();
         void (e.shiftKey ? resultActions.copyPaths(selectedHits) : resultActions.copyFiles(selectedHits)).catch(() => {});
       }
@@ -473,9 +559,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   if (exampleNotice) message = { text: exampleNotice };
   else if (!searchable) message = { text: model?.state === "failed" ? "Search isn’t available." : "Waiting for the search model to load…" };
   else if (found && "error" in found) message = { text: `The search failed: ${found.error}` };
-  else if (found && !searching && batches[0]?.length === 0) {
+  else if (found && "batches" in found && batches[0]?.length === 0) {
     if (found.more || batches.length > 1) {
-      const quoted = text.length > MAX_QUOTED ? `${text.slice(0, MAX_QUOTED).trimEnd()}…` : text;
+      const quoted = found.text.length > MAX_QUOTED ? `${found.text.slice(0, MAX_QUOTED).trimEnd()}…` : found.text;
       message = {
         text: quoted ? `No strong matches for “${quoted}”` : "No strong matches",
         hint:
@@ -488,8 +574,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           ),
       };
     } else {
-      const filtered = fileType !== null || fromMs !== null || toMs !== null;
-      message = { text: "Nothing found", hint: filtered ? "Nothing indexed is of that type or from that time." : undefined };
+      message = { text: "Nothing found", hint: found.filtered ? "Nothing indexed is of that type or from that time." : undefined };
     }
   }
   const setFocus = useCallback((next: boolean) => {
@@ -571,7 +656,10 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       if (home.current?.closest("[inert]") || document.querySelector("dialog[open], [role='menu']")) return;
-      if (filled) {
+      if (panelShown) {
+        e.preventDefault();
+        clearSelection();
+      } else if (filled) {
         e.preventDefault();
         leave();
       } else if (document.activeElement === input.current) {
@@ -582,7 +670,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filled, leave, asWidget, onDismiss]);
+  }, [filled, leave, asWidget, onDismiss, panelShown, clearSelection]);
 
   useLayoutEffect(() => {
     const root = home.current;
@@ -607,6 +695,15 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       set("--hole-right", around.right - block.right);
       set("--hole-top", block.top - around.top - lift);
       set("--home-height", around.height);
+      const scrollbar = parseFloat(getComputedStyle(root).getPropertyValue("--scrollbar-size")) || 0;
+      const column = Math.min(MOST_RESULTS_WIDTH, around.width - 2 * scrollbar);
+      const pixelRatio = window.devicePixelRatio || 1;
+      const side = Math.floor((around.width - column) / 2 - scrollbar - PANEL_GAP - SIDE_MARGIN);
+      if (column > 0) {
+        setResultsBox((now) =>
+          now?.column === column && now.pixelRatio === pixelRatio && now.side === side && now.scrollbar === scrollbar ? now : { column, pixelRatio, side, scrollbar },
+        );
+      }
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -637,12 +734,18 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   return (
     <main
       ref={home}
+      style={columnStyle}
       data-fading={fading ? "" : undefined}
       data-snapping={snapping ? "" : undefined}
+      onWheel={(e) => {
+        const target = e.target instanceof Element ? e.target : null;
+        if (!results || !target || resultsPane.current?.contains(target) || target.closest("[data-result-panel], [role='menu']")) return;
+        forwardWheel(e);
+      }}
       className={cx(styles.home, engaged && styles.engaged, focused && styles.wide, dim && styles.dim, results && styles.results, stowed && styles.stowed, blocked && styles.blocked, asWidget && styles.asWidget, opening && styles.opening, overview?.progress != null && styles.indexing)}
       onClick={(e) => {
         const target = e.target as HTMLElement;
-        if (!target.closest(`button, input, label, [role='menu'], [data-selection-bar], .${styles.tagsBox}`)) clearSelection();
+        if (!target.closest(`button, input, label, [role='menu'], [data-selection-bar], [data-result-panel], .${styles.tagsBox}`)) clearSelection();
       }}
       onPointerDown={
         asWidget && onDismiss
@@ -670,24 +773,51 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         message={message}
         progress={overview?.progress != null}
         selected={selected}
-        selection={selectedHits}
+        selection={panelShown ? NO_HITS : selectedHits}
         actions={resultActions}
         onClearSelection={clearSelection}
         onSelect={select}
+        active={keysFrom}
+        onMove={move}
         onOpen={resultActions.open}
         onContextMenu={openMenu}
         noted={incomplete && dragging === null}
         away={stowed}
         onAway={setBarAway}
+        panel={panelShown && beside === null}
+        panelColumns={panelTaken}
+        onPrefetch={prefetch}
       />
+      <ResultPanel
+        hits={selectedHits}
+        shown={panelShown}
+        query={text}
+        withFiles={examples.length > 0}
+        isWeak={isWeak}
+        progress={overview?.progress != null}
+        away={stowed}
+        actions={resultActions}
+        onFindSimilar={findSimilar}
+        onSelectOnly={(path) => select(path, false)}
+        beside={beside !== null}
+        layout={layout}
+        resize={
+          columns && beside === null
+            ? {
+                track: columns.track,
+                taken: panelTaken,
+                least: columns.least,
+                standard: DEFAULT_PANEL_COLUMNS,
+                most: columns.most,
+                onResize: choosePanelColumns,
+                onAiming: setAimedColumns,
+              }
+            : null
+        }
+      />
+
       <img className={styles.logo} src={logo} alt="Mesa" draggable={false} />
-      <div
-        ref={search}
-        className={styles.search}
-        onWheel={(e) => {
-          if (results) forwardWheel(e);
-        }}
-      >
+      <div ref={search} className={styles.search}>
         <div
           ref={row}
           className={cx(styles.row, dropping && (dropping.supported.length > 0 ? styles.dropping : styles.refusing), dragging?.over && styles.hot)}

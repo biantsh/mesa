@@ -10,6 +10,28 @@ export function currentWindow(): Window | null {
   }
 }
 
+export function fitTheWindowExactly() {
+  const window_ = currentWindow();
+  if (!window_) return;
+  const root = document.documentElement;
+  const measure = () =>
+    void Promise.all([window_.innerSize(), window_.scaleFactor()])
+      .then(([size, scale]) => {
+        if (scale <= 0) return;
+        root.style.setProperty("--window-width", `${size.width / scale}px`);
+        root.style.setProperty("--window-height", `${size.height / scale}px`);
+      })
+      .catch(() => {});
+  measure();
+  let timer = 0;
+  window.addEventListener("resize", () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(measure, RESIZE_SETTLED_MS);
+  });
+}
+
+const RESIZE_SETTLED_MS = 150;
+
 export const windowControls = {
   minimize: () => void currentWindow()?.minimize().catch(() => {}),
   toggleMaximize: () => void currentWindow()?.toggleMaximize().catch(() => {}),

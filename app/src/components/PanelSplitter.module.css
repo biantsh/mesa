@@ -37,6 +37,7 @@
   mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 16px), transparent);
   opacity: 0;
   transition: opacity 120ms ease;
+  will-change: opacity;
 }
 
 .splitter:hover::after {

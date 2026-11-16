@@ -1,7 +1,8 @@
 .window {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  width: clamp(calc(100% - 1px), var(--window-width, 100%), 100%);
+  height: clamp(calc(100% - 1px), var(--window-height, 100%), 100%);
   overflow: hidden;
   border: var(--window-border) solid var(--color-border-strong);
   border-radius: var(--window-radius);

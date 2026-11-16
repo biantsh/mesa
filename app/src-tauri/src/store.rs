@@ -178,6 +178,22 @@ pub struct Hit {
     pub modified_ms: i64,
     pub size: u64,
     pub score: f32,
+    pub why: Why,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Why {
+    pub reason: Option<crate::relevance::Reason>,
+    pub by_words: Option<WordsMatch>,
+    pub at: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WordsMatch {
+    Words,
+    Phrase,
 }
 
 pub struct ScannedDir {
@@ -832,10 +848,10 @@ impl Store {
         let mut values: Vec<Value> = Vec::new();
         let passes = filter_condition(filter, &mut values);
         let sql = format!(
-            "SELECT e.slot, e.file_id, f.category, ({passes}) FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?"
+            "SELECT e.slot, e.file_id, f.category, ({passes}), e.locator FROM embeddings e JOIN files f ON f.id = e.file_id WHERE e.config_id = ?"
         );
         values.push(i64::from(CONFIG_ID).into());
-        let mut candidates: Vec<(u64, i64, i64, bool)> = {
+        let mut candidates: Vec<(u64, i64, i64, bool, u64)> = {
             let mut statement = self.conn.prepare(&sql)?;
             let rows = statement.query_map(params_from_iter(values), |r| {
                 Ok((
@@ -843,37 +859,47 @@ impl Store {
                     r.get::<_, i64>(1)?,
                     r.get::<_, i64>(2)?,
                     r.get::<_, bool>(3)?,
+                    r.get::<_, i64>(4)? as u64,
                 ))
             })?;
             rows.collect::<rusqlite::Result<_>>()?
         };
         candidates.sort_unstable();
-        let slots: Vec<u64> = candidates.iter().map(|(slot, _, _, _)| *slot).collect();
+        let slots: Vec<u64> = candidates.iter().map(|&(slot, ..)| slot).collect();
 
         let query = to_floats(query);
-        let mut closest: HashMap<i64, (i64, f32, bool)> = HashMap::new();
+        let mut closest: HashMap<i64, (i64, f32, bool, u64)> = HashMap::new();
         let mut next = 0;
         self.vectors.read_each(&slots, &mut |slot, record| {
-            let (expected, file, category, passes) = candidates[next];
+            let (expected, file, category, passes, locator) = candidates[next];
             debug_assert_eq!(slot, expected);
             next += 1;
             let score = similarity(&query, record);
             closest
                 .entry(file)
-                .and_modify(|(_, best, _)| *best = best.max(score))
-                .or_insert((category, score, passes));
+                .and_modify(|(_, best, _, at)| {
+                    if score > *best {
+                        (*best, *at) = (score, locator);
+                    }
+                })
+                .or_insert((category, score, passes, locator));
         })?;
 
         let among: Vec<(i64, i64, f32)> = closest
             .iter()
-            .map(|(&file, &(category, score, _))| (file, category, score))
+            .map(|(&file, &(category, score, ..))| (file, category, score))
             .collect();
-        let scored: Vec<(i64, i64, f32)> = closest
-            .into_iter()
-            .filter(|(_, (_, _, passes))| *passes)
-            .map(|(file, (category, score, _))| (file, category, score))
-            .collect();
-        Ok(relevance::rank(&scored, &among, by_words))
+        let (mut scored, mut at) = (Vec::new(), HashMap::new());
+        for (file, (category, score, passes, locator)) in closest {
+            if passes {
+                scored.push((file, category, score));
+                at.insert(file, locator);
+            }
+        }
+        Ok(relevance::Ranked {
+            at,
+            ..relevance::rank(&scored, &among, by_words)
+        })
     }
 
     pub fn newest(&self, filter: Filter) -> Result<Vec<(i64, f32)>> {
@@ -961,9 +987,27 @@ impl Store {
                 modified_ms,
                 size: size as u64,
                 score,
+                why: Why::default(),
             });
         }
         Ok(hits)
+    }
+
+    pub fn picture_text(&self, path: &Path) -> Result<Option<String>> {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return Ok(None);
+        };
+        let Some(dir) = find_dir(&self.conn, parent)? else {
+            return Ok(None);
+        };
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT w.text FROM files f JOIN picture_words w ON w.rowid = f.id WHERE f.dir_id = ?1 AND f.name = ?2",
+            )?
+            .query_row(params![dir, name.to_string_lossy()], |r| r.get::<_, Option<String>>(0))
+            .optional()?
+            .flatten())
     }
 }
 

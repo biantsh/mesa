@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+};
 
 const ON_THE_LINE: f64 = 30.0;
 const PER_FOLD: f64 = 0.75;
@@ -6,33 +9,60 @@ const FLOOR: f64 = -1.0;
 const SCATTERED_IN_A_DOCUMENT: f64 = 0.5;
 
 pub fn words_of(text: &str) -> Vec<String> {
+    located(text).into_iter().map(|(word, _)| word).collect()
+}
+
+pub fn located(text: &str) -> Vec<(String, Range<usize>)> {
     let mut words = Vec::new();
     for word in text.split_whitespace() {
+        let base = word.as_ptr() as usize - text.as_ptr() as usize;
         let digits = word.chars().any(|c| c.is_ascii_digit());
-        let (mut current, mut numeric) = (String::new(), false);
-        let done = |current: &mut String, words: &mut Vec<String>| {
+        let (mut current, mut at, mut numeric) = (String::new(), 0..0, false);
+        let done = |current: &mut String, at: &Range<usize>, words: &mut Vec<(String, Range<usize>)>| {
             if !current.is_empty() {
-                words.push(std::mem::take(current));
+                words.push((std::mem::take(current), at.clone()));
             }
         };
-        for c in word.chars().flat_map(char::to_lowercase) {
-            let c = if digits && c == 'o' { '0' } else { c };
-            if !c.is_alphanumeric() {
-                done(&mut current, &mut words);
-            } else if written_without_spaces(c) {
-                done(&mut current, &mut words);
-                words.push(c.to_string());
-            } else {
-                if !current.is_empty() && c.is_numeric() != numeric {
-                    done(&mut current, &mut words);
+        for (offset, original) in word.char_indices() {
+            let here = base + offset..base + offset + original.len_utf8();
+            for c in original.to_lowercase() {
+                let c = if digits && c == 'o' { '0' } else { c };
+                if !c.is_alphanumeric() {
+                    done(&mut current, &at, &mut words);
+                } else if written_without_spaces(c) {
+                    done(&mut current, &at, &mut words);
+                    words.push((c.to_string(), here.clone()));
+                } else {
+                    if !current.is_empty() && c.is_numeric() != numeric {
+                        done(&mut current, &at, &mut words);
+                    }
+                    numeric = c.is_numeric();
+                    if current.is_empty() {
+                        at = here.clone();
+                    }
+                    current.push(c);
+                    at.end = here.end;
                 }
-                numeric = c.is_numeric();
-                current.push(c);
             }
         }
-        done(&mut current, &mut words);
+        done(&mut current, &at, &mut words);
     }
     words
+}
+
+pub fn occurrences(text: &str, terms: &[String]) -> Vec<(usize, Range<usize>)> {
+    let words = located(text);
+    let mut found = Vec::new();
+    for (n, term) in terms.iter().enumerate() {
+        let parts: Vec<&str> = term.split(' ').collect();
+        for run in words.windows(parts.len()) {
+            if run.iter().zip(&parts).all(|((word, _), part)| word == part) {
+                found.push((n, run[0].1.start..run[run.len() - 1].1.end));
+            }
+        }
+    }
+    found.sort_by_key(|(_, at)| (at.start, at.end));
+    found
 }
 
 fn written_without_spaces(c: char) -> bool {

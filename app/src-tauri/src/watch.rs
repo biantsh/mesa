@@ -184,6 +184,7 @@ struct State {
     last_rescan: Option<Instant>,
     lost_watches: bool,
     aliases: Vec<(PathBuf, PathBuf)>,
+    undirected_renames: bool,
 }
 
 impl State {
@@ -199,6 +200,7 @@ impl State {
             last_rescan: None,
             lost_watches: false,
             aliases: Vec::new(),
+            undirected_renames: cfg!(target_os = "macos"),
         }
     }
 
@@ -230,7 +232,11 @@ impl State {
                 .map(|path| self.as_watched(path))
                 .collect();
         }
-        let kind = directed(event.kind, &event.paths);
+        let kind = if self.undirected_renames {
+            directed(event.kind, &event.paths)
+        } else {
+            event.kind
+        };
         if let Some((from, _)) = &self.moved_from
             && !matches!(kind, EventKind::Modify(ModifyKind::Name(_)))
             && !event.paths.is_empty()
@@ -486,8 +492,8 @@ fn by_folder(look: Vec<PathBuf>, indexed: &dyn Fn(&Path) -> bool) -> Vec<PathBuf
 }
 
 fn directed(kind: EventKind, paths: &[PathBuf]) -> EventKind {
-    match (cfg!(target_os = "macos"), kind, paths) {
-        (true, EventKind::Modify(ModifyKind::Name(RenameMode::Any)), [path]) => {
+    match (kind, paths) {
+        (EventKind::Modify(ModifyKind::Name(RenameMode::Any)), [path]) => {
             let mode = if fs::symlink_metadata(path).is_ok() {
                 RenameMode::To
             } else {
@@ -548,6 +554,7 @@ mod tests {
         .unwrap();
         index.set(&photos, true).unwrap();
         let mut state = State::new(index.chores(), Duration::from_millis(100));
+        state.undirected_renames = true;
         fs::write(photos.join("first.jpg"), "x").unwrap();
         let news = |kind: EventKind, name: &str| Ok(Event::new(kind).add_path(photos.join(name)));
         state.hear(news(EventKind::Modify(ModifyKind::Name(RenameMode::Any)), "a.jpg"));

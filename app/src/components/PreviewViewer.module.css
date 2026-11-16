@@ -1,0 +1,147 @@
+.viewer {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+.viewer[open] {
+  animation: none;
+}
+
+.viewer::backdrop {
+  animation: dimming 260ms ease;
+}
+
+.leaving::backdrop {
+  opacity: 0;
+  transition: opacity 200ms ease-in;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 28px 28px 20px;
+  cursor: zoom-out;
+}
+
+.stage {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  align-self: stretch;
+}
+
+.frame {
+  position: absolute;
+  border-radius: var(--radius-md);
+  background: var(--color-preview-bg);
+  box-shadow: var(--shadow-dialog);
+  overflow: hidden;
+  transform-origin: 0 0;
+  cursor: default;
+}
+
+.image,
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+.video {
+  object-fit: contain;
+  background: #000;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.shown {
+  opacity: 1;
+}
+
+.bar {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin-top: 16px;
+  padding: 6px 6px 6px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  box-shadow: var(--shadow-dialog);
+  cursor: default;
+  animation: rising 260ms ease;
+  transition: opacity 200ms ease-in;
+}
+
+.leaving .bar {
+  opacity: 0;
+}
+
+.name {
+  min-width: 0;
+  max-width: 360px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.pages {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+}
+
+.pages button:disabled {
+  background: transparent;
+  color: var(--color-text-faint);
+  cursor: default;
+}
+
+.pageLabel {
+  min-width: 96px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+
+@keyframes dimming {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes rising {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewer::backdrop,
+  .bar {
+    animation: none;
+  }
+}

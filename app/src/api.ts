@@ -189,6 +189,19 @@ export interface SearchHit {
   modified: number;
   size: number;
   score: number;
+  reason: "words" | "meaning" | "fewFiles" | null;
+  byWords: "words" | "phrase" | null;
+  at: number | null;
+}
+
+export interface MatchSnippet {
+  parts: { text: string; hit: boolean }[];
+  page: number | null;
+}
+
+export interface MatchDetails {
+  snippets: MatchSnippet[];
+  closest: MatchSnippet | null;
 }
 
 export interface SearchPage {
@@ -243,6 +256,9 @@ export const api = {
   search: (query: string, filter: SearchFilter, files: string[] = []) =>
     invoke<SearchPage>("search", { query, ...filter, files }),
   searchMore: (id: number) => invoke<SearchPage>("search_more", { id }),
+  pageCount: (path: string) => invoke<number | null>("page_count", { path }),
+  allowPlaying: (path: string) => invoke<void>("allow_playing", { path }),
+  matchDetails: (path: string, query: string, at: number | null) => invoke<MatchDetails>("match_details", { path, query, at }),
   setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),
   setIndexingTurbo: (enabled: boolean) => invoke<void>("set_indexing_turbo", { enabled }),
   getIndexedTypes: () => invoke<Category[]>("get_indexed_types"),
@@ -294,6 +310,14 @@ export function previewUrl(path: string, box?: PreviewBox, scale = 1): string {
   if (!box) return url;
   const { width, height } = previewPixels(box, scale);
   return `${url}?w=${width}&h=${height}&fit=${box.fit}`;
+}
+
+export function mediaUrl(path: string): string {
+  return convertFileSrc(path);
+}
+
+export function largePreviewUrl(path: string, size: number, page = 1): string {
+  return `${convertFileSrc(path, "thumb")}?large=${Math.round(size)}${page > 1 ? `&page=${page}` : ""}`;
 }
 
 export function previewPixels(box: PreviewBox, scale: number): { width: number; height: number } {

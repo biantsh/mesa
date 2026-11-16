@@ -34,7 +34,20 @@ struct Ranking {
     ranked: Vec<(i64, f32)>,
     close: usize,
     excluded: Vec<String>,
+    reasons: HashMap<i64, crate::relevance::Reason>,
+    by_words: HashMap<i64, crate::store::WordsMatch>,
+    at: HashMap<i64, u64>,
     next: Mutex<usize>,
+}
+
+impl Ranking {
+    fn why(&self, file: i64) -> crate::store::Why {
+        crate::store::Why {
+            reason: self.reasons.get(&file).copied(),
+            by_words: self.by_words.get(&file).copied(),
+            at: self.at.get(&file).copied(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -723,15 +736,36 @@ impl Index {
         exists: impl Fn(&Path) -> bool,
     ) -> Result<Page, String> {
         let query = self.query_vector(text, files)?;
+        let mut by_words = HashMap::new();
         let ranked = if let Some(query) = query {
             let mut store = lock(&self.shared.store);
             let exact = store.exact(text, filter)?;
-            let phrase = match crate::words::terms(text).len() {
+            let terms = crate::words::terms(text).len();
+            let phrase = match terms {
                 _ if exact.is_empty() => Vec::new(),
                 1 => exact.iter().map(|&(file, _)| file).collect(),
                 _ => store.phrase(text, filter)?,
             };
-            store.rank(&query, filter, &crate::words::margins(&exact, &phrase))?
+            let margins = crate::words::margins(&exact, &phrase);
+            let in_order: HashSet<i64> = if terms > 1 {
+                phrase.iter().copied().collect()
+            } else {
+                HashSet::new()
+            };
+            by_words = margins
+                .keys()
+                .map(|&file| {
+                    (
+                        file,
+                        if in_order.contains(&file) {
+                            crate::store::WordsMatch::Phrase
+                        } else {
+                            crate::store::WordsMatch::Words
+                        },
+                    )
+                })
+                .collect();
+            store.rank(&query, filter, &margins)?
         } else if filter != Filter::default() {
             Ranked::all_close(lock(&self.shared.store).newest(filter)?)
         } else {
@@ -749,6 +783,9 @@ impl Index {
             ranked: ranked.files,
             close: ranked.close,
             excluded: files.iter().map(|file| path_key(file)).collect(),
+            reasons: ranked.reasons,
+            by_words,
+            at: ranked.at,
             next: Mutex::new(0),
         });
         lock(&self.latest_search).insert(window.to_owned(), ranking.clone());
@@ -762,6 +799,14 @@ impl Index {
             });
         }
         self.next_page(&ranking, exists)
+    }
+
+    pub fn match_details(&self, path: &Path, query: &str, at: Option<u64>) -> Result<crate::matches::Details, String> {
+        let text = lock(&self.shared.store).picture_text(path)?;
+        Ok(match text {
+            Some(text) => crate::matches::of_picture(&text, query),
+            None => crate::matches::of_document(path, query, at).unwrap_or_default(),
+        })
     }
 
     pub fn search_more(&self, id: u64) -> Result<Page, String> {
@@ -783,13 +828,14 @@ impl Index {
             let batch = &ranking.ranked[*next..end];
             let hits = lock(&self.shared.store).hits(batch)?;
             let mut used = batch.len();
-            for hit in hits {
+            for mut hit in hits {
                 if !exists(&hit.path)
                     || (!ranking.excluded.is_empty() && ranking.excluded.contains(&path_key(&hit.path)))
                 {
                     continue;
                 }
                 let file = hit.file;
+                hit.why = ranking.why(file);
                 found.push(hit);
                 if found.len() == SEARCH_RESULTS {
                     used = batch

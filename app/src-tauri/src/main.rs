@@ -17,6 +17,7 @@ mod hotkey;
 mod index;
 mod indexer;
 mod main_window;
+mod matches;
 mod page_scale;
 mod power;
 mod preview_queue;
@@ -239,6 +240,9 @@ fn main() {
             commands::index_view,
             commands::search,
             commands::search_more,
+            commands::match_details,
+            commands::page_count,
+            commands::allow_playing,
             commands::set_indexing_paused,
             commands::set_indexing_turbo,
             commands::get_indexed_types,

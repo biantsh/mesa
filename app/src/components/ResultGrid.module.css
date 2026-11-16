@@ -22,14 +22,16 @@
   --bar-room: calc(var(--top-gap) + var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px + var(--under-query));
   --fade-top: var(--bar-room);
   --fade-length: 12px;
+  --column: min(968px, 100% - 2 * var(--scrollbar-size));
   position: absolute;
   z-index: 1;
-  left: 0;
-  right: 0;
+  left: calc((100% - var(--column)) / 2);
+  width: calc(var(--column) + var(--scrollbar-size));
+  transform: translateX(calc(-1 * var(--results-shift, 0px)));
   top: 0;
   bottom: calc(var(--bottom-gap) + var(--for-progress) + var(--for-count));
+  overflow-x: hidden;
   overflow-y: scroll;
-  padding-left: var(--scrollbar-size);
   scroll-padding-top: var(--bar-room);
   mask-image:
     linear-gradient(
@@ -50,8 +52,29 @@
     opacity calc(var(--focus-time) * 0.3) ease-out,
     visibility 0s linear calc(var(--focus-time) * 0.3),
     bottom var(--focus-time) var(--focus-ease),
+    width 260ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
     --fade-top var(--focus-time) var(--focus-ease),
     --fade-length var(--focus-time) var(--focus-ease);
+}
+
+.pane.besidePanel {
+  width: calc(var(--column) - var(--panel-drag-room, var(--panel-room, 0px)) + var(--scrollbar-size));
+}
+
+.pane::-webkit-scrollbar-track {
+  margin-top: calc(var(--bar-room) + 12px + 6px - 3px);
+}
+
+.pane::-webkit-scrollbar-thumb {
+  border-left-width: round(3px, var(--device-px, 1px));
+  border-right-width: round(3px, var(--device-px, 1px));
+}
+
+.pane::-webkit-scrollbar-thumb:hover,
+.pane::-webkit-scrollbar-thumb:active {
+  border-left-width: round(2px, var(--device-px, 1px));
+  border-right-width: round(2px, var(--device-px, 1px));
 }
 
 .shown {
@@ -62,6 +85,8 @@
     opacity calc(var(--focus-time) * 0.5) ease var(--results-delay, calc(var(--focus-time) * 0.2)),
     visibility 0s,
     bottom var(--focus-time) var(--focus-ease),
+    width 260ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
     --fade-top var(--focus-time) var(--focus-ease),
     --fade-length var(--focus-time) var(--focus-ease);
 }
@@ -80,13 +105,30 @@
   --for-progress: calc(var(--pill-bottom, 16px) + 36px + 10px - var(--bottom-gap));
 }
 
+.cover {
+  --bar-room: calc(var(--top-gap) + var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px + var(--under-query, 14px));
+  --fade-top: var(--bar-room);
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--fade-top);
+  pointer-events: none;
+  transition: height var(--focus-time) var(--focus-ease);
+}
+
+.cover.shown {
+  pointer-events: auto;
+}
+
 .pane.counting {
   --for-count: 36px;
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  grid-template-columns: repeat(var(--result-columns, auto-fill), var(--result-track, minmax(148px, 1fr)));
   align-content: start;
   gap: 4px;
   width: min(968px, 100%);
@@ -95,15 +137,25 @@
   transition: opacity 120ms ease;
 }
 
+.withPanel {
+  grid-template-columns: repeat(var(--panel-columns, 4), var(--result-track, 158px));
+}
+
+:global(:root[data-widget]) .grid.withPanel {
+  grid-template-columns: repeat(var(--panel-columns, 4), var(--result-track, 158px));
+}
+
 :global(:root[data-widget]) .grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--result-columns, 6), var(--result-track, minmax(0, 1fr)));
 }
 
 .weakDivider {
   grid-column: 1 / -1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
+  height: 22px;
   margin: 10px 14px 8px;
   color: var(--color-text-faint);
   font-size: 12px;
@@ -269,6 +321,8 @@
 .more {
   display: flex;
   justify-content: center;
+  width: min(968px, 100%);
+  margin: 0 auto;
   padding: 0 0 12px;
 }
 
@@ -322,6 +376,10 @@
   background: var(--color-hover-bg);
 }
 
+.tile:focus-visible {
+  outline-offset: -2px;
+}
+
 .tile.selected {
   background: var(--color-selected-bg);
   box-shadow: inset 0 0 0 1px var(--color-selected-border);
@@ -357,6 +415,7 @@
   display: grid;
   place-items: center;
   aspect-ratio: 1;
+  height: var(--preview-height, auto);
   margin-bottom: 6px;
   border-radius: var(--radius-sm);
   background: var(--color-preview-bg);
@@ -442,17 +501,19 @@
 }
 
 .name {
+  height: 18px;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 18px;
   font-weight: 450;
 }
 
 .meta {
   display: flex;
   gap: 5px;
+  height: 17px;
   color: var(--color-text-faint);
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 17px;
 }
 
 .folder {

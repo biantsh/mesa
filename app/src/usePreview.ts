@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, type SyntheticEvent } from "react";
 import { flushSync } from "react-dom";
 import { previewUrl, type Entry, type PreviewBox } from "./api";
 
@@ -29,7 +29,10 @@ export function usePreview(entry: Previewable, box?: PreviewBox) {
     wanted,
     src: previewUrl(entry.path, box, scale),
     loaded: wanted && state === "loaded",
-    onLoad: () => settle("loaded"),
+    onLoad: (e?: SyntheticEvent<HTMLImageElement>) => {
+      if (!box && e) rememberShape(entry, e.currentTarget);
+      settle("loaded");
+    },
     onError: () => settle("failed"),
   };
 }
@@ -43,6 +46,18 @@ function tell() {
   flushSync(() => {
     for (const say of saying) say();
   });
+}
+
+const shapes = new Map<string, number>();
+
+function rememberShape(entry: Previewable, image: HTMLImageElement) {
+  if (image.naturalWidth === 0 || image.naturalHeight === 0) return;
+  if (shapes.size >= REMEMBERED) shapes.clear();
+  shapes.set(`${entry.modified ?? ""}:${entry.path}`, image.naturalWidth / image.naturalHeight);
+}
+
+export function previewShape(entry: Pick<Entry, "path" | "modified">): number | undefined {
+  return shapes.get(`${entry.modified ?? ""}:${entry.path}`);
 }
 
 type Outcome = "loaded" | "failed";

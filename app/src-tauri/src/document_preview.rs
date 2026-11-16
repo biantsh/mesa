@@ -44,6 +44,20 @@ pub fn render_after_system(path: &str, size: u32) -> Option<Vec<u8>> {
     }
 }
 
+pub fn page_count(path: &str) -> Option<usize> {
+    match extension_of(path)?.as_str() {
+        "pdf" => pdf::page_count(path),
+        _ => None,
+    }
+}
+
+pub fn render_page(path: &str, size: u32, page: u32) -> Option<Vec<u8>> {
+    match extension_of(path)?.as_str() {
+        "pdf" => pdf::page(path, size, page.checked_sub(1)? as usize),
+        _ => None,
+    }
+}
+
 fn docx_thumbnail(path: &Path, size: u32) -> Option<Vec<u8>> {
     let mut archive = zip::ZipArchive::new(BufReader::new(File::open(path).ok()?)).ok()?;
     let index = (0..archive.len()).find(|&i| {
@@ -85,14 +99,31 @@ mod pdf {
     const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
     pub fn first_page(path: &str, size: u32) -> Option<Vec<u8>> {
+        page(path, size, 0)
+    }
+
+    pub fn page_count(path: &str) -> Option<usize> {
+        let data = super::read_whole(path, MAX_BYTES)?;
+        catch_unwind(AssertUnwindSafe(|| Pdf::new(data).ok().map(|pdf| pdf.pages().len())))
+            .ok()
+            .flatten()
+    }
+
+    pub fn page(path: &str, size: u32, index: usize) -> Option<Vec<u8>> {
         let data = super::read_whole(path, MAX_BYTES)?;
         let _slot = slots().take();
-        catch_unwind(AssertUnwindSafe(|| draw_bytes(data, size))).ok().flatten()
+        catch_unwind(AssertUnwindSafe(|| draw_page(data, size, index)))
+            .ok()
+            .flatten()
     }
 
     pub(super) fn draw_bytes(data: Vec<u8>, size: u32) -> Option<Vec<u8>> {
+        draw_page(data, size, 0)
+    }
+
+    fn draw_page(data: Vec<u8>, size: u32, index: usize) -> Option<Vec<u8>> {
         let pdf = Pdf::new(data).ok()?;
-        let page = pdf.pages().first()?;
+        let page = pdf.pages().get(index)?;
         let (width, height) = page.render_dimensions();
         if !(width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0) {
             return None;

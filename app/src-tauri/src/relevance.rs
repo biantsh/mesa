@@ -13,16 +13,30 @@ const PRIOR_FILES: f64 = 30.0;
 const MIN_SPREAD: f64 = 0.01;
 const MAD_TO_SPREAD: f64 = 1.4826;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Default)]
 pub struct Ranked {
     pub files: Vec<(i64, f32)>,
     pub close: usize,
+    pub reasons: HashMap<i64, Reason>,
+    pub at: HashMap<i64, u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Reason {
+    Words,
+    Meaning,
+    FewFiles,
 }
 
 impl Ranked {
     pub fn all_close(files: Vec<(i64, f32)>) -> Self {
         let close = files.len();
-        Self { files, close }
+        Self {
+            files,
+            close,
+            ..Self::default()
+        }
     }
 }
 
@@ -92,6 +106,8 @@ pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)], by_words: &Ha
     let searched = scored.len() + unscored.len();
     let line = cutoff(searched);
     let by_words = |file: i64| by_words.get(&file).map_or(f64::NEG_INFINITY, |margin| line + margin);
+    let few = searched < MIN_FILES;
+    let mut reasons: HashMap<i64, Reason> = unscored.iter().map(|&file| (file, Reason::Words)).collect();
     let mut measured: Vec<(i64, f32, f64)> = scored
         .iter()
         .map(|&(file, kind, score)| {
@@ -103,13 +119,24 @@ pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)], by_words: &Ha
             };
             let variance = (own.variance * own.count + PRIOR_FILES * shared) / (own.count + PRIOR_FILES);
             let z = (f64::from(score) - middle) / variance.sqrt().max(MIN_SPREAD);
-            (file, score, z.max(by_words(file)))
+            let words = by_words(file);
+            let reason = if words > f64::NEG_INFINITY && words >= z {
+                Some(Reason::Words)
+            } else if z >= line {
+                Some(Reason::Meaning)
+            } else {
+                few.then_some(Reason::FewFiles)
+            };
+            if let Some(reason) = reason {
+                reasons.insert(file, reason);
+            }
+            (file, score, z.max(words))
         })
         .chain(unscored.into_iter().map(|file| (file, 0.0, by_words(file))))
         .collect();
     measured.sort_unstable_by(|a, b| b.2.total_cmp(&a.2).then(a.0.cmp(&b.0)));
 
-    let close = if searched < MIN_FILES {
+    let close = if few {
         searched
     } else {
         measured.iter().take_while(|(_, _, z)| *z >= line).count()
@@ -117,6 +144,8 @@ pub fn rank(scored: &[(i64, i64, f32)], among: &[(i64, i64, f32)], by_words: &Ha
     Ranked {
         files: measured.into_iter().map(|(file, score, _)| (file, score)).collect(),
         close,
+        reasons,
+        at: HashMap::new(),
     }
 }
 

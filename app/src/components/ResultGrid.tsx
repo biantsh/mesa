@@ -1,13 +1,17 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject, type UIEvent, type WheelEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject, type UIEvent } from "react";
 import { Check, FileText, Film, Image as ImageIcon, Music, X, type LucideProps } from "lucide-react";
 import { type Category, type SearchHit } from "../api";
 import { cx } from "../cx";
 import { formatMonth, formatSize } from "../format";
 import type { ResultActions } from "../resultMenu";
-import { useForwardedWheel } from "../useForwardedWheel";
 import { usePreview } from "../usePreview";
 import { pressProps } from "./entryProps";
-import { resultWindow, type Layout, type ResultWindow } from "../resultWindow";
+import { moveAmong, resultWindow, rowTop, type Layout, type ResultKey, type ResultWindow } from "../resultWindow";
+import { prefersReducedMotion } from "../motion";
+import { NAV_KEYS } from "../navigation";
+import { useLatest } from "../useLatest";
+import { isForSomethingElse } from "../useSelection";
+import { EASE_CURVE, EASE_MS } from "./PanelSplitter";
 import styles from "./ResultGrid.module.css";
 import { fileManager, shortcut } from "../platform";
 
@@ -49,12 +53,17 @@ interface Props {
   selection: SearchHit[];
   actions: ResultActions;
   onClearSelection: () => void;
-  onSelect: (path: string, toggle: boolean) => void;
+  onSelect: (path: string, toggle: boolean, range?: boolean) => void;
+  active: string | null;
+  onMove: (path: string, extend: boolean) => void;
   onOpen: (hit: SearchHit) => void;
   onContextMenu: (hit: SearchHit, x: number, y: number) => void;
   noted: boolean;
   away: boolean;
   onAway: (away: boolean) => void;
+  panel?: boolean;
+  panelColumns?: number;
+  onPrefetch?: (hit: SearchHit, pressed: boolean) => void;
 }
 
 const AHEAD_PX = 800;
@@ -69,6 +78,53 @@ interface Measured extends Layout {
   top: number;
 }
 
+interface Place {
+  x: number;
+  y: number;
+  top: number;
+  bottom: number;
+}
+
+function placesOf(grid: HTMLElement): Map<HTMLElement, Place> {
+  const places = new Map<HTMLElement, Place>();
+  for (const tile of Array.from(grid.querySelectorAll<HTMLElement>("[data-result]"))) {
+    const box = tile.getBoundingClientRect();
+    if (box.width === 0) continue;
+    places.set(tile, { x: box.left + box.width / 2, y: box.top + box.height / 2, top: box.top, bottom: box.bottom });
+  }
+  return places;
+}
+
+const isSeen = (place: Place, view: DOMRect) => place.bottom > view.top && place.top < view.bottom;
+
+interface Slide {
+  before: Map<HTMLElement, Place>;
+  divider: { element: HTMLElement; width: number; top: number } | null;
+  more: { element: HTMLElement; left: number; top: number } | null;
+  anchor: { at: number; top: number } | null;
+  scrollTo: number | null;
+}
+
+function slideFrom(grid: HTMLElement, pane: HTMLElement, active: string | null): Slide {
+  const before = placesOf(grid);
+  const box = pane.getBoundingClientRect();
+  const covered = parseFloat(getComputedStyle(pane).scrollPaddingTop) || 0;
+  const seen = new DOMRect(box.left, box.top + covered, box.width, Math.max(0, box.height - covered));
+  const shown = Array.from(before).filter(([, place]) => isSeen(place, seen));
+  const [tile, place] = shown.find(([one]) => one.dataset.path === active) ?? shown[0] ?? [];
+  const divider = grid.querySelector<HTMLElement>("[data-divider]");
+  const line = divider?.getBoundingClientRect();
+  const more = pane.querySelector<HTMLElement>("[data-more]");
+  const button = more?.getBoundingClientRect();
+  return {
+    before,
+    divider: divider && line ? { element: divider, width: line.width, top: line.top } : null,
+    more: more && button ? { element: more, left: button.left, top: button.top } : null,
+    anchor: tile && place ? { at: Number(tile.dataset.result), top: place.top } : null,
+    scrollTo: null,
+  };
+}
+
 function sameWindow(a: ResultWindow, b: ResultWindow): boolean {
   return a.start === b.start && a.end === b.end && a.divider === b.divider && a.before === b.before && a.after === b.after;
 }
@@ -81,7 +137,7 @@ const ALWAYS_SHOWN_ABOVE_PX = 48;
 const SCROLL_DOWN_PX = 24;
 const SCROLL_UP_PX = 10;
 
-export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalled, weakFrom, loadingMore, onMore, shown, busy, message, progress, selected, selection, actions, onClearSelection, onSelect, onOpen, onContextMenu, noted, away, onAway }: Props) {
+export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalled, weakFrom, loadingMore, onMore, shown, busy, message, progress, selected, selection, actions, onClearSelection, onSelect, active, onMove, onOpen, onContextMenu, noted, away, onAway, panel = false, panelColumns = 0, onPrefetch }: Props) {
   const last = useRef(0);
   const run = useRef(0);
   const scrolled = (e: UIEvent<HTMLDivElement>) => {
@@ -101,7 +157,7 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
   useEffect(() => {
     paneRef.current?.scrollTo({ top: 0 });
   }, [paneRef, searchId]);
-  const forwardWheel = useForwardedWheel(paneRef);
+
   const hits = useMemo(() => batches.flat(), [batches]);
   const weakAt = useMemo(() => {
     if (weakFrom === null || !batches.slice(0, weakFrom).some((before) => before.length > 0)) return null;
@@ -113,7 +169,7 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
   while (came.current.at.length < batches.length) came.current.at.push(performance.now());
 
   const weakerLine = (
-    <div key="weaker" className={styles.weakDivider} role="separator">
+    <div key="weaker" className={styles.weakDivider} role="separator" data-divider>
       Weaker matches
     </div>
   );
@@ -134,6 +190,7 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
     });
   });
   const [measured, setMeasured] = useState<Measured | null>(null);
+  const measuring = useRef(false);
   const windowAt = (view: { scrollTop: number; height: number }): ResultWindow =>
     measured
       ? resultWindow(hits.length, weakAt, measured, view.scrollTop - measured.top, view.scrollTop - measured.top + view.height, OVERSCAN_ROWS)
@@ -161,7 +218,15 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
     const pane = paneRef.current;
     const element = grid.current;
     if (!pane || !element) return;
-    const watching = new ResizeObserver(() => {
+    const heights = new Map<Element, number>();
+    const watching = new ResizeObserver((entries) => {
+      let changed = false;
+      for (const entry of entries) {
+        const height = entry.contentRect.height;
+        if (heights.get(entry.target) !== height) changed = true;
+        heights.set(entry.target, height);
+      }
+      if (!changed) return;
       see();
       setResized((n) => n + 1);
     });
@@ -179,7 +244,7 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
     const element = grid.current;
     const pane = paneRef.current;
     if (!element || !pane) return;
-    const what = `${made.start} ${made.end} ${made.divider} ${hits.length} ${weakAt} ${resized}`;
+    const what = `${made.start} ${made.end} ${made.divider} ${hits.length} ${weakAt} ${resized} ${layout}`;
     if (measured && what === measuredFor.current) return;
     measuredFor.current = what;
     const tiles = Array.from(element.querySelectorAll<HTMLElement>("[data-result]"));
@@ -202,13 +267,130 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
     const start = element.querySelector<HTMLElement>("[data-rows-start]") ?? first;
     const paneTop = pane.getBoundingClientRect().top + pane.clientTop - pane.scrollTop;
     const next: Measured = { columns, stride, divider, gap, top: topOf(start) - paneTop };
-    if (!sameMeasure(measured, next) && remeasured.current < MOST_MEASURES) {
+    const changed = !sameMeasure(measured, next) && remeasured.current < MOST_MEASURES;
+    if (changed) {
       remeasured.current += 1;
       if (remeasured.current === 1) requestAnimationFrame(() => (remeasured.current = 0));
+      measuring.current = true;
       setMeasured(next);
+    }
+    const pending = slide.current;
+    if (pending && pending.scrollTo === null && pending.anchor) {
+      const box = pane.getBoundingClientRect();
+      const y = next.top + rowTop(pending.anchor.at, weakAt, next);
+      const ratio = window.devicePixelRatio || 1;
+      pending.scrollTo = Math.max(0, Math.round((box.top + pane.clientTop + y - pending.anchor.top) * ratio) / ratio);
+      view.current = { scrollTop: pending.scrollTo, height: pane.clientHeight };
+      if (!changed && !sameWindow(made, windowAt(view.current))) {
+        measuring.current = true;
+        redraw((n) => n + 1);
+      }
     }
     if (view.current.height === 0) see();
   });
+
+  const layout = panel ? `beside ${panelColumns}` : "alone";
+  const laidOutFor = useRef(layout);
+  const slide = useRef<Slide | null>(null);
+  const sliding = useRef<Animation[]>([]);
+  if (laidOutFor.current !== layout) {
+    laidOutFor.current = layout;
+    slide.current = grid.current && paneRef.current && !prefersReducedMotion() ? slideFrom(grid.current, paneRef.current, active) : null;
+  }
+  useLayoutEffect(() => {
+    const beingMeasured = measuring.current;
+    measuring.current = false;
+    const now = slide.current;
+    const element = grid.current;
+    const pane = paneRef.current;
+    if (!now || !element || !pane || beingMeasured) return;
+    for (const animation of sliding.current) animation.cancel();
+    sliding.current = [];
+    if (now.scrollTo !== null && Math.abs(pane.scrollTop - now.scrollTo) >= 1) {
+      pane.scrollTop = now.scrollTo;
+      last.current = pane.scrollTop;
+      view.current = { scrollTop: pane.scrollTop, height: pane.clientHeight };
+      if (!sameWindow(madeNow.current, windowAtNow.current(view.current))) {
+        now.scrollTo = pane.scrollTop;
+        redraw((n) => n + 1);
+        return;
+      }
+    }
+    slide.current = null;
+    const seen = pane.getBoundingClientRect();
+    const after = placesOf(element);
+    const go = (target: HTMLElement, keyframes: Keyframe[]) => {
+      const animation = target.animate(keyframes, { duration: EASE_MS, easing: EASE_CURVE });
+      animation.onfinish = () => animation.cancel();
+      sliding.current.push(animation);
+    };
+    for (const [tile, was] of now.before) {
+      const is = after.get(tile);
+      if (!is || !(isSeen(was, seen) || isSeen(is, seen))) continue;
+      const dx = was.x - is.x;
+      const dy = was.y - is.y;
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
+      go(tile, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }]);
+    }
+    const more = pane.querySelector<HTMLElement>("[data-more]");
+    if (more && now.more && more === now.more.element) {
+      const box = more.getBoundingClientRect();
+      const [dx, dy] = [now.more.left - box.left, now.more.top - box.top];
+      if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) go(more, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }]);
+    }
+    const divider = element.querySelector<HTMLElement>("[data-divider]");
+    if (divider && now.divider && divider === now.divider.element) {
+      const box = divider.getBoundingClientRect();
+      const dy = now.divider.top - box.top;
+      if (Math.abs(box.width - now.divider.width) >= 0.5 || Math.abs(dy) >= 0.5) {
+        go(divider, [
+          { width: `${now.divider.width}px`, transform: `translateY(${dy}px)` },
+          { width: `${box.width}px`, transform: "translateY(0)" },
+        ]);
+      }
+    }
+  });
+  useEffect(() => () => sliding.current.forEach((animation) => animation.cancel()), []);
+
+  const keys = useLatest({ hits, weakAt, measured, active, onMove, shown });
+  useEffect(() => {
+    const reveal = (at: number) => {
+      const pane = paneRef.current;
+      const layout = keys.current.measured;
+      if (!pane) return;
+      const find = () => pane.querySelector<HTMLElement>(`[data-result="${at}"]`);
+      if (!find() && layout) {
+        const top = layout.top + rowTop(at, keys.current.weakAt, layout);
+        const above = parseFloat(getComputedStyle(pane).scrollPaddingTop) || 0;
+        if (top - above < pane.scrollTop) pane.scrollTop = top - above;
+        else if (top + layout.stride > pane.scrollTop + pane.clientHeight) pane.scrollTop = top + layout.stride - pane.clientHeight;
+      }
+      let tries = 4;
+      const focus = () => {
+        const tile = find();
+        if (tile) {
+          tile.focus({ preventScroll: true });
+          tile.scrollIntoView({ block: "nearest" });
+        } else if (--tries > 0) requestAnimationFrame(focus);
+      };
+      focus();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      const { hits, weakAt, measured, active, onMove, shown } = keys.current;
+      if (!shown || active === null || e.ctrlKey || e.altKey || e.metaKey || !NAV_KEYS.has(e.key)) return;
+      if (isForSomethingElse(e.target) || !paneRef.current || paneRef.current.closest("[inert]")) return;
+      if (e.target instanceof Element && e.target.closest("[role='separator']")) return;
+      const from = hits.findIndex((hit) => hit.path === active);
+      if (from < 0) return;
+      e.preventDefault();
+      const to = moveAmong(from, e.key as ResultKey, hits.length, weakAt, measured?.columns ?? 1);
+      if (to === null) return;
+      onMove(hits[to].path, e.shiftKey);
+      reveal(to);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [paneRef, keys]);
   const asking = more && (stalled || (!moreClose && weakFrom === null));
   const endless = more && !asking;
   const button = asking && !(message && batches.length === 1 && (batches[0]?.length ?? 0) === 0);
@@ -238,11 +420,12 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
           counting && styles.counting,
           noted && styles.noted,
           away && styles.away,
+          panel && styles.besidePanel,
         )}
         inert={!shown}
         onScroll={scrolled}
       >
-        <div ref={grid} className={cx(styles.grid, alone && styles.alone)}>
+        <div ref={grid} className={cx(styles.grid, alone && styles.alone, panel && styles.withPanel)}>
           {message && (batches[0]?.length ?? 0) === 0 && (
             <div ref={messageBox} className={styles.message} role="status">
               <p className={styles.messageText}>{message.text}</p>
@@ -265,6 +448,7 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
                 onSelect={onSelect}
                 onOpen={onOpen}
                 onContextMenu={onContextMenu}
+                onPrefetch={onPrefetch}
               />,
             ];
           })}
@@ -273,20 +457,20 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
         </div>
         {button && (
           <div className={styles.more}>
-            <button type="button" className={styles.moreButton} onClick={onMore} disabled={loadingMore}>
+            <button type="button" className={styles.moreButton} onClick={onMore} disabled={loadingMore} data-more>
               View more
             </button>
           </div>
         )}
         <div ref={end} aria-hidden />
       </div>
+      <div className={cx(styles.cover, shown && styles.shown, noted && styles.noted, away && styles.away)} aria-hidden />
       <SelectionBar
         hits={selection}
         visible={counting}
         progress={progress}
         actions={actions}
         onClear={onClearSelection}
-        onWheel={forwardWheel}
       />
     </>
   );
@@ -298,7 +482,6 @@ interface BarProps {
   progress: boolean;
   actions: ResultActions;
   onClear: () => void;
-  onWheel: (e: WheelEvent) => void;
 }
 
 const COPIED_FOR_MS = 1500;
@@ -311,7 +494,7 @@ function Foldable({ shown, inline, children }: { shown: boolean; inline?: boolea
   );
 }
 
-function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: BarProps) {
+function SelectionBar({ hits, visible, progress, actions, onClear }: BarProps) {
   const kept = useRef(hits);
   if (hits.length > 0) kept.current = hits;
   const shown = kept.current;
@@ -360,7 +543,7 @@ function SelectionBar({ hits, visible, progress, actions, onClear, onWheel }: Ba
 
   return (
     <div className={cx(styles.counter, progress && styles.progress, visible && styles.counting)} aria-hidden={!visible}>
-      <div className={styles.bar} data-selection-bar inert={!visible} onWheel={onWheel}>
+      <div className={styles.bar} data-selection-bar inert={!visible}>
         <span className={styles.count} role="status">
           {shown.length} selected <span className={styles.size}>· {formatSize(size)}</span>
         </span>
@@ -397,12 +580,13 @@ interface ResultProps {
   index: number;
   entering: boolean;
   selected: boolean;
-  onSelect: (path: string, toggle: boolean) => void;
+  onSelect: (path: string, toggle: boolean, range?: boolean) => void;
   onOpen: (hit: SearchHit) => void;
   onContextMenu: (hit: SearchHit, x: number, y: number) => void;
+  onPrefetch?: (hit: SearchHit, pressed: boolean) => void;
 }
 
-const Result = memo(function Result({ hit, at, index, entering, selected, onSelect, onOpen, onContextMenu }: ResultProps) {
+const Result = memo(function Result({ hit, at, index, entering, selected, onSelect, onOpen, onContextMenu, onPrefetch }: ResultProps) {
   const Icon = CATEGORY_ICONS[hit.category];
   const { wanted, src, loaded, onLoad, onError } = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
   return (
@@ -412,6 +596,8 @@ const Result = memo(function Result({ hit, at, index, entering, selected, onSele
       style={{ "--i": index } as CSSProperties}
       data-result={at}
       {...pressProps(hit, true, hit.path, { selected, onSelect, onOpen, onContextMenu })}
+      onPointerEnter={onPrefetch && (() => onPrefetch(hit, false))}
+      onPointerDown={onPrefetch && (() => onPrefetch(hit, true))}
     >
       <span className={styles.preview}>
         <Icon className={styles.icon} size={56} strokeWidth={1} aria-hidden />

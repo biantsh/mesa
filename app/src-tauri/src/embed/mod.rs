@@ -35,6 +35,7 @@ use crate::vectors::{Located, Record};
 pub use llama::Locations;
 pub use model::{ModelState, ModelStatus};
 pub use pipeline::{GENTLE_SLOWDOWN, Pipeline};
+pub use prepare::passages;
 
 pub const MODEL_NAME: &str = "google/embeddinggemma-2, Q8_0, llama.cpp, 140 image tokens, 256 dimensions; pictures, video frames, 30 s of sound, passages of text";
 pub const IMAGE_TOKENS: u32 = 140;

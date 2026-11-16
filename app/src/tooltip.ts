@@ -6,6 +6,7 @@ const WARM_MS = 400;
 const FADE_OUT_MS = 80;
 const MARGIN_PX = 8;
 const GAP_PX = 8;
+const BESIDE_GAP_PX = 24;
 const TALL_PX = 60;
 const NARROW_PX = 120;
 
@@ -172,10 +173,20 @@ function seenBox(target: HTMLElement): { left: number; right: number; top: numbe
   return { left, right, top, bottom, width: right - left, height: bottom - top };
 }
 
-function place(tip: HTMLElement, target: HTMLElement, pointer: { x: number; y: number }): "below" | "above" {
+function place(tip: HTMLElement, target: HTMLElement, pointer: { x: number; y: number }): "below" | "above" | "right" | "left" {
   const box = seenBox(target);
   const width = tip.offsetWidth;
   const height = tip.offsetHeight;
+  if (target.getAttribute("role") === "separator" && target.getAttribute("aria-orientation") === "vertical") {
+    const right = box.right + BESIDE_GAP_PX;
+    const onRight = right + width <= window.innerWidth - MARGIN_PX;
+    const left = onRight ? right : Math.max(MARGIN_PX, box.left - BESIDE_GAP_PX - width);
+    const top = Math.min(Math.max(MARGIN_PX, pointer.y - height / 2), window.innerHeight - MARGIN_PX - height);
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(top)}px`;
+    tip.style.removeProperty("--tip-origin");
+    return onRight ? "right" : "left";
+  }
   const x = box.width < NARROW_PX ? box.left + box.width / 2 : Math.min(Math.max(pointer.x, box.left), box.right);
   const tall = box.height > TALL_PX;
   const below = (tall ? pointer.y + 18 : box.bottom) + GAP_PX;

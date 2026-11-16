@@ -120,6 +120,8 @@ pub struct SearchHit {
     pub modified: i64,
     pub size: u64,
     pub score: f32,
+    #[serde(flatten)]
+    pub why: crate::store::Why,
 }
 
 impl From<Hit> for SearchHit {
@@ -136,8 +138,23 @@ impl From<Hit> for SearchHit {
             modified: hit.modified_ms,
             size: hit.size,
             score: hit.score,
+            why: hit.why,
         }
     }
+}
+
+#[tauri::command(async)]
+pub fn match_details(
+    path: String,
+    query: String,
+    at: Option<u64>,
+    index: State<'_, Index>,
+) -> Result<crate::matches::Details, String> {
+    let path = Path::new(&path);
+    if !browse::is_listed_file(path) {
+        return Err("That isn't a file Mesa lists.".into());
+    }
+    index.match_details(path, &query, at)
 }
 
 #[derive(Serialize)]
@@ -223,6 +240,25 @@ pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
         return Err("That isn't a file Mesa opens.".into());
     }
     app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn page_count(path: String) -> Option<usize> {
+    if !browse::is_listed_file(Path::new(&path)) {
+        return None;
+    }
+    crate::document_preview::page_count(&path)
+}
+
+#[tauri::command]
+pub fn allow_playing(path: String, app: AppHandle) -> Result<(), String> {
+    let file = Path::new(&path);
+    if !browse::is_listed_file(file)
+        || browse::category_of(&file.file_name().unwrap_or_default().to_string_lossy()) != Some(Category::Video)
+    {
+        return Err("That isn't a video Mesa plays.".into());
+    }
+    app.asset_protocol_scope().allow_file(file).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

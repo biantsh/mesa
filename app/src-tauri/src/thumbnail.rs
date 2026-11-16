@@ -21,12 +21,15 @@ use tauri::{
 
 const PREVIEW_SIZE: u32 = 256;
 const MAX_BOX_SIDE: u32 = 512;
+const MAX_LARGE_SIDE: u32 = 1600;
+const LARGE_CACHE_BYTES: usize = 48 * 1024 * 1024;
 const JPEG_QUALITY: u8 = 90;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Shape {
     Whole,
     Box { width: u32, height: u32, fit: Fit },
+    Large { size: u32, page: u32 },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -299,6 +302,7 @@ impl Shared {
 struct Caches {
     tiles: Mutex<Cache>,
     wholes: Mutex<Cache>,
+    large: Mutex<Cache>,
 }
 
 impl Caches {
@@ -306,14 +310,15 @@ impl Caches {
         Self {
             tiles: Mutex::new(Cache::new(TILE_CACHE_BYTES)),
             wholes: Mutex::new(Cache::new(WHOLE_CACHE_BYTES)),
+            large: Mutex::new(Cache::new(LARGE_CACHE_BYTES)),
         }
     }
 
     fn of(&self, key: &Key) -> MutexGuard<'_, Cache> {
-        let cache = if key.2 == Shape::Whole {
-            &self.wholes
-        } else {
-            &self.tiles
+        let cache = match key.2 {
+            Shape::Whole => &self.wholes,
+            Shape::Box { .. } => &self.tiles,
+            Shape::Large { .. } => &self.large,
         };
         cache.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -332,6 +337,14 @@ impl Caches {
 }
 
 fn make(caches: &Caches, disk: Option<&Disk>, key: &Key, keep_whole: bool) -> Option<Vec<u8>> {
+    if let Shape::Large { size, page } = key.2 {
+        let made = (page > 1)
+            .then(|| crate::document_preview::render_page(&key.0, size, page))
+            .flatten()
+            .or_else(|| render(&key.0, size))?;
+        caches.put(key.clone(), made.clone());
+        return Some(made);
+    }
     let whole_key = (key.0.clone(), key.1, Shape::Whole);
     let kept = caches.get(&whole_key);
     let whole = match kept {
@@ -651,15 +664,23 @@ fn path_from_uri(uri_path: &str) -> Option<String> {
 }
 
 fn shape_from_query(query: Option<&str>) -> Shape {
-    let (mut width, mut height, mut fit) = (None, None, None);
+    let (mut width, mut height, mut fit, mut large, mut page) = (None, None, None, None, None);
     for pair in query.unwrap_or("").split('&') {
         match pair.split_once('=') {
             Some(("w", n)) => width = n.parse::<u32>().ok(),
             Some(("h", n)) => height = n.parse::<u32>().ok(),
+            Some(("large", n)) => large = n.parse::<u32>().ok().filter(|n| (1..=MAX_LARGE_SIDE).contains(n)),
+            Some(("page", n)) => page = n.parse::<u32>().ok(),
             Some(("fit", "cover")) => fit = Some(Fit::Cover),
             Some(("fit", "contain")) => fit = Some(Fit::Contain),
             _ => {}
         }
+    }
+    if let Some(size) = large {
+        return Shape::Large {
+            size,
+            page: page.unwrap_or(1).max(1),
+        };
     }
     let side = |n: Option<u32>| n.filter(|n| (1..=MAX_BOX_SIDE).contains(n));
     match (side(width), side(height), fit) {
