@@ -11,7 +11,7 @@ use std::{
 use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
 
 use super::{
-    Device, Embedder, Error, Item, ModelStatus, Outcome, documents,
+    Device, Embedder, Error, Item, ModelStatus, Outcome, PageTexts, documents,
     prepare::{self, Prepared, Unit},
 };
 use crate::{
@@ -220,11 +220,13 @@ enum Event {
         units: usize,
         error: Option<String>,
         words: String,
-        text: bool,
+        texts: usize,
     },
     Text {
         item: usize,
+        locator: u64,
         words: Option<String>,
+        units: usize,
     },
 }
 
@@ -232,11 +234,13 @@ enum Event {
 struct Partial {
     words_only: bool,
     units: Option<usize>,
+    read_units: usize,
     answered: usize,
     texts: Option<usize>,
     texts_read: usize,
     vectors: Vec<Located>,
     words: String,
+    pages: PageTexts,
     failure: Option<String>,
 }
 
@@ -272,29 +276,39 @@ impl Partial {
                 units,
                 error,
                 words,
-                text,
+                texts,
                 ..
             } => {
                 self.units = Some(units);
-                self.texts = Some(usize::from(text));
+                self.texts = Some(texts);
                 self.add_words(&words);
                 if let Some(why) = error {
                     self.failure.get_or_insert(why);
                 }
             }
-            Event::Text { words, .. } => {
+            Event::Text {
+                locator, words, units, ..
+            } => {
                 self.texts_read += 1;
+                self.read_units += units;
                 if let Some(words) = words {
                     self.add_words(&words);
+                    if locator > 0 {
+                        self.pages.push((locator, words));
+                    }
                 }
             }
         }
-        if self.units != Some(self.answered) || self.texts != Some(self.texts_read) {
+        if self.units.map(|units| units + self.read_units) != Some(self.answered) || self.texts != Some(self.texts_read)
+        {
             return None;
         }
+        let mut pages = std::mem::take(&mut self.pages);
+        pages.sort_by_key(|(page, _)| *page);
         if self.words_only {
             return Some(Outcome::Words(
                 Some(std::mem::take(&mut self.words)).filter(|words| !words.is_empty()),
+                pages,
             ));
         }
         let mut vectors = std::mem::take(&mut self.vectors);
@@ -309,6 +323,7 @@ impl Partial {
             Outcome::Vectors(
                 vectors,
                 Some(std::mem::take(&mut self.words)).filter(|words| !words.is_empty()),
+                pages,
             )
         })
     }
@@ -319,6 +334,7 @@ impl<B: Backend> Pipeline<B> {
         &self,
         units: &std::sync::mpsc::Receiver<Unit>,
         batch_size: usize,
+        each: &mut dyn FnMut(&[Record]),
     ) -> Result<(Vec<Record>, Option<String>, usize), Error> {
         let (mut records, mut failure, mut pieces) = (Vec::new(), None, 0);
         while let Ok(first) = units.recv() {
@@ -326,6 +342,7 @@ impl<B: Backend> Pipeline<B> {
             batch.extend(units.try_iter().take(batch_size - 1));
             pieces += batch.len();
             let inputs: Vec<&Prepared> = batch.iter().map(|unit| &unit.input).collect();
+            let before = records.len();
             for output in self.backend.embed_batch(&inputs)? {
                 match output {
                     Ok(numbers) => records.extend(vectors::record_from(&numbers)),
@@ -334,8 +351,62 @@ impl<B: Backend> Pipeline<B> {
                     }
                 }
             }
+            each(&records[before..]);
         }
         Ok((records, failure, pieces))
+    }
+
+    fn example(
+        &self,
+        path: &Path,
+        from: usize,
+        to: usize,
+        most_batch: usize,
+        each: &mut dyn FnMut(&[Record]),
+    ) -> Result<(Vec<Record>, usize), Error> {
+        let _first = self.search_first();
+        let batch_size = self.backend.max_batch().max(1).min(most_batch.max(1));
+        let (send, receive) = std::sync::mpsc::sync_channel::<Unit>(batch_size * 2);
+        let (made, read) = std::thread::scope(|scope| {
+            let reader = scope.spawn(move || {
+                prepare::sample(
+                    &Item {
+                        path: path.to_owned(),
+                        words_only: false,
+                    },
+                    from,
+                    to,
+                    &mut |unit| send.send(unit).is_ok(),
+                )
+            });
+            let made = self.embed_units(&receive, batch_size, each);
+            drop(receive);
+            (
+                made,
+                reader
+                    .join()
+                    .unwrap_or_else(|_| Err("reading it went wrong inside Mesa".into())),
+            )
+        });
+        let (records, failure, pieces) = made?;
+        let named = |why: &str| Error(format!("{} can't be searched with: {why}", super::display_name(path)));
+        let slots = match read {
+            Ok(slots) => slots,
+            Err(why) if pieces == 0 => return Err(named(&why)),
+            Err(_) => from + pieces,
+        };
+        if from > 0 {
+            return Ok((records, slots));
+        }
+        if pieces == 0 {
+            return Err(named("there is nothing in it for the model to read"));
+        }
+        if records.is_empty() {
+            return Err(named(
+                &failure.unwrap_or_else(|| "the model gave no usable vector".into()),
+            ));
+        }
+        Ok((records, slots))
     }
 }
 
@@ -361,9 +432,11 @@ impl<B: Backend> Embedder for Pipeline<B> {
         let queue = backend.max_batch() * in_flight * 2;
         let (ready_in, ready_out) = bounded::<(usize, Unit)>(queue);
         let (event_in, event_out) = unbounded::<Event>();
-        let (text_in, text_out) = bounded::<(usize, Vec<u8>, u32, u32)>(self.preparers);
+        let (text_in, text_out) = bounded::<(usize, u64, Vec<u8>, u32, u32)>(self.preparers);
         let reading = self.ocr.as_deref();
         let preparing = AtomicUsize::new(self.preparers);
+        let readers = reading.map_or(0, |_| self.most_readers());
+        let still_reading = AtomicUsize::new(readers);
 
         thread::scope(|scope| {
             for number in 0..self.preparers {
@@ -386,13 +459,15 @@ impl<B: Backend> Embedder for Pipeline<B> {
                         let Some(file) = items.get(item) else { break };
                         let mut units = 0;
                         let mut words = String::new();
-                        let mut text = false;
-                        let mut read_text = |rgb: Vec<u8>, width: u32, height: u32| {
-                            text = text_in.send((item, rgb, width, height)).is_ok();
+                        let mut texts = 0;
+                        let mut read_text = |locator: u64, rgb: Vec<u8>, width: u32, height: u32| {
+                            if text_in.send((item, locator, rgb, width, height)).is_ok() {
+                                texts += 1;
+                            }
                         };
                         let result = prepare::prepare(
                             file,
-                            reading.map(|_| &mut read_text as &mut dyn FnMut(Vec<u8>, u32, u32)),
+                            reading.map(|_| &mut read_text as &mut dyn FnMut(u64, Vec<u8>, u32, u32)),
                             &mut |unit| {
                                 if cancel.load(Ordering::Relaxed) {
                                     return false;
@@ -417,7 +492,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
                                 units,
                                 error: result.err(),
                                 words,
-                                text,
+                                texts,
                             })
                             .is_err()
                         {
@@ -427,9 +502,9 @@ impl<B: Backend> Embedder for Pipeline<B> {
                     preparing.fetch_sub(1, Ordering::Relaxed);
                 });
             }
-            for number in 0..reading.map_or(0, |_| self.most_readers()) {
-                let (text_out, event_in) = (text_out.clone(), event_in.clone());
-                let (cancel, preparing) = (&cancel, &preparing);
+            for number in 0..readers {
+                let (text_out, event_in, ready_in) = (text_out.clone(), event_in.clone(), ready_in.clone());
+                let (cancel, preparing, still_reading) = (&cancel, &preparing, &still_reading);
                 let ocr = reading.expect("readers are only made with something to read with");
                 scope.spawn(move || {
                     let _leaving = self.parking.waker();
@@ -444,7 +519,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
                             });
                             continue;
                         }
-                        let Ok((item, rgb, width, height)) = text_out.recv() else {
+                        let Ok((item, locator, rgb, width, height)) = text_out.recv() else {
                             break;
                         };
                         let words = ocr.text(ocr::Picture {
@@ -452,20 +527,46 @@ impl<B: Backend> Embedder for Pipeline<B> {
                             width: width as usize,
                             height: height as usize,
                         });
-                        if event_in.send(Event::Text { item, words }).is_err() {
+                        drop(rgb);
+                        let mut units = 0;
+                        if locator > 0
+                            && let (Some(text), Some(file)) = (&words, items.get(item))
+                            && !file.words_only
+                        {
+                            for unit in documents::page_passages(&file.path, locator, text) {
+                                if ready_in.send((item, unit)).is_err() {
+                                    break;
+                                }
+                                units += 1;
+                            }
+                        }
+                        if event_in
+                            .send(Event::Text {
+                                item,
+                                locator,
+                                words,
+                                units,
+                            })
+                            .is_err()
+                        {
                             break;
                         }
                     }
+                    still_reading.fetch_sub(1, Ordering::Relaxed);
                 });
             }
             for number in 0..in_flight {
                 let (ready_out, event_in) = (ready_out.clone(), event_in.clone());
-                let (cancel, failure, preparing) = (&cancel, &failure, &preparing);
+                let (cancel, failure, preparing, still_reading) = (&cancel, &failure, &preparing, &still_reading);
                 scope.spawn(move || {
                     let _leaving = self.parking.waker();
                     while !cancel.load(Ordering::Relaxed) {
                         if number >= self.in_flight() {
-                            let nothing_more = || preparing.load(Ordering::Relaxed) == 0 && ready_out.is_empty();
+                            let nothing_more = || {
+                                preparing.load(Ordering::Relaxed) == 0
+                                    && still_reading.load(Ordering::Relaxed) == 0
+                                    && ready_out.is_empty()
+                            };
                             if nothing_more() {
                                 break;
                             }
@@ -554,51 +655,19 @@ impl<B: Backend> Embedder for Pipeline<B> {
         }
     }
 
-    fn embed_example(&self, path: &Path, max_pieces: usize) -> Result<Vec<Record>, Error> {
-        let _first = self.search_first();
-        let max = max_pieces.max(1);
-        let batch_size = self.backend.max_batch().max(1);
-        let (send, receive) = std::sync::mpsc::sync_channel::<Unit>(batch_size * 2);
-        let (made, read) = std::thread::scope(|scope| {
-            let reader = scope.spawn(move || {
-                let mut sent = 0;
-                prepare::prepare(
-                    &Item {
-                        path: path.to_owned(),
-                        words_only: false,
-                    },
-                    None,
-                    &mut |unit| {
-                        sent += 1;
-                        send.send(unit).is_ok() && sent < max
-                    },
-                    &mut String::new(),
-                )
-            });
-            let made = self.embed_units(&receive, batch_size);
-            drop(receive);
-            (
-                made,
-                reader
-                    .join()
-                    .unwrap_or_else(|_| Err("reading it went wrong inside Mesa".into())),
-            )
-        });
-        let (records, failure, pieces) = made?;
-        let named = |why: &str| Error(format!("{} can't be searched with: {why}", super::display_name(path)));
-        if pieces == 0 {
-            return Err(named(
-                &read
-                    .err()
-                    .unwrap_or_else(|| "there is nothing in it for the model to read".into()),
-            ));
-        }
-        if records.is_empty() {
-            return Err(named(
-                &failure.unwrap_or_else(|| "the model gave no usable vector".into()),
-            ));
-        }
-        Ok(records)
+    fn embed_example(&self, path: &Path, from: usize, to: usize) -> Result<(Vec<Record>, usize), Error> {
+        self.example(path, from, to, usize::MAX, &mut |_| {})
+    }
+
+    fn embed_example_each(
+        &self,
+        path: &Path,
+        from: usize,
+        to: usize,
+        each: &mut dyn FnMut(Vec<Record>),
+    ) -> Result<usize, Error> {
+        self.example(path, from, to, 2, &mut |records| each(records.to_vec()))
+            .map(|(_, slots)| slots)
     }
 
     fn embed_query(&self, text: &str) -> Result<Record, Error> {
@@ -780,7 +849,7 @@ mod tests {
     }
 
     fn vectors_of(outcome: &Option<Outcome>) -> &Vec<Located> {
-        let Some(Outcome::Vectors(vectors, _)) = outcome else {
+        let Some(Outcome::Vectors(vectors, ..)) = outcome else {
             panic!("expected vectors, got {outcome:?}")
         };
         vectors

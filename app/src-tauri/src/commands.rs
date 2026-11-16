@@ -672,6 +672,11 @@ pub fn prepare_example(path: String, index: State<'_, Index>) -> Result<(), Stri
 }
 
 #[tauri::command]
+pub fn example_progress(paths: Vec<String>, index: State<'_, Index>) -> Vec<Option<crate::examples::Progress>> {
+    index.example_progress(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>())
+}
+
+#[tauri::command]
 pub fn folders_among(paths: Vec<String>) -> Vec<bool> {
     paths.iter().map(|path| Path::new(path).is_dir()).collect()
 }

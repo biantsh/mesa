@@ -299,6 +299,7 @@ export const api = {
   setPicking: (picking: boolean) => invoke<void>("set_picking", { picking }),
   foldersAmong: (paths: string[]) => invoke<boolean[]>("folders_among", { paths }),
   prepareExample: (path: string) => invoke<void>("prepare_example", { path }),
+  exampleProgress: (paths: string[]) => invoke<(ExampleProgress | null)[]>("example_progress", { paths }),
   openMain: (screen: "index" | "settings") => invoke<void>("open_main", { screen }),
   setWidgetBox: (left: number, top: number, right: number, bottom: number) => invoke<void>("set_widget_box", { left, top, right, bottom }),
   widgetFillsScreen: () => invoke<boolean>("widget_fills_screen"),
@@ -350,4 +351,10 @@ export function errorText(error: unknown): string {
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+export interface ExampleProgress {
+  made: number;
+  of: number;
+  reading: boolean;
 }

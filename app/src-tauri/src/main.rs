@@ -138,6 +138,10 @@ fn main() {
     }
     main_window::keep_hidden_at_start(startup::starts_without_window());
     let previews = thumbnail::PreviewServer::start();
+    std::thread::spawn(|| {
+        power::below_the_page();
+        document_preview::warm_up();
+    });
     let kept_previews = previews.clone();
     let managed_previews = previews.clone();
 
@@ -280,6 +284,7 @@ fn main() {
             commands::set_picking,
             commands::folders_among,
             commands::prepare_example,
+            commands::example_progress,
             commands::open_main,
             commands::show_main,
             commands::set_widget_box,

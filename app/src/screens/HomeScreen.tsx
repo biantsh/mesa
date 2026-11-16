@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import { ArrowRight, Ban, CircleDashed, Database, Files, Search, Settings, X } from "lucide-react";
-import { api, errorText, type Category, type ModelStatus, type Overview, type SearchHit, type SearchPage } from "../api";
+import { api, errorText, type Category, type ExampleProgress, type ModelStatus, type Overview, type SearchHit, type SearchPage } from "../api";
 import { CATEGORY_LABELS } from "../format";
 import { Button } from "../components/Button";
 import { ContextMenu } from "../components/ContextMenu";
@@ -13,7 +13,7 @@ import { ResultPanel } from "../components/ResultPanel";
 import { prefetchDetails } from "../matchDetails";
 import { cx } from "../cx";
 import { fitQuoted } from "../fitText";
-import { addExamples, countByKind, categoryOfPath, distinctNames, dropHint, dropIcon, shortName } from "../examples";
+import { MAX_EXAMPLES, addExamples, countByKind, categoryOfPath, distinctNames, dropHint, dropIcon, leftOut, limitNotice, shortName } from "../examples";
 import logo from "../logo";
 import { resultMenuGroups, type ResultActions } from "../resultMenu";
 import { DEFAULT_PANEL_COLUMNS, PANEL_COLUMNS, panelBeside, panelLayout, panelRoom, panelWidth, previewHeight, resultColumns } from "../resultWindow";
@@ -98,6 +98,8 @@ interface Props {
   asWidget?: boolean;
   onDismiss?: () => void;
 }
+
+const LIMIT_NOTE_MS = 5000;
 
 const FIELD_ICONS = { search: Search, ...CATEGORY_ICONS, files: Files, refuse: Ban };
 
@@ -185,13 +187,14 @@ function examplesTooltip(names: string[]): string {
 
 interface ExamplesPillProps {
   examples: string[];
+  progress?: number | null;
   fieldFocused: boolean;
   onFocusField: () => void;
   onRemove: (path: string) => void;
   onClear: () => void;
 }
 
-function ExamplesPill({ examples, fieldFocused, onFocusField, onRemove, onClear }: ExamplesPillProps) {
+function ExamplesPill({ examples, progress = null, fieldFocused, onFocusField, onRemove, onClear }: ExamplesPillProps) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const fieldHadFocus = useRef(false);
   const closeMenu = () => {
@@ -206,7 +209,7 @@ function ExamplesPill({ examples, fieldFocused, onFocusField, onRemove, onClear 
       <Token
         className={styles.examples}
         open={menu !== null}
-        label={`Searching with ${examples.length} ${examples.length === 1 ? "file" : "files"}. Press to change.`}
+        label={`Searching with ${examples.length} ${examples.length === 1 ? "file" : "files"}${progress !== null ? ", still reading them" : ""}. Press to change.`}
         tooltip={tooltip}
         onPress={(pill) => {
           if (menu) return closeMenu();
@@ -215,6 +218,7 @@ function ExamplesPill({ examples, fieldFocused, onFocusField, onRemove, onClear 
           setMenu({ x: box.left, y: box.bottom + 6 });
         }}
       >
+        {progress !== null && <FillingRing value={progress} />}
         {kinds.map(({ category, count }) => {
           const Icon = CATEGORY_ICONS[category];
           return (
@@ -250,7 +254,17 @@ function ExamplesPill({ examples, fieldFocused, onFocusField, onRemove, onClear 
   );
 }
 
-function Understanding({ understood, query, examples, fieldFocused, onFocusField, onChooseType, onChooseDate, onRemoveExample, onClearExamples }: { understood: Understood; query: string; examples: string[]; fieldFocused: boolean; onFocusField: () => void; onChooseType: (value: Category | null) => void; onChooseDate: (end: "from" | "to", month: Month | null) => void; onRemoveExample: (path: string) => void; onClearExamples: () => void }) {
+function FillingRing({ value }: { value: number }) {
+  const circumference = 2 * Math.PI * 5;
+  return (
+    <svg className={styles.fillingRing} width={12} height={12} viewBox="0 0 12 12" aria-hidden>
+      <circle cx={6} cy={6} r={5} className={styles.fillingTrack} />
+      <circle cx={6} cy={6} r={5} className={styles.fillingValue} strokeDasharray={circumference} strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, value)))} />
+    </svg>
+  );
+}
+
+function Understanding({ understood, query, examples, examplesProgress, limitNote, fieldFocused, onFocusField, onChooseType, onChooseDate, onRemoveExample, onClearExamples }: { understood: Understood; query: string; examples: string[]; examplesProgress: number | null; limitNote: string | null; fieldFocused: boolean; onFocusField: () => void; onChooseType: (value: Category | null) => void; onChooseDate: (end: "from" | "to", month: Month | null) => void; onRemoveExample: (path: string) => void; onClearExamples: () => void }) {
   const [open, setOpen] = useState<Open | null>(null);
   const close = useCallback(() => setOpen(null), []);
   const press = (what: Open["what"]) => (pill: HTMLElement) => setOpen((now) => (now?.pill === pill ? null : { what, pill }));
@@ -308,7 +322,12 @@ function Understanding({ understood, query, examples, fieldFocused, onFocusField
       </div>
       {examples.length > 0 && (
         <div>
-          <ExamplesPill examples={examples} fieldFocused={fieldFocused} onFocusField={onFocusField} onRemove={onRemoveExample} onClear={onClearExamples} />
+          <ExamplesPill examples={examples} progress={examplesProgress} fieldFocused={fieldFocused} onFocusField={onFocusField} onRemove={onRemoveExample} onClear={onClearExamples} />
+          {limitNote && (
+            <span className={styles.limitNote} role="status">
+              {limitNote}
+            </span>
+          )}
         </div>
       )}
 
@@ -352,18 +371,66 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const [query, setQuery] = useState("");
   const [examples, setExamples] = useState<string[]>([]);
   const [exampleNotice, setExampleNotice] = useState<string | null>(null);
-  const addExample = useCallback((paths: string[]) => {
-    setExamples((now) => addExamples(now, paths));
+  const examplesNow = useRef(examples);
+  examplesNow.current = examples;
+  const [limitNote, setLimitNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!limitNote) return;
+    const timer = setTimeout(() => setLimitNote(null), LIMIT_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [limitNote]);
+  const addExample = useCallback((paths: string[], replace = false) => {
+    const now = replace ? [] : examplesNow.current;
+    const next = addExamples(now, paths);
+    const over = leftOut(now, paths);
+    setExamples(next);
     setExampleNotice(null);
-    for (const path of paths) {
+    setLimitNote(over > 0 ? limitNotice(over) : null);
+    for (const path of next.filter((path) => !now.includes(path))) {
       api.prepareExample(path).catch((error) => {
         setExamples((now) => now.filter((one) => one !== path));
         setExampleNotice(errorText(error));
       });
     }
   }, []);
-  const removeExample = useCallback((path: string) => setExamples((now) => now.filter((one) => one !== path)), []);
-  const clearExamples = useCallback(() => setExamples([]), []);
+  const [examplesProgress, setExamplesProgress] = useState<number | null>(null);
+  const [filledIn, setFilledIn] = useState(0);
+  useEffect(() => {
+    if (examples.length === 0) {
+      setExamplesProgress(null);
+      return;
+    }
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let wasReading = false;
+    const ask = () =>
+      api.exampleProgress(examples).then(
+        (list: (ExampleProgress | null)[]) => {
+          if (!live) return;
+          const reading = list.some((one) => one === null || one.reading);
+          const made = list.reduce((sum, one) => sum + (one?.made ?? 0), 0);
+          const of = list.reduce((sum, one) => sum + (one?.of ?? 0), 0);
+          setExamplesProgress(reading ? (of > 0 ? made / of : 0) : null);
+          if (wasReading && !reading) setFilledIn((n) => n + 1);
+          wasReading = reading;
+          if (reading) timer = setTimeout(ask, 300);
+        },
+        () => {},
+      );
+    void ask();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [examples]);
+  const removeExample = useCallback((path: string) => {
+    setExamples((now) => now.filter((one) => one !== path));
+    setLimitNote(null);
+  }, []);
+  const clearExamples = useCallback(() => {
+    setExamples([]);
+    setLimitNote(null);
+  }, []);
   const dragging = useFileDrop({
     enabled: !blocked && !modelFailed,
     isActive: () => !home.current?.closest("[inert]"),
@@ -371,6 +438,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     onDrop: addExample,
   });
   const dropping = dragging?.files ?? null;
+  const room = MAX_EXAMPLES - examples.length;
   const focusField = useCallback(() => input.current?.focus({ preventScroll: true }), []);
   const [chosen, setChosen] = useState<Chosen>({});
   const understood = useMemo(() => understandChosen(query, new Date(), chosen), [query, chosen]);
@@ -426,7 +494,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       current = false;
       clearTimeout(timer);
     };
-  }, [results, searchable, text, fileType, fromMs, toMs, examples]);
+  }, [results, searchable, text, fileType, fromMs, toMs, examples, filledIn]);
   const batches = found && "batches" in found ? found.batches : NO_BATCHES;
   const hits = useMemo(() => (batches.length === 0 ? NO_HITS : batches.flat()), [batches]);
   const shortcutTip = useShortcutTip({ onScreen: onScreen && !asWidget, worth: hits.length > 0 && !searching, results: hits.length > 0 });
@@ -524,8 +592,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     (paths: string[]) => {
       setQuery("");
       setChosen({});
-      setExamples([]);
-      addExample(paths);
+      addExample(paths, true);
       clearSelection();
     },
     [addExample, clearSelection],
@@ -820,7 +887,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       <div ref={search} className={styles.search}>
         <div
           ref={row}
-          className={cx(styles.row, dropping && (dropping.supported.length > 0 ? styles.dropping : styles.refusing), dragging?.over && styles.hot)}
+          className={cx(styles.row, dropping && (dropping.supported.length > 0 && room > 0 ? styles.dropping : styles.refusing), dragging?.over && styles.hot)}
         >
           <div className={styles.spot} data-widget-spot aria-hidden />
           <div className={styles.halo} aria-hidden />
@@ -838,13 +905,13 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
             onClick={blocked || modelFailed ? (e) => e.preventDefault() : undefined}
           >
             <span className={styles.searchIcon}>
-              <SlidingIcon icons={FIELD_ICONS} current={dropIcon(dropping)} />
+              <SlidingIcon icons={FIELD_ICONS} current={dropIcon(dropping, room)} />
             </span>
             <input
               ref={input}
               className={styles.input}
               type="text"
-              placeholder={placeholder(model, blocked, dropping && dropHint(dropping.supported, dropping.unsupported, dropping.folders))}
+              placeholder={placeholder(model, blocked, dropping && dropHint(dropping.supported, dropping.unsupported, dropping.folders, room))}
               data-tooltip={model?.state === "failed" ? model.reason : undefined}
               aria-label="Search"
               readOnly={blocked}
@@ -863,7 +930,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
                 <X size={18} aria-hidden />
               </button>
             )}
-            {!blocked && !modelFailed && <ExampleButton className={styles.attach} onPick={addExample} hidden={dragging !== null} calmFor={`${focused}|${results}|${engaged}`} />}
+            {!blocked && !modelFailed && (
+              <ExampleButton className={styles.attach} onPick={addExample} hidden={dragging !== null} full={room <= 0} calmFor={`${focused}|${results}|${engaged}`} />
+            )}
           </label>
           <div
             ref={tagsBox}
@@ -874,7 +943,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               if (!blocked && !modelFailed) input.current?.focus();
             }}
           >
-            <Understanding understood={understood} query={query} examples={examples} fieldFocused={focused} onFocusField={focusField} onChooseType={chooseType} onChooseDate={chooseDate} onRemoveExample={removeExample} onClearExamples={clearExamples} />
+            <Understanding understood={understood} query={query} examples={examples} examplesProgress={examplesProgress} limitNote={limitNote} fieldFocused={focused} onFocusField={focusField} onChooseType={chooseType} onChooseDate={chooseDate} onRemoveExample={removeExample} onClearExamples={clearExamples} />
           </div>
           <p className={cx(styles.indexNote, incomplete && dragging === null && styles.shown)} aria-hidden={!incomplete || undefined}>
             <CircleDashed size={12} aria-hidden />

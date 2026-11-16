@@ -1,11 +1,13 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject, type SyntheticEvent } from "react";
 import { Check, Copy, FolderOpen, Link, ListFilter, ScanSearch, Sparkles, TextSearch, type LucideProps } from "lucide-react";
+import { MAX_EXAMPLES } from "../examples";
 import { matchReason, type MatchReason } from "../matchReason";
 import { largePreviewUrl, type MatchDetails, type MatchSnippet, type SearchHit } from "../api";
 import { detailsAsked, detailsFor, detailsNow, wantsDetails as wantsDetailsOf } from "../matchDetails";
 import { cx } from "../cx";
 import { CATEGORY_LABELS, formatModified, formatSize } from "../format";
 import { prefersReducedMotion } from "../motion";
+import { pagingOf, pagingWord, type Paging } from "../paging";
 import { middleCuts } from "../pathCut";
 import type { PanelLayout } from "../resultWindow";
 import { parentOf } from "../paths";
@@ -197,10 +199,14 @@ function breakable(text: string): ReactNode {
   ));
 }
 
-function Snippet({ snippet, onPage, current }: { snippet: MatchSnippet; onPage?: (page: number) => void; current: boolean }) {
+function Snippet({ snippet, paging, onPage, current }: { snippet: MatchSnippet; paging: Paging | null; onPage?: (page: number) => void; current: boolean }) {
   const body = (
     <>
-      {snippet.page !== null && <span className={styles.page}>p. {snippet.page}</span>}
+      {snippet.page !== null && (
+        <span className={styles.page}>
+          {paging === "slide" ? "slide" : "p."} {snippet.page}
+        </span>
+      )}
       <span className={styles.snippetText}>
         {snippet.parts.map((part, i) => (part.hit ? <mark key={i}>{breakable(part.text)}</mark> : <span key={i}>{breakable(part.text)}</span>))}
       </span>
@@ -209,7 +215,7 @@ function Snippet({ snippet, onPage, current }: { snippet: MatchSnippet; onPage?:
   if (snippet.page === null || !onPage) return <div className={styles.snippet}>{body}</div>;
   const page = snippet.page;
   return (
-    <button type="button" className={cx(styles.snippet, styles.pressable, current && styles.current)} onClick={() => onPage(page)} data-tooltip={`Show page ${page}`}>
+    <button type="button" className={cx(styles.snippet, styles.pressable, current && styles.current)} onClick={() => onPage(page)} data-tooltip={`Show ${paging ?? "page"} ${page}`}>
       {body}
     </button>
   );
@@ -333,7 +339,8 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
     return () => watching.disconnect();
   }, []);
   const Icon = CATEGORY_ICONS[hit.category];
-  const pdf = hit.name.toLowerCase().endsWith(".pdf");
+  const paging = pagingOf(hit.name);
+  const paged = paging !== null;
   const wantsDetails = wantsDetailsOf(hit);
   const [details, setDetails] = useState<MatchDetails | null | undefined>(() => (wantsDetails ? detailsNow(hit, query) : undefined));
   useEffect(() => {
@@ -352,8 +359,8 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
 
   const [pressedPage, setPressedPage] = useState<number | null>(null);
   const wordsPage = details?.snippets.find((snippet) => snippet.page !== null)?.page ?? null;
-  const waiting = pdf && hit.reason === "words" && details === undefined;
-  const page = pdf ? (pressedPage ?? wordsPage ?? hit.at ?? 1) : 1;
+  const waiting = paged && hit.reason === "words" && details === undefined;
+  const page = paged ? (pressedPage ?? wordsPage ?? hit.at ?? 1) : 1;
 
   const small = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
   const frame = useRef<HTMLDivElement>(null);
@@ -416,7 +423,11 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
                 onLoad={() => setLargeLoaded(largeSrc)}
               />
             )}
-            {pdf && page > 1 && <span className={styles.pageBadge}>Page {page}</span>}
+            {paging && page > 1 && (
+              <span className={styles.pageBadge}>
+                {pagingWord(paging)} {page}
+              </span>
+            )}
           </div>
         </div>
         {viewing !== null && (
@@ -494,7 +505,7 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
         {hit.reason === "words" && details && details.snippets.length > 0 && (
           <div className={styles.snippets}>
             {details.snippets.map((snippet, i) => (
-              <Snippet key={i} snippet={snippet} current={pdf && snippet.page === page} onPage={pdf ? setPressedPage : undefined} />
+              <Snippet key={i} snippet={snippet} paging={paging} current={paged && snippet.page === page} onPage={paged ? setPressedPage : undefined} />
             ))}
           </div>
         )}
@@ -502,7 +513,12 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
           <>
             <h4 className={styles.subheading}>Closest passage</h4>
             <div className={styles.snippets}>
-              <Snippet snippet={details.closest} current={pdf && details.closest.page === page} onPage={pdf ? setPressedPage : undefined} />
+              <Snippet
+                snippet={details.closest}
+                paging={paging}
+                current={paged && details.closest.page === page}
+                onPage={paged ? setPressedPage : undefined}
+              />
             </div>
           </>
         )}
@@ -605,7 +621,13 @@ function SeveralFiles({ hits, actions, onFindSimilar, onSelectOnly }: { hits: Se
       </p>
 
       <div className={styles.actions}>
-        <Button variant="primary" className={styles.actionButton} onClick={() => onFindSimilar(hits.map((hit) => hit.path))} data-tooltip="Search for files like all of these">
+        <Button
+          variant="primary"
+          className={styles.actionButton}
+          onClick={() => onFindSimilar(hits.map((hit) => hit.path))}
+          disabled={hits.length > MAX_EXAMPLES}
+          data-tooltip={hits.length > MAX_EXAMPLES ? `Up to ${MAX_EXAMPLES} files: select fewer` : "Search for files like all of these"}
+        >
           <ScanSearch size={16} aria-hidden />
           Find similar to these
         </Button>

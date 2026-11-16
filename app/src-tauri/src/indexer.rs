@@ -537,9 +537,13 @@ impl<'a> Walker<'a> {
                     let (folder, file) = places[left[i]];
                     let mut file = folders[folder].files[file].clone();
                     match outcome {
-                        Outcome::Vectors(vectors, words) => (file.vectors, file.words) = (vectors, words),
+                        Outcome::Vectors(vectors, words, pages) => {
+                            (file.vectors, file.words, file.pages) = (vectors, words, pages)
+                        }
                         Outcome::NoVector(_) => file.vectors = Vec::new(),
-                        Outcome::Words(words) => (file.words, file.words_only) = (words, true),
+                        Outcome::Words(words, pages) => {
+                            (file.words, file.pages, file.words_only) = (words, pages, true)
+                        }
                     }
                     if new_files.remove(&items[i].path) {
                         batch.new += 1;
@@ -784,6 +788,7 @@ fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
                 size,
                 vectors: Vec::new(),
                 words: None,
+                pages: Vec::new(),
                 words_only: false,
             }),
             None => unreadable_file = true,
@@ -821,6 +826,7 @@ fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
             size,
             vectors: Vec::new(),
             words: None,
+            pages: Vec::new(),
             words_only: false,
         }],
         complete: false,
@@ -923,6 +929,7 @@ mod tests {
                                 record: vectors::record_from(&[1.0; vectors::DIMS]).unwrap(),
                             }],
                             None,
+                            Vec::new(),
                         )
                     },
                 );

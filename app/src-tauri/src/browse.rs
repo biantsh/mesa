@@ -13,10 +13,23 @@ const COMPUTER_LABEL: &str = "This PC";
 const COMPUTER_LABEL: &str = "Computer";
 
 const INDEXABLE: &[(Category, &[&str])] = &[
-    (Category::Image, &["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic"]),
-    (Category::Video, &["mp4", "mov", "mkv", "avi", "webm"]),
-    (Category::Audio, &["mp3", "wav", "flac", "m4a", "ogg"]),
-    (Category::Document, &["pdf", "txt", "md", "docx"]),
+    (
+        Category::Image,
+        &[
+            "jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif",
+        ],
+    ),
+    (Category::Video, &["mp4", "m4v", "mov", "mkv", "avi", "webm"]),
+    (
+        Category::Audio,
+        &["mp3", "wav", "wave", "flac", "m4a", "m4b", "aac", "aiff", "aif", "ogg"],
+    ),
+    (
+        Category::Document,
+        &[
+            "pdf", "txt", "md", "markdown", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "ppsx", "rtf",
+        ],
+    ),
 ];
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -744,6 +757,9 @@ mod tests {
         assert_eq!(category_of("A.PnG"), Some(Category::Image));
         assert_eq!(category_of("clip.mkv"), Some(Category::Video));
         assert_eq!(category_of("notes.md"), Some(Category::Document));
+        assert_eq!(category_of("Budget.XLSX"), Some(Category::Document));
+        assert_eq!(category_of("scan.tif"), Some(Category::Image));
+        assert_eq!(category_of("book.m4b"), Some(Category::Audio));
         assert_eq!(category_of("archive.zip"), None);
     }
 }

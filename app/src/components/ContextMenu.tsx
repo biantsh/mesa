@@ -36,28 +36,35 @@ export function ContextMenu({ x, y, groups, onClose }: Props) {
     });
   }, [x, y]);
 
+  const close = useRef(onClose);
+  close.current = onClose;
+
   useEffect(() => {
     menu.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
 
+    const onClose = () => close.current();
     const onPointerDown = (e: MouseEvent) => {
       if (!menu.current?.contains(e.target as Node)) onClose();
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+    const onScroll = (e: Event) => {
+      if (!menu.current?.contains(e.target as Node)) onClose();
+    };
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
-    document.addEventListener("scroll", onClose, true);
+    document.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onClose);
     window.addEventListener("blur", onClose);
     return () => {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("scroll", onClose, true);
+      document.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onClose);
       window.removeEventListener("blur", onClose);
     };
-  }, [onClose]);
+  }, []);
 
   const onMenuKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;

@@ -11,17 +11,28 @@ use super::{
 };
 use crate::cgimage;
 
-const FRAME_EVERY: f64 = 5.0;
+const FRAME_EVERY: f64 = 10.0;
 const MAX_FRAMES: usize = 120;
 const LARGEST_FRAME: f64 = 2048.0;
 const TIMESCALE: i32 = 600;
 
 pub fn frames(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
-    objc2::rc::autoreleasepool(|_| read(path, emit))
+    objc2::rc::autoreleasepool(|_| read(path, &frame_times, emit))
+}
+
+pub fn frames_at(path: &Path, fractions: &[f64], emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+    let times = |duration: f64| {
+        if duration.is_finite() && duration > 0.0 {
+            fractions.iter().map(|fraction| fraction * duration).collect()
+        } else {
+            vec![0.0]
+        }
+    };
+    objc2::rc::autoreleasepool(|_| read(path, &times, emit))
 }
 
 #[allow(deprecated)]
-fn read(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+fn read(path: &Path, times: &dyn Fn(f64) -> Vec<f64>, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
     let path = path.to_str().ok_or("the video's name can't be used")?;
     unsafe {
         let url = NSURL::fileURLWithPath(&NSString::from_str(path));
@@ -37,7 +48,7 @@ fn read(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
 
         let mut sent = 0;
         let mut last_error = None;
-        for seconds in frame_times(duration) {
+        for seconds in times(duration) {
             let time = CMTime::with_seconds(seconds, TIMESCALE);
             let image = match generator.copyCGImageAtTime_actualTime_error(time, std::ptr::null_mut()) {
                 Ok(image) => image,
@@ -83,4 +94,17 @@ fn frame_times(duration: f64) -> Vec<f64> {
         .take_while(|&t| t < duration)
         .collect();
     if times.is_empty() { vec![duration / 2.0] } else { times }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_every_ten_seconds() {
+        assert_eq!(frame_times(35.0), [5.0, 15.0, 25.0]);
+        assert_eq!(frame_times(22.0), [5.0, 15.0]);
+        assert_eq!(frame_times(12.0), [5.0]);
+        assert_eq!(frame_times(5.0), [2.5]);
+    }
 }

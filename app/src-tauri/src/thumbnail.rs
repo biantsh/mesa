@@ -338,7 +338,8 @@ impl Caches {
 
 fn make(caches: &Caches, disk: Option<&Disk>, key: &Key, keep_whole: bool) -> Option<Vec<u8>> {
     if let Shape::Large { size, page } = key.2 {
-        let made = (page > 1)
+        let drawn = page > 1 || crate::document_preview::draws_every_page(&key.0);
+        let made = drawn
             .then(|| crate::document_preview::render_page(&key.0, size, page))
             .flatten()
             .or_else(|| render(&key.0, size))?;
@@ -747,9 +748,9 @@ mod freedesktop {
     use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, imageops::FilterType};
 
     const SIZES: &[(&str, u32)] = &[("normal", 128), ("large", 256), ("x-large", 512), ("xx-large", 1024)];
-    const PICTURES: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+    const PICTURES: &[&str] = &["jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff"];
     const HEIF: &[&str] = &["heic", "heif"];
-    const VIDEOS: &[&str] = &["mp4", "mov", "mkv", "avi", "webm"];
+    const VIDEOS: &[&str] = &["mp4", "m4v", "mov", "mkv", "avi", "webm"];
 
     pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
         let file = Path::new(path);

@@ -695,9 +695,11 @@ impl Index {
     }
 
     pub fn prepare_example(&self, path: &Path) -> Result<(), String> {
-        self.examples
-            .vectors(&*self.shared.embedder, path, crate::examples::EAGER_PIECES)
-            .map(|_| ())
+        self.examples.add(&self.shared.embedder, path)
+    }
+
+    pub fn example_progress(&self, paths: &[PathBuf]) -> Vec<Option<crate::examples::Progress>> {
+        self.examples.progress(paths)
     }
 
     fn query_vector(&self, text: &str, files: &[PathBuf]) -> Result<Option<crate::vectors::Record>, String> {
@@ -705,16 +707,18 @@ impl Index {
         if !text.trim().is_empty() {
             parts.push((self.shared.embedder.embed_query(text).map_err(|e| e.to_string())?, 1.0));
         }
-        if files.len() > QUERY_PIECES {
-            return Err(format!("At most {QUERY_PIECES} files can be searched with at once."));
+        let most = crate::examples::MOST_FILES;
+        if files.len() > most {
+            return Err(format!("At most {most} files can be searched with at once."));
         }
+        let kept = files
+            .iter()
+            .map(|file| self.examples.vectors(&self.shared.embedder, file))
+            .collect::<Result<Vec<_>, _>>()?;
+        let shares = crate::examples::shares(&kept.iter().map(|(_, slots)| *slots).collect::<Vec<_>>(), QUERY_PIECES);
         let mut made = Vec::new();
-        let mut left = QUERY_PIECES;
-        for (n, file) in files.iter().enumerate() {
-            let share = (left / (files.len() - n)).max(1);
-            let vectors = self.examples.vectors(&*self.shared.embedder, file, share)?;
-            left = left.saturating_sub(vectors.len());
-            let weighted: Vec<_> = vectors.into_iter().map(|record| (record, 1.0)).collect();
+        for ((vectors, _), share) in kept.into_iter().zip(shares) {
+            let weighted: Vec<_> = vectors.into_iter().take(share).map(|record| (record, 1.0)).collect();
             made.extend(crate::vectors::blend(&weighted).map(|record| (record, 1.0)));
         }
         if let Some(files) = crate::vectors::blend(&made) {
@@ -802,10 +806,13 @@ impl Index {
     }
 
     pub fn match_details(&self, path: &Path, query: &str, at: Option<u64>) -> Result<crate::matches::Details, String> {
-        let text = lock(&self.shared.store).picture_text(path)?;
+        let (text, scanned) = {
+            let store = lock(&self.shared.store);
+            (store.picture_text(path)?, store.page_texts(path)?)
+        };
         Ok(match text {
             Some(text) => crate::matches::of_picture(&text, query),
-            None => crate::matches::of_document(path, query, at).unwrap_or_default(),
+            None => crate::matches::of_document(path, query, at, &scanned).unwrap_or_default(),
         })
     }
 
@@ -1646,6 +1653,7 @@ mod tests {
                 record: crate::vectors::random_record(),
             }],
             words: None,
+            pages: Vec::new(),
             words_only: false,
         };
         let scan = ScannedDir {

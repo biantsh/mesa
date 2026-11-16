@@ -2,7 +2,7 @@ use std::{ops::Range, path::Path};
 
 use serde::Serialize;
 
-use crate::words;
+use crate::{embed::PageTexts, words};
 
 #[derive(Serialize, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -36,14 +36,16 @@ pub fn of_picture(text: &str, query: &str) -> Details {
     }
 }
 
-pub fn of_document(path: &Path, query: &str, at: Option<u64>) -> Result<Details, String> {
+pub fn of_document(path: &Path, query: &str, at: Option<u64>, scanned: &PageTexts) -> Result<Details, String> {
     let terms = words::terms(query);
-    let pdf = path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
-    let page = |locator: u64| pdf.then_some(locator);
+    let paged = path.extension().is_some_and(|extension| {
+        ["pdf", "pptx", "pptm", "ppsx"]
+            .iter()
+            .any(|paged| extension.eq_ignore_ascii_case(paged))
+    });
+    let page = |locator: u64| paged.then_some(locator);
     let (mut all, mut some, mut closest) = (Vec::new(), Vec::new(), None);
-    crate::embed::passages(path, &mut |locator, passage| {
+    let mut look = |locator: u64, passage: &str| {
         if closest.is_none() && at == Some(locator) {
             let (start, cut) = start_of(passage, SNIPPET_CHARS);
             let mut parts = vec![Part {
@@ -70,7 +72,24 @@ pub fn of_document(path: &Path, query: &str, at: Option<u64>) -> Result<Details,
             }
         }
         (!terms.is_empty() && all.len() < MOST_SNIPPETS) || (at.is_some() && closest.is_none())
-    })?;
+    };
+    let mut wanted = true;
+    let read = crate::embed::passages(path, &mut |locator, passage| {
+        wanted = look(locator, passage);
+        wanted
+    });
+    if let Err(why) = read
+        && scanned.is_empty()
+    {
+        return Err(why);
+    }
+    for (page, text) in scanned {
+        if !wanted {
+            break;
+        }
+        wanted = look(*page, text);
+    }
+    drop(look);
     all.extend(some);
     all.truncate(MOST_SNIPPETS);
     Ok(Details { snippets: all, closest })

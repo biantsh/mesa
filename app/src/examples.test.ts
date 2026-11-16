@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_EXAMPLES, addExamples, categoryOfPath, countByKind, distinctNames, dropHint, dropIcon, fileNameOf, shortName } from "./examples";
+import { MAX_EXAMPLES, addExamples, categoryOfPath, countByKind, distinctNames, dropHint, dropIcon, fileNameOf, leftOut, limitNotice, shortName } from "./examples";
 
 describe("distinctNames", () => {
   it("adds the folder only to duplicate names", () => {

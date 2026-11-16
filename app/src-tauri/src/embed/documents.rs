@@ -1,23 +1,56 @@
 use std::{
+    cell::Cell,
     fs::File,
     io::{BufReader, Read},
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
 };
 
-use quick_xml::{Reader, events::Event};
+use quick_xml::{
+    Reader,
+    events::{BytesRef, Event},
+};
 
-use super::prepare::{Prepared, Unit};
+use super::{
+    picture,
+    prepare::{Prepared, ReadText, Unit},
+    scans,
+};
 
-const PASSAGE_CHARS: usize = 1500;
+pub(super) const PASSAGE_CHARS: usize = 1500;
 const MIN_LETTERS: usize = 20;
-const MAX_PASSAGES: usize = 32;
+pub(super) const MAX_PASSAGES: usize = 32;
+pub(super) const WORDS_CHARS: usize = 2_000_000;
 const MAX_PDF_PASSAGES: usize = 120;
-const TEXT_BYTES: u64 = 256 * 1024;
+const MAX_SCANNED_PAGES: usize = 25;
+const TEXT_BYTES: u64 = (WORDS_CHARS * 4) as u64;
 const MAX_DOCX_XML_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PDF_BYTES: u64 = 200 * 1024 * 1024;
 
-type Emit<'a> = &'a mut dyn FnMut(Unit) -> bool;
+pub(super) type Emit<'a> = &'a mut dyn FnMut(Unit) -> bool;
+
+thread_local! {
+    static EVERY_PASSAGE: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(super) fn every_passage<T>(read: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            EVERY_PASSAGE.with(|every| every.set(false));
+        }
+    }
+    EVERY_PASSAGE.with(|every| every.set(true));
+    let _reset = Reset;
+    read()
+}
+
+fn kept(count: usize, most: usize) -> Vec<usize> {
+    if count <= most || EVERY_PASSAGE.with(Cell::get) {
+        return (0..count).collect();
+    }
+    (0..most).map(|n| (2 * n + 1) * count / (2 * most)).collect()
+}
 
 pub fn plain(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
     let mut bytes = Vec::new();
@@ -76,20 +109,7 @@ fn docx_text(xml: &[u8]) -> Result<String, String> {
             Event::Text(content) if in_text => {
                 text.push_str(&content.xml10_content());
             }
-            Event::GeneralRef(reference) if in_text => {
-                if let Ok(Some(c)) = reference.resolve_char_ref() {
-                    text.push(c);
-                } else {
-                    match reference.as_ref() {
-                        "amp" => text.push('&'),
-                        "lt" => text.push('<'),
-                        "gt" => text.push('>'),
-                        "quot" => text.push('"'),
-                        "apos" => text.push('\''),
-                        _ => {}
-                    }
-                }
-            }
+            Event::GeneralRef(reference) if in_text => text.extend(entity(&reference)),
             Event::Eof => break,
             _ => {}
         }
@@ -98,7 +118,21 @@ fn docx_text(xml: &[u8]) -> Result<String, String> {
     Ok(text)
 }
 
-pub fn pdf(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
+pub(super) fn entity(reference: &BytesRef) -> Option<char> {
+    if let Ok(Some(c)) = reference.resolve_char_ref() {
+        return Some(c);
+    }
+    match reference.as_ref() {
+        "amp" => Some('&'),
+        "lt" => Some('<'),
+        "gt" => Some('>'),
+        "quot" => Some('"'),
+        "apos" => Some('\''),
+        _ => None,
+    }
+}
+
+fn open_pdf(path: &Path) -> Result<(pdf_oxide::PdfDocument, usize), String> {
     let mut bytes = Vec::new();
     File::open(path)
         .and_then(|file| file.take(MAX_PDF_BYTES).read_to_end(&mut bytes))
@@ -107,39 +141,165 @@ pub fn pdf(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
         .map_err(|_| "can't read the PDF (its reader gave up on it)".to_owned())?
         .map_err(|e| format!("can't read the PDF: {e}"))?;
     let count = document.page_count().map_err(|e| format!("can't read the PDF: {e}"))?;
+    Ok((document, count))
+}
 
-    let (mut sent, mut readable) = (0, 0);
+fn page_text(document: &pdf_oxide::PdfDocument, page: usize) -> Option<String> {
+    catch_unwind(AssertUnwindSafe(|| document.extract_text(page)))
+        .ok()
+        .and_then(Result::ok)
+        .map(|text| normalise(&text))
+}
+
+pub struct Scans<'a> {
+    pub text: ReadText<'a>,
+    pub words_only: bool,
+}
+
+pub fn pdf(path: &Path, emit: Emit, words: &mut String, mut scans: Option<Scans>) -> Result<(), String> {
+    let (document, count) = open_pdf(path)?;
+
+    let every = EVERY_PASSAGE.with(Cell::get);
+    let (mut readable, mut read, mut streamed, mut found, mut without) = (0, 0, 0, Vec::new(), Vec::new());
     for page in 0..count {
-        let Some(text) = catch_unwind(AssertUnwindSafe(|| document.extract_text(page)))
-            .ok()
-            .and_then(Result::ok)
-        else {
-            continue;
-        };
-        readable += 1;
-        let text = normalise(&text);
-        if !enough_text(&text) {
-            continue;
+        if read >= WORDS_CHARS {
+            break;
         }
-        for passage in passages(&text) {
-            if sent == MAX_PDF_PASSAGES {
+        let text = page_text(&document, page);
+        if text.is_some() {
+            readable += 1;
+        }
+        match text.filter(|text| enough_text(text)) {
+            Some(text) => {
+                for passage in passages(&text) {
+                    read += passage.chars().count();
+                    add_words(words, &passage);
+                    if every {
+                        if !emit(Unit {
+                            locator: page as u64 + 1,
+                            input: Prepared::Text(titled(path, &passage)),
+                        }) {
+                            return Ok(());
+                        }
+                        streamed += 1;
+                        continue;
+                    }
+                    found.push((page, passage));
+                }
+            }
+            None => without.push(page),
+        }
+    }
+    let mut sent = 0;
+    for n in kept(found.len(), MAX_PDF_PASSAGES) {
+        let (page, passage) = &found[n];
+        sent += 1;
+        if !emit(Unit {
+            locator: *page as u64 + 1,
+            input: Prepared::Text(titled(path, passage)),
+        }) {
+            return Ok(());
+        }
+    }
+    let mut scanned = 0;
+    if let Some(scans) = scans.as_mut()
+        && !without.is_empty()
+    {
+        let shares = without.len().min(MAX_SCANNED_PAGES);
+        let mut drawing: Option<Option<scans::Pages>> = None;
+        for share in 0..shares {
+            let Some(pages) = drawing.get_or_insert_with(|| scans::Pages::open(path)).as_ref() else {
+                break;
+            };
+            let (first, until) = (share * without.len() / shares, (share + 1) * without.len() / shares);
+            let Some((page, (rgb, width, height))) = without[first..until]
+                .iter()
+                .find_map(|&page| pages.draw(page).map(|drawn| (page, drawn)))
+            else {
+                continue;
+            };
+            scanned += 1;
+            let locator = page as u64 + 1;
+            let wanted = scans.words_only
+                || match picture::from_rgb(&rgb, width, height) {
+                    Ok(bitmap) => emit(Unit {
+                        locator,
+                        input: Prepared::Image(bitmap),
+                    }),
+                    Err(_) => true,
+                };
+            if !wanted {
                 return Ok(());
             }
-            sent += 1;
-            add_words(words, &passage);
-            if !emit(Unit {
-                locator: page as u64 + 1,
-                input: Prepared::Text(titled(path, &passage)),
-            }) {
-                return Ok(());
+            if let Some(text) = scans.text.as_mut() {
+                text(locator, rgb, width, height);
             }
         }
     }
-    match (sent, readable) {
+    match (streamed + sent + scanned, readable) {
         (0, 0) if count > 0 => Err("can't read the PDF (none of its pages could be read)".into()),
-        (0, _) => Err("the PDF has no text to read (is it a scan?)".into()),
+        (0, _) => Err("the PDF has no text to read, and no page with anything on it".into()),
         _ => Ok(()),
     }
+}
+
+pub fn pdf_pages(
+    path: &Path,
+    pages: &mut dyn FnMut(usize) -> Vec<(usize, usize)>,
+    emit: Emit,
+) -> Result<usize, String> {
+    let (document, count) = open_pdf(path)?;
+    let mut drawing: Option<Option<scans::Pages>> = None;
+    let mut sent = 0;
+    'asked: for (first, until) in pages(count) {
+        for page in first..until.max(first + 1).min(count) {
+            let text = page_text(&document, page);
+            let input = match text
+                .filter(|text| enough_text(text))
+                .and_then(|text| passages(&text).into_iter().next())
+            {
+                Some(passage) => Prepared::Text(titled(path, &passage)),
+                None => {
+                    let Some(pages) = drawing.get_or_insert_with(|| scans::Pages::open(path)).as_ref() else {
+                        continue;
+                    };
+                    let Some((rgb, width, height)) = pages.draw(page) else {
+                        continue;
+                    };
+                    let Ok(bitmap) = picture::from_rgb(&rgb, width, height) else {
+                        continue;
+                    };
+                    Prepared::Image(bitmap)
+                }
+            };
+            sent += 1;
+            if !emit(Unit {
+                locator: page as u64 + 1,
+                input,
+            }) {
+                return Ok(count);
+            }
+            continue 'asked;
+        }
+    }
+    if sent == 0 && count > 0 {
+        return Err("the PDF has no text to read, and no page with anything on it".into());
+    }
+    Ok(count)
+}
+
+pub fn page_passages(path: &Path, page: u64, text: &str) -> Vec<Unit> {
+    let text = normalise(text);
+    if !enough_text(&text) {
+        return Vec::new();
+    }
+    passages(&text)
+        .into_iter()
+        .map(|passage| Unit {
+            locator: page,
+            input: Prepared::Text(titled(path, &passage)),
+        })
+        .collect()
 }
 
 fn add_words(words: &mut String, passage: &str) {
@@ -156,7 +316,7 @@ fn enough_text(text: &str) -> bool {
         .is_some()
 }
 
-fn send_passages(
+pub(super) fn send_passages(
     path: &Path,
     text: &str,
     locator: impl Fn(usize) -> u64,
@@ -171,14 +331,84 @@ fn send_passages(
     if !enough_text(&text) {
         return Err("there is too little text in it to say what it is about".into());
     }
+    let text: String = if text.len() > WORDS_CHARS {
+        text.chars().take(WORDS_CHARS).collect()
+    } else {
+        text
+    };
     let passages = passages(&text);
-    for (n, passage) in passages.into_iter().take(most).enumerate() {
-        add_words(words, &passage);
+    for passage in &passages {
+        add_words(words, passage);
+    }
+    for n in kept(passages.len(), most) {
         if !emit(Unit {
             locator: locator(n),
-            input: Prepared::Text(titled(path, &passage)),
+            input: Prepared::Text(titled(path, &passages[n])),
         }) {
             break;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn send_sections(
+    path: &Path,
+    sections: &[(u64, String)],
+    most: usize,
+    emit: Emit,
+    words: &mut String,
+) -> Result<(), String> {
+    let sections: Vec<(u64, String)> = sections
+        .iter()
+        .map(|(locator, text)| (*locator, normalise(text)))
+        .filter(|(_, text)| !text.is_empty())
+        .collect();
+    if sections.is_empty() {
+        return Err("there is no text in it".into());
+    }
+    if !enough_text(
+        &sections
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    ) {
+        return Err("there is too little text in it to say what it is about".into());
+    }
+    let lines = sections
+        .iter()
+        .flat_map(|(locator, text)| text.lines().map(move |line| (*locator, line)));
+    let passages = located_passages(lines);
+    for (_, passage) in &passages {
+        add_words(words, passage);
+    }
+    for n in kept(passages.len(), most) {
+        let (locator, passage) = &passages[n];
+        if !emit(Unit {
+            locator: *locator,
+            input: Prepared::Text(titled(path, passage)),
+        }) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn send_each_section(
+    path: &Path,
+    sections: &[(u64, String)],
+    emit: Emit,
+    words: &mut String,
+) -> Result<(), String> {
+    for (locator, text) in sections {
+        for passage in passages(&normalise(text)) {
+            add_words(words, &passage);
+            if !emit(Unit {
+                locator: *locator,
+                input: Prepared::Text(titled(path, &passage)),
+            }) {
+                return Ok(());
+            }
         }
     }
     Ok(())
@@ -210,33 +440,42 @@ fn normalise(text: &str) -> String {
 }
 
 fn passages(text: &str) -> Vec<String> {
+    located_passages(text.lines().map(|line| (0, line)))
+        .into_iter()
+        .map(|(_, passage)| passage)
+        .collect()
+}
+
+fn located_passages<'a>(lines: impl IntoIterator<Item = (u64, &'a str)>) -> Vec<(u64, String)> {
     let mut passages = Vec::new();
     let mut current = String::new();
-    let mut length = 0;
-    for line in text.lines() {
+    let (mut length, mut at) = (0, 0);
+    for (locator, line) in lines {
         let mut rest = line;
         loop {
             let line_length = rest.chars().count();
             if length > 0 && length + 1 + line_length > PASSAGE_CHARS {
-                passages.push(std::mem::take(&mut current));
+                passages.push((at, std::mem::take(&mut current)));
                 length = 0;
             }
             if line_length <= PASSAGE_CHARS {
                 if length > 0 {
                     current.push('\n');
                     length += 1;
+                } else {
+                    at = locator;
                 }
                 current.push_str(rest);
                 length += line_length;
                 break;
             }
             let cut = cut_point(rest);
-            passages.push(rest[..cut].trim_end().to_owned());
+            passages.push((locator, rest[..cut].trim_end().to_owned()));
             rest = rest[cut..].trim_start();
         }
     }
     if !current.is_empty() {
-        passages.push(current);
+        passages.push((at, current));
     }
     passages
 }

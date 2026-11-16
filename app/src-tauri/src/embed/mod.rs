@@ -2,6 +2,8 @@ mod audio;
 #[cfg(target_os = "macos")]
 mod avfoundation;
 mod documents;
+#[cfg(test)]
+pub(crate) mod fixtures;
 #[cfg(target_os = "linux")]
 pub mod gstreamer;
 #[cfg(target_os = "linux")]
@@ -10,6 +12,7 @@ pub mod heif;
 mod imageio;
 mod llama;
 mod model;
+mod office;
 mod picture;
 mod pipeline;
 mod prepare;
@@ -17,6 +20,8 @@ mod prime;
 #[cfg(windows)]
 mod process_group;
 mod resample;
+mod rtf;
+mod scans;
 pub mod standin;
 #[cfg(windows)]
 mod video;
@@ -35,7 +40,7 @@ use crate::vectors::{Located, Record};
 pub use llama::Locations;
 pub use model::{ModelState, ModelStatus};
 pub use pipeline::{GENTLE_SLOWDOWN, Pipeline};
-pub use prepare::passages;
+pub use prepare::{MOST_PIECES, passages};
 
 pub const MODEL_NAME: &str = "google/embeddinggemma-2, Q8_0, llama.cpp, 140 image tokens, 256 dimensions; pictures, video frames, 30 s of sound, passages of text";
 pub const IMAGE_TOKENS: u32 = 140;
@@ -61,10 +66,12 @@ fn display_name(path: &Path) -> String {
 
 #[derive(Debug, PartialEq)]
 pub enum Outcome {
-    Vectors(Vec<Located>, Option<String>),
+    Vectors(Vec<Located>, Option<String>, PageTexts),
     NoVector(String),
-    Words(Option<String>),
+    Words(Option<String>, PageTexts),
 }
+
+pub type PageTexts = Vec<(u64, String)>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
@@ -89,7 +96,7 @@ pub trait Embedder: Send + Sync {
         Err(Error("Searching isn't available.".into()))
     }
 
-    fn embed_example(&self, path: &Path, max_pieces: usize) -> Result<Vec<Record>, Error> {
+    fn embed_example(&self, path: &Path, from: usize, to: usize) -> Result<(Vec<Record>, usize), Error> {
         let mut outcome = None;
         self.embed(
             &[Item {
@@ -100,16 +107,27 @@ pub trait Embedder: Send + Sync {
             &mut |_, made| outcome = Some(made),
         )?;
         match outcome {
-            Some(Outcome::Vectors(vectors, _)) => Ok(vectors
-                .into_iter()
-                .take(max_pieces)
-                .map(|located| located.record)
-                .collect()),
+            Some(Outcome::Vectors(vectors, ..)) => {
+                let (picked, slots) = prepare::chosen(vectors.len(), from, to);
+                Ok((picked.into_iter().map(|index| vectors[index].record).collect(), slots))
+            }
             Some(Outcome::NoVector(why)) => Err(Error(format!("{} can't be searched with: {why}", display_name(path)))),
-            Some(Outcome::Words(_)) | None => {
+            Some(Outcome::Words(..)) | None => {
                 Err(Error(format!("the model gave no answer for {}", display_name(path))))
             }
         }
+    }
+
+    fn embed_example_each(
+        &self,
+        path: &Path,
+        from: usize,
+        to: usize,
+        each: &mut dyn FnMut(Vec<Record>),
+    ) -> Result<usize, Error> {
+        let (records, slots) = self.embed_example(path, from, to)?;
+        each(records);
+        Ok(slots)
     }
 
     fn warm_up(&self) {}
@@ -192,6 +210,7 @@ pub mod testing {
                             record: crate::vectors::random_record(),
                         }],
                         None,
+                        Vec::new(),
                     ),
                 );
             }

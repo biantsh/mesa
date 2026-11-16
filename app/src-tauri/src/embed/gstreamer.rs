@@ -10,7 +10,7 @@ use super::{
     prepare::{Prepared, Unit},
 };
 
-const FRAME_EVERY: f64 = 5.0;
+const FRAME_EVERY: f64 = 10.0;
 const MAX_FRAMES: usize = 120;
 const STEP_TIMEOUT: gst::ClockTime = gst::ClockTime::from_seconds(15);
 
@@ -25,10 +25,25 @@ fn started() -> Result<(), String> {
 }
 
 pub fn frames(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+    read(path, &frame_times, emit)
+}
+
+pub fn frames_at(path: &Path, fractions: &[f64], emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+    let times = |duration: f64| {
+        if duration.is_finite() && duration > 0.0 {
+            fractions.iter().map(|fraction| fraction * duration).collect()
+        } else {
+            vec![0.0]
+        }
+    };
+    read(path, &times, emit)
+}
+
+fn read(path: &Path, times: &dyn Fn(f64) -> Vec<f64>, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
     let video = Video::open(path)?;
     let mut sent = 0;
     let mut last_error = None;
-    for seconds in frame_times(video.duration) {
+    for seconds in times(video.duration) {
         let (rgb, width, height) = match video.frame_at(seconds) {
             Ok(frame) => frame,
             Err(why) => {
@@ -177,4 +192,17 @@ fn frame_times(duration: f64) -> Vec<f64> {
         .take_while(|&t| t < duration)
         .collect();
     if times.is_empty() { vec![duration / 2.0] } else { times }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_every_ten_seconds() {
+        assert_eq!(frame_times(35.0), [5.0, 15.0, 25.0]);
+        assert_eq!(frame_times(22.0), [5.0, 15.0]);
+        assert_eq!(frame_times(12.0), [5.0]);
+        assert_eq!(frame_times(5.0), [2.5]);
+    }
 }

@@ -20,16 +20,31 @@ use super::{
     prepare::{Prepared, Unit},
 };
 
-const FRAME_EVERY: f64 = 5.0;
+const FRAME_EVERY: f64 = 10.0;
 const MAX_FRAMES: usize = 120;
 const MOST_SKIPPED: usize = 600;
 
 const HUNDRED_NANOSECONDS: f64 = 10_000_000.0;
 
 pub fn frames(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+    with_com(|| read(path, &frame_times, emit))
+}
+
+pub fn frames_at(path: &Path, fractions: &[f64], emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+    let times = |duration: f64| {
+        if duration > 0.0 {
+            fractions.iter().map(|fraction| fraction * duration).collect()
+        } else {
+            vec![0.0]
+        }
+    };
+    with_com(|| read(path, &times, emit))
+}
+
+fn with_com(read: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
     unsafe {
         let com = CoInitializeEx(None, COINIT_MULTITHREADED);
-        let result = read(path, emit);
+        let result = read();
         if com.is_ok() {
             CoUninitialize();
         }
@@ -46,7 +61,7 @@ fn startup() -> Result<(), String> {
         .clone()
 }
 
-unsafe fn read(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
+fn read(path: &Path, times: &dyn Fn(f64) -> Vec<f64>, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), String> {
     startup()?;
     unsafe {
         let mut attributes: Option<IMFAttributes> = None;
@@ -82,7 +97,7 @@ unsafe fn read(path: &Path, emit: &mut dyn FnMut(Unit) -> bool) -> Result<(), St
         let duration = duration_of(&reader);
 
         let mut sent = 0;
-        for seconds in frame_times(duration) {
+        for seconds in times(duration) {
             let Some(frame) = frame_at(&reader, stream, seconds)? else {
                 continue;
             };
@@ -243,6 +258,14 @@ fn upright(frame: Frame, rotation: u32) -> (Vec<u8>, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frames_every_ten_seconds() {
+        assert_eq!(frame_times(35.0), [5.0, 15.0, 25.0]);
+        assert_eq!(frame_times(22.0), [5.0, 15.0]);
+        assert_eq!(frame_times(12.0), [5.0]);
+        assert_eq!(frame_times(5.0), [2.5]);
+    }
 
     fn frame(stride: isize) -> Frame {
         let rows = [[[255, 0, 0, 0], [0, 255, 0, 0]], [[0, 0, 255, 0], [255, 255, 255, 0]]];

@@ -5,7 +5,7 @@ import { TitleBar } from "./components/TitleBar";
 import { cx } from "./cx";
 import { MAIN_HIDDEN, MAIN_SHOWN } from "./events";
 import { isMac } from "./platform";
-import { skipGivingBackTo } from "./lastInput";
+import { lastWasPointer, skipGivingBackTo } from "./lastInput";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { IndexPage } from "./screens/IndexPage";
 import { api, type ModelStatus } from "./api";
@@ -74,8 +74,12 @@ export default function App() {
     setScreen("home");
   }, []);
   const beforeSettings = useRef<Element | null>(null);
+  const settingsByPointer = useRef(false);
   const changeSettingsOpen = useCallback((open: boolean) => {
-    if (open) beforeSettings.current = document.activeElement;
+    if (open) {
+      beforeSettings.current = document.activeElement;
+      settingsByPointer.current = lastWasPointer();
+    }
     setSettingsOpen(open);
   }, []);
   const openSettings = useCallback(() => changeSettingsOpen(true), [changeSettingsOpen]);
@@ -85,7 +89,7 @@ export default function App() {
     if (settingsOpen || !back) return;
     beforeSettings.current = null;
     const at = document.activeElement;
-    if (skipGivingBackTo(back)) return;
+    if (skipGivingBackTo(back, settingsByPointer.current)) return;
     if (back instanceof HTMLElement && back.isConnected && (!at || at === document.body || at.closest("dialog"))) {
       back.focus({ preventScroll: true });
     }

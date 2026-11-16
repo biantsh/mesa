@@ -769,10 +769,10 @@ function typeWords(fileType: Category, generic: string, descriptive = ""): [stri
 }
 
 const TYPE_WORDS = new Map<string, TypeWord>([
-  ...typeWords("image", "photo photos photograph photographs pic pics picture pictures image images img imgs jpg jpgs jpeg jpegs png pngs webp bmp heic heif", "screenshot screenshots screencap screencaps selfie selfies meme memes wallpaper wallpapers gif gifs"),
-  ...typeWords("video", "video videos vid vids mp4 mp4s mov mkv avi webm", "movie movies footage vlog vlogs"),
-  ...typeWords("audio", "audio mp3 mp3s wav flac m4a ogg", "song songs music podcast podcasts audiobook audiobooks"),
-  ...typeWords("document", "document documents doc docs docx pdf pdfs txt", "resume resumes résumé résumés cv essay essays thesis dissertation ebook ebooks e-book e-books manuscript manuscripts"),
+  ...typeWords("image", "photo photos photograph photographs pic pics picture pictures image images img imgs jpg jpgs jpeg jpegs jfif png pngs webp bmp tif tiff heic heif", "screenshot screenshots screencap screencaps selfie selfies meme memes wallpaper wallpapers gif gifs"),
+  ...typeWords("video", "video videos vid vids mp4 mp4s m4v mov mkv avi webm", "movie movies footage vlog vlogs"),
+  ...typeWords("audio", "audio mp3 mp3s wav flac m4a m4b aac aiff ogg", "song songs music podcast podcasts audiobook audiobooks"),
+  ...typeWords("document", "document documents doc docs docx pdf pdfs txt rtf xlsx pptx", "resume resumes résumé résumés cv essay essays thesis dissertation ebook ebooks e-book e-books manuscript manuscripts spreadsheet spreadsheets"),
 ]);
 
 const TYPE_PHRASES: [string, TypeWord][] = [

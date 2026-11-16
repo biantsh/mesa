@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "r
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { api, largePreviewUrl, mediaUrl, type SearchHit } from "../api";
 import { cx } from "../cx";
+import { pageFromText, pagingOf, pagingWord } from "../paging";
 import { prefersReducedMotion } from "../motion";
 import { usePixelRatio } from "../usePreview";
 import { Button } from "./Button";
@@ -29,7 +30,8 @@ interface Props {
 }
 
 export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: Props) {
-  const pdf = hit.name.toLowerCase().endsWith(".pdf");
+  const paging = pagingOf(hit.name);
+  const paged = paging !== null;
   const video = hit.category === "video";
   const frame = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
@@ -41,13 +43,13 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
   const [page, setPage] = useState(firstPage);
   const [pages, setPages] = useState<number | null>(null);
   useEffect(() => {
-    if (!pdf) return;
+    if (!paged) return;
     let live = true;
     api.pageCount(hit.path).then((count) => live && setPages(count), () => {});
     return () => {
       live = false;
     };
-  }, [pdf, hit.path]);
+  }, [paged, hit.path]);
   const turn = (by: number) => setPage((at) => Math.max(1, Math.min(pages ?? at + by, at + by)));
   const src = largePreviewUrl(hit.path, size, page);
   const [shown, setShown] = useState<string | null>(from.src);
@@ -149,9 +151,10 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
   const turnBy = useRef(turn);
   turnBy.current = turn;
   useEffect(() => {
-    if (!pdf) return;
+    if (!paged) return;
     const onKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.ctrlKey || e.altKey || e.metaKey || e.defaultPrevented) return;
+      if (e.target instanceof HTMLInputElement) return;
       const by = e.key === "ArrowLeft" || e.key === "PageUp" ? -1 : e.key === "ArrowRight" || e.key === "PageDown" ? 1 : 0;
       if (!by) return;
       e.preventDefault();
@@ -159,7 +162,7 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [pdf]);
+  }, [paged]);
   const onClick = (e: MouseEvent) => {
     if (!(e.target as Element).closest("[data-viewer-keep]")) leave();
   };
@@ -193,13 +196,16 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
           <span className={styles.name} data-tooltip={hit.name}>
             {hit.name}
           </span>
-          {pdf && (
+          {paging && (
             <div className={styles.pages}>
-              <IconButton label="Previous page" onClick={() => turn(-1)} disabled={page <= 1}>
+              <IconButton label={`Previous ${paging}`} onClick={() => turn(-1)} disabled={page <= 1}>
                 <ChevronLeft size={18} aria-hidden />
               </IconButton>
-              <span className={styles.pageLabel}>{pages !== null ? `Page ${page} of ${pages}` : `Page ${page}`}</span>
-              <IconButton label="Next page" onClick={() => turn(1)} disabled={pages !== null && page >= pages}>
+              <span className={styles.pageLabel}>
+                {pagingWord(paging)} <PageField page={page} pages={pages} label={`${pagingWord(paging)} to show`} onGo={setPage} />
+                {pages !== null && ` of ${pages}`}
+              </span>
+              <IconButton label={`Next ${paging}`} onClick={() => turn(1)} disabled={pages !== null && page >= pages}>
                 <ChevronRight size={18} aria-hidden />
               </IconButton>
             </div>
@@ -219,4 +225,39 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
 function towards(from: DOMRect, to: DOMRect): string {
   if (to.width === 0 || to.height === 0) return "none";
   return `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`;
+}
+
+function PageField({ page, pages, label, onGo }: { page: number; pages: number | null; label: string; onGo: (page: number) => void }) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const invalid = typed !== null && typed !== "" && pageFromText(typed, pages) === null;
+  const go = () => {
+    if (typed === null) return;
+    const to = pageFromText(typed, pages);
+    if (to !== null) onGo(to);
+    setTyped(null);
+  };
+  return (
+    <input
+      className={cx(styles.pageField, invalid && styles.invalid)}
+      style={{ width: `calc(${String(pages ?? page).length}ch + 14px)` }}
+      value={typed ?? String(page)}
+      inputMode="numeric"
+      aria-label={label}
+      aria-invalid={invalid}
+      onFocus={(e) => e.currentTarget.select()}
+      onChange={(e) => setTyped(e.currentTarget.value.replace(/\D/g, ""))}
+      onBlur={go}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          go();
+          e.currentTarget.blur();
+        } else if (e.key === "Escape" && typed !== null) {
+          e.preventDefault();
+          e.stopPropagation();
+          setTyped(null);
+        }
+      }}
+    />
+  );
 }

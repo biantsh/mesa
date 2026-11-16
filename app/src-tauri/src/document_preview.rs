@@ -7,7 +7,7 @@ use std::{
 use image::{ImageFormat, imageops::FilterType};
 
 const MAX_THUMBNAIL_BYTES: u64 = 8 * 1024 * 1024;
-const DOCX_THUMBNAILS: [&str; 3] = [
+const SAVED_THUMBNAILS: [&str; 3] = [
     "docProps/thumbnail.jpeg",
     "docProps/thumbnail.jpg",
     "docProps/thumbnail.png",
@@ -31,13 +31,20 @@ fn extension_of(path: &str) -> Option<String> {
 pub fn render_before_system(path: &str, size: u32) -> Option<Vec<u8>> {
     match extension_of(path)?.as_str() {
         "pdf" => pdf::first_page(path, size),
+        "docx" | "docm" => docx_page::first_page(path, size),
+        "pptx" | "pptm" | "ppsx" => slides::first(path, size),
+        "xlsx" | "xlsm" => workbook_page::first_page(path, size),
         _ => None,
     }
 }
 
+pub fn warm_up() {
+    let _ = slides::convert(&slides::tiny(), None);
+}
+
 pub fn render_after_system(path: &str, size: u32) -> Option<Vec<u8>> {
     match extension_of(path)?.as_str() {
-        "docx" => docx_thumbnail(Path::new(path), size).or_else(|| docx_page::first_page(path, size)),
+        "docx" | "docm" | "xlsx" | "xlsm" | "pptx" | "pptm" | "ppsx" => saved_thumbnail(Path::new(path), size),
         #[cfg(windows)]
         "pdf" => windows_pdf::first_page(path, size),
         _ => None,
@@ -47,23 +54,30 @@ pub fn render_after_system(path: &str, size: u32) -> Option<Vec<u8>> {
 pub fn page_count(path: &str) -> Option<usize> {
     match extension_of(path)?.as_str() {
         "pdf" => pdf::page_count(path),
+        "pptx" | "pptm" | "ppsx" => slides::count(path),
         _ => None,
     }
 }
 
 pub fn render_page(path: &str, size: u32, page: u32) -> Option<Vec<u8>> {
+    let index = page.checked_sub(1)? as usize;
     match extension_of(path)?.as_str() {
-        "pdf" => pdf::page(path, size, page.checked_sub(1)? as usize),
+        "pdf" => pdf::page(path, size, index),
+        "pptx" | "pptm" | "ppsx" => slides::page(path, size, index),
         _ => None,
     }
 }
 
-fn docx_thumbnail(path: &Path, size: u32) -> Option<Vec<u8>> {
+pub fn draws_every_page(path: &str) -> bool {
+    extension_of(path).is_some_and(|extension| matches!(extension.as_str(), "pptx" | "pptm" | "ppsx"))
+}
+
+fn saved_thumbnail(path: &Path, size: u32) -> Option<Vec<u8>> {
     let mut archive = zip::ZipArchive::new(BufReader::new(File::open(path).ok()?)).ok()?;
     let index = (0..archive.len()).find(|&i| {
         archive.by_index_raw(i).is_ok_and(|file| {
             file.name()
-                .is_ok_and(|name| DOCX_THUMBNAILS.iter().any(|known| known.eq_ignore_ascii_case(&name)))
+                .is_ok_and(|name| SAVED_THUMBNAILS.iter().any(|known| known.eq_ignore_ascii_case(&name)))
         })
     })?;
     let mut bytes = Vec::new();
@@ -92,7 +106,10 @@ mod pdf {
     };
 
     use hayro::{
-        PixmapSettings, RenderCache, RenderSettings, hayro_interpret::InterpreterSettings, hayro_syntax::Pdf, render,
+        PixmapSettings, RenderCache, RenderSettings,
+        hayro_interpret::InterpreterSettings,
+        hayro_syntax::{Pdf, PdfData},
+        render,
         vello_cpu::color::palette::css::WHITE,
     };
 
@@ -121,7 +138,24 @@ mod pdf {
         draw_page(data, size, 0)
     }
 
-    fn draw_page(data: Vec<u8>, size: u32, index: usize) -> Option<Vec<u8>> {
+    pub(super) fn page_bytes(data: impl Into<PdfData>, size: u32, index: usize) -> Option<Vec<u8>> {
+        let _slot = slots().take();
+        draw_held(data, size, index)
+    }
+
+    pub(super) fn draw_held(data: impl Into<PdfData>, size: u32, index: usize) -> Option<Vec<u8>> {
+        catch_unwind(AssertUnwindSafe(|| draw_page(data, size, index)))
+            .ok()
+            .flatten()
+    }
+
+    pub(super) fn count_bytes(data: impl Into<PdfData>) -> Option<usize> {
+        catch_unwind(AssertUnwindSafe(|| Pdf::new(data).ok().map(|pdf| pdf.pages().len())))
+            .ok()
+            .flatten()
+    }
+
+    fn draw_page(data: impl Into<PdfData>, size: u32, index: usize) -> Option<Vec<u8>> {
         let pdf = Pdf::new(data).ok()?;
         let page = pdf.pages().get(index)?;
         let (width, height) = page.render_dimensions();
@@ -179,6 +213,239 @@ mod pdf {
             *self.0.free.lock().unwrap_or_else(PoisonError::into_inner) += 1;
             self.0.freed.notify_one();
         }
+    }
+}
+
+mod slides {
+    use std::{
+        fs,
+        io::{Cursor, Write},
+        panic::{AssertUnwindSafe, catch_unwind},
+        sync::{Arc, Mutex, PoisonError},
+        time::SystemTime,
+    };
+
+    use office2pdf::config::{ConvertOptions, Format, SlideRange};
+
+    const MAX_BYTES: u64 = 100 * 1024 * 1024;
+    const KEPT: usize = 4;
+    type Key = (String, u64, Option<SystemTime>);
+    type Made = Vec<(Key, Option<Arc<Vec<u8>>>)>;
+
+    static MADE: Mutex<Made> = Mutex::new(Vec::new());
+    static MAKING: Mutex<()> = Mutex::new(());
+
+    pub fn count(path: &str) -> Option<usize> {
+        super::pdf::count_bytes(pdf_of(path)?)
+    }
+
+    pub fn page(path: &str, size: u32, index: usize) -> Option<Vec<u8>> {
+        super::pdf::page_bytes(pdf_of(path)?, size, index)
+    }
+
+    pub fn first(path: &str, size: u32) -> Option<Vec<u8>> {
+        if let Some(Some(pdf)) = key_of(path).and_then(|key| made(&key)) {
+            return super::pdf::page_bytes(pdf, size, 0);
+        }
+        let data = super::read_whole(path, MAX_BYTES)?;
+        let _slot = super::pdf::slots().take();
+        super::pdf::draw_held(convert(&data, Some(SlideRange::new(1, 1)))?, size, 0)
+    }
+
+    fn key_of(path: &str) -> Option<Key> {
+        let metadata = fs::metadata(path).ok()?;
+        Some((path.to_owned(), metadata.len(), metadata.modified().ok()))
+    }
+
+    fn pdf_of(path: &str) -> Option<Arc<Vec<u8>>> {
+        let key = key_of(path)?;
+        if let Some(made) = made(&key) {
+            return made;
+        }
+        let _making = MAKING.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(made) = made(&key) {
+            return made;
+        }
+        let pdf = super::read_whole(path, MAX_BYTES)
+            .and_then(|data| {
+                let _slot = super::pdf::slots().take();
+                convert(&data, None)
+            })
+            .map(Arc::new);
+        let mut kept = MADE.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.retain(|(other, _)| other.0 != key.0);
+        kept.insert(0, (key, pdf.clone()));
+        kept.truncate(KEPT);
+        pdf
+    }
+
+    fn made(key: &Key) -> Option<Option<Arc<Vec<u8>>>> {
+        let kept = MADE.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.iter().find(|(other, _)| other == key).map(|(_, pdf)| pdf.clone())
+    }
+
+    pub(super) fn convert(data: &[u8], slides: Option<SlideRange>) -> Option<Vec<u8>> {
+        let options = ConvertOptions {
+            include_hidden_slides: true,
+            slide_range: slides,
+            ..ConvertOptions::default()
+        };
+        catch_unwind(AssertUnwindSafe(|| {
+            office2pdf::convert_bytes(data, Format::Pptx, &options)
+        }))
+        .ok()?
+        .ok()
+        .map(|result| result.pdf)
+    }
+
+    pub(super) fn tiny() -> Vec<u8> {
+        const RELATIONSHIPS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        let relationships = |id: &str, kind: &str, target: &str| {
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="{id}" Type="{RELATIONSHIPS}/{kind}" Target="{target}"/></Relationships>"#
+            )
+        };
+        let namespaces = format!(
+            r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="{RELATIONSHIPS}""#
+        );
+        let parts = [
+            ("[Content_Types].xml", "<Types/>".to_owned()),
+            (
+                "_rels/.rels",
+                relationships("rId1", "officeDocument", "ppt/presentation.xml"),
+            ),
+            (
+                "ppt/presentation.xml",
+                format!(
+                    r#"<p:presentation {namespaces}><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>"#
+                ),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                relationships("rId1", "slide", "slides/slide1.xml"),
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                format!(
+                    r#"<p:sld {namespaces}><p:cSld><p:spTree><p:sp><p:txBody><a:bodyPr/><a:p><a:r><a:t>Mesa</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#
+                ),
+            ),
+        ];
+        let mut out = Cursor::new(Vec::new());
+        {
+            let mut zip = zip::ZipWriter::new(&mut out);
+            for (name, contents) in parts {
+                let _ = zip
+                    .start_file(name, zip::write::SimpleFileOptions::default())
+                    .and_then(|()| Ok(zip.write_all(contents.as_bytes())?));
+            }
+            let _ = zip.finish();
+        }
+        out.into_inner()
+    }
+}
+
+mod workbook_page {
+    use std::{
+        io::{Cursor, Read, Write},
+        panic::{AssertUnwindSafe, catch_unwind},
+    };
+
+    use office2pdf::config::{ConvertOptions, Format};
+    use quick_xml::{Reader, events::Event};
+
+    const MAX_BYTES: u64 = 64 * 1024 * 1024;
+    const MAX_SHEET_BYTES: u64 = 512 * 1024 * 1024;
+    pub(super) const ROWS: usize = 100;
+
+    pub fn first_page(path: &str, size: u32) -> Option<Vec<u8>> {
+        let bytes = super::read_whole(path, MAX_BYTES)?;
+        let _slot = super::pdf::slots().take();
+        catch_unwind(AssertUnwindSafe(|| draw(&bytes, size))).ok().flatten()
+    }
+
+    fn draw(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
+        let cut = cut_down(bytes)?;
+        let pdf = office2pdf::convert_bytes(&cut, Format::Xlsx, &ConvertOptions::default())
+            .ok()?
+            .pdf;
+        super::pdf::draw_held(pdf, size, 0)
+    }
+
+    pub(super) fn cut_down(bytes: &[u8]) -> Option<Vec<u8>> {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+        let mut out = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(&mut out);
+        for i in 0..archive.len() {
+            let name: String = {
+                let file = archive.by_index_raw(i).ok()?;
+                file.name().ok()?.to_string()
+            };
+            let sheet = name.starts_with("xl/worksheets/") && name.ends_with(".xml");
+            let cut = if sheet {
+                let mut xml = Vec::new();
+                archive
+                    .by_index(i)
+                    .ok()?
+                    .take(MAX_SHEET_BYTES)
+                    .read_to_end(&mut xml)
+                    .ok()?;
+                first_rows(&xml)
+            } else {
+                None
+            };
+            match cut {
+                Some(xml) => {
+                    writer
+                        .start_file(&*name, zip::write::SimpleFileOptions::default())
+                        .ok()?;
+                    writer.write_all(&xml).ok()?;
+                }
+                None => writer.raw_copy_file(archive.by_index_raw(i).ok()?).ok()?,
+            }
+        }
+        writer.finish().ok()?;
+        Some(out.into_inner())
+    }
+
+    pub(super) fn first_rows(xml: &[u8]) -> Option<Vec<u8>> {
+        let xml = xml.strip_prefix(b"\xEF\xBB\xBF".as_slice()).unwrap_or(xml);
+        let mut reader = Reader::from_reader(xml);
+        let mut rows = 0;
+        loop {
+            let before = reader.buffer_position() as usize;
+            match reader.read_event().ok()? {
+                Event::Start(tag) | Event::Empty(tag) if tag.local_name().as_ref() == "row" => {
+                    if rows == ROWS {
+                        let end = before + rows_end(&xml[before..])?;
+                        let mut cut = xml[..before].to_vec();
+                        cut.extend_from_slice(&xml[end..]);
+                        return Some(cut);
+                    }
+                    rows += 1;
+                }
+                Event::Eof => return None,
+                _ => {}
+            }
+        }
+    }
+
+    fn rows_end(xml: &[u8]) -> Option<usize> {
+        const NAME: &[u8] = b"sheetData>";
+        let mut until = xml.len();
+        while let Some(at) = xml[..until].windows(NAME.len()).rposition(|window| window == NAME) {
+            let open = xml[..at].iter().rposition(|&byte| byte == b'<')?;
+            let between = &xml[open + 1..at];
+            if between.first() == Some(&b'/')
+                && between[1..]
+                    .iter()
+                    .all(|&byte| byte.is_ascii_alphanumeric() || byte == b':')
+            {
+                return Some(open);
+            }
+            until = at;
+        }
+        None
     }
 }
 

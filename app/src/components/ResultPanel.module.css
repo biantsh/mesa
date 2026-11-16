@@ -486,11 +486,6 @@
 .wideLayout .single > .file {
   display: flex;
   flex-direction: column;
-  min-height: calc(var(--resting-height) - 38px);
-}
-
-.wideLayout .file > .factsSection {
-  margin-top: auto;
 }
 
 .wideLayout .single > .info {

@@ -624,6 +624,33 @@
   gap: 8px;
 }
 
+.limitNote {
+  margin-left: 8px;
+  color: var(--color-danger-ink);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.fillingRing {
+  flex: none;
+  transform: rotate(-90deg);
+}
+
+.fillingTrack,
+.fillingValue {
+  fill: none;
+  stroke-width: 2;
+}
+
+.fillingTrack {
+  stroke: var(--color-border);
+}
+
+.fillingValue {
+  stroke: var(--color-primary);
+  transition: stroke-dashoffset 250ms ease;
+}
+
 .exampleKind {
   display: inline-flex;
   align-items: center;

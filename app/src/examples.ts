@@ -1,13 +1,13 @@
 import type { Category } from "./api";
 
 export const EXAMPLE_KINDS: { category: Category; label: string; extensions: string[] }[] = [
-  { category: "image", label: "Images", extensions: ["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic"] },
-  { category: "video", label: "Videos", extensions: ["mp4", "mov", "mkv", "avi", "webm"] },
-  { category: "audio", label: "Audio", extensions: ["mp3", "wav", "flac", "m4a", "ogg"] },
-  { category: "document", label: "Documents", extensions: ["pdf", "txt", "md", "docx"] },
+  { category: "image", label: "Images", extensions: ["jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif"] },
+  { category: "video", label: "Videos", extensions: ["mp4", "m4v", "mov", "mkv", "avi", "webm"] },
+  { category: "audio", label: "Audio", extensions: ["mp3", "wav", "wave", "flac", "m4a", "m4b", "aac", "aiff", "aif", "ogg"] },
+  { category: "document", label: "Documents", extensions: ["pdf", "txt", "md", "markdown", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "ppsx", "rtf"] },
 ];
 
-export const MAX_EXAMPLES = 64;
+export const MAX_EXAMPLES = 16;
 
 export const fileNameOf = (path: string) => path.split(/[\\/]/).pop() || path;
 
@@ -47,9 +47,19 @@ export function addExamples(current: string[], picked: string[]): string[] {
   return [...new Set([...current, ...picked])].slice(0, MAX_EXAMPLES);
 }
 
-export function dropHint(supported: string[], unsupported: string[] = [], folders: string[] = []): string | null {
+export function leftOut(current: string[], picked: string[]): number {
+  const fresh = new Set(picked.filter((path) => !current.includes(path)));
+  return Math.max(0, current.length + fresh.size - MAX_EXAMPLES);
+}
+
+export function limitNotice(left: number): string {
+  return `${left} left out (${MAX_EXAMPLES} at most)`;
+}
+
+export function dropHint(supported: string[], unsupported: string[] = [], folders: string[] = [], room = MAX_EXAMPLES): string | null {
   const kinds = countByKind(supported);
   const total = kinds.reduce((sum, kind) => sum + kind.count, 0);
+  if (total > 0 && room <= 0) return `Only ${MAX_EXAMPLES} files can be searched with at once`;
   if (total === 0) {
     if (unsupported.length === 0 && folders.length === 0) return null;
     if (unsupported.length === 0) return folders.length === 1 ? "Can't search with a folder" : "Can't search with folders";
@@ -60,12 +70,17 @@ export function dropHint(supported: string[], unsupported: string[] = [], folder
   }
   const hint = kinds.length > 1 ? "Drop to search with your files" : `Drop to search with your ${kinds[0].category}${total > 1 ? "s" : ""}`;
   const skipped = unsupported.length + folders.length;
+  const over = Math.max(0, total - room);
+  if (over > 0) return `${hint} (${over} over the limit of ${MAX_EXAMPLES})`;
   return skipped > 0 ? `${hint} (${skipped} skipped)` : hint;
 }
 
-export function dropIcon(dragged: { supported: string[]; unsupported: string[]; folders?: string[] } | null): Category | "files" | "refuse" | "search" {
+export function dropIcon(
+  dragged: { supported: string[]; unsupported: string[]; folders?: string[] } | null,
+  room = MAX_EXAMPLES,
+): Category | "files" | "refuse" | "search" {
   if (!dragged || dragged.supported.length + dragged.unsupported.length + (dragged.folders?.length ?? 0) === 0) return "search";
   const kinds = countByKind(dragged.supported);
-  if (kinds.length === 0) return "refuse";
+  if (kinds.length === 0 || room <= 0) return "refuse";
   return kinds.length > 1 ? "files" : kinds[0].category;
 }

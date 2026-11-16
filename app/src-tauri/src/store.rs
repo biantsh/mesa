@@ -15,7 +15,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params, params_from_i
 
 use crate::{
     browse::{Categories, Category},
-    embed,
+    embed::{self, PageTexts},
     relevance::{self, Ranked},
     vectors::{DIMS, Located, Record, VectorFile, similarity, to_floats},
     words,
@@ -33,6 +33,8 @@ const MIGRATIONS: &[&str] = &[
     ADD_FILE_COUNT,
     ADD_WORDS,
     REDO_TINY_DOCUMENTS,
+    ADD_PAGE_TEXTS,
+    REDO_SOUND_VIDEO_AND_DOCUMENTS,
 ];
 
 const WORDS_ID: u32 = 2;
@@ -115,6 +117,17 @@ END;
 ";
 
 const REDO_TINY_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category = 3 AND size < 1024;";
+const REDO_SOUND_VIDEO_AND_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category IN (1, 2, 3);";
+const ADD_PAGE_TEXTS: &str = "
+CREATE TABLE page_texts (
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    page    INTEGER NOT NULL,
+    text    TEXT NOT NULL,
+    PRIMARY KEY (file_id, page)
+) WITHOUT ROWID;
+UPDATE files SET embedded_with = 0
+WHERE category = 3 AND lower(name) LIKE '%.pdf' AND NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.file_id = files.id);
+";
 
 #[derive(Debug)]
 pub enum Error {
@@ -159,6 +172,7 @@ pub struct ScannedFile {
     pub size: u64,
     pub vectors: Vec<Located>,
     pub words: Option<String>,
+    pub pages: PageTexts,
     pub words_only: bool,
 }
 
@@ -456,7 +470,8 @@ impl Store {
                     if let Some(old) = old
                         && vectors_current(old, file)
                     {
-                        write_words(&tx, old.id, file.category, file.words.as_deref(), reading)?;
+                        write_words(&tx, old.id, file.category, &file.name, file.words.as_deref(), reading)?;
+                        write_page_texts(&tx, old.id, &file.pages)?;
                     }
                     continue;
                 }
@@ -477,7 +492,8 @@ impl Store {
                     .execute(params![CONFIG_ID, slot as i64, file_id, vector.locator as i64])?;
                     writes.push((slot, vector.record));
                 }
-                write_words(&tx, file_id, file.category, file.words.as_deref(), reading)?;
+                write_words(&tx, file_id, file.category, &file.name, file.words.as_deref(), reading)?;
+                write_page_texts(&tx, file_id, &file.pages)?;
             }
 
             if scan.complete {
@@ -551,15 +567,19 @@ impl Store {
     }
 
     pub fn has_stale_files(&self) -> Result<bool> {
-        let pictures = if (self.reading_pictures)() {
-            category_code(Category::Image)
-        } else {
-            -1
-        };
+        let reading = (self.reading_pictures)();
+        let pictures = if reading { category_code(Category::Image) } else { -1 };
         Ok(self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM files WHERE embedded_with != ?1)
-                 OR EXISTS (SELECT 1 FROM files WHERE read_with != ?2 AND category IN (?3, ?4))",
-            params![CONFIG_ID, WORDS_ID, pictures, category_code(Category::Document)],
+                 OR EXISTS (SELECT 1 FROM files WHERE read_with != ?2
+                            AND (category = ?3 OR (category = ?4 AND (?5 OR lower(name) NOT LIKE '%.pdf'))))",
+            params![
+                CONFIG_ID,
+                WORDS_ID,
+                pictures,
+                category_code(Category::Document),
+                reading
+            ],
             |r| r.get(0),
         )?)
     }
@@ -1009,6 +1029,22 @@ impl Store {
             .optional()?
             .flatten())
     }
+
+    pub fn page_texts(&self, path: &Path) -> Result<PageTexts> {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return Ok(Vec::new());
+        };
+        let Some(dir) = find_dir(&self.conn, parent)? else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self.conn.prepare_cached(
+            "SELECT p.page, p.text FROM files f JOIN page_texts p ON p.file_id = f.id WHERE f.dir_id = ?1 AND f.name = ?2 ORDER BY p.page",
+        )?;
+        let rows = statement.query_map(params![dir, name.to_string_lossy()], |r| {
+            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, String>(1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
 }
 
 fn push_filter(filter: Filter, sql: &mut String, values: &mut Vec<Value>) {
@@ -1342,7 +1378,7 @@ struct StoredFile {
 }
 
 fn is_current(stored: &StoredFile, file: &ScannedFile, reading_pictures: bool) -> bool {
-    vectors_current(stored, file) && words_current(stored, reading_pictures)
+    vectors_current(stored, file) && words_current(stored, &file.name, reading_pictures)
 }
 
 fn vectors_current(stored: &StoredFile, file: &ScannedFile) -> bool {
@@ -1351,10 +1387,19 @@ fn vectors_current(stored: &StoredFile, file: &ScannedFile) -> bool {
         && stored.embedded_with == i64::from(CONFIG_ID)
 }
 
-fn words_current(stored: &StoredFile, reading_pictures: bool) -> bool {
+fn words_current(stored: &StoredFile, name: &str, reading_pictures: bool) -> bool {
     stored.read_with == i64::from(WORDS_ID)
         || !has_words(stored.category)
-        || (!reading_pictures && stored.category == category_code(Category::Image))
+        || (!reading_pictures && waits_for_reading(stored.category, name))
+}
+
+fn waits_for_reading(category: i64, name: &str) -> bool {
+    category == category_code(Category::Image) || (category == category_code(Category::Document) && is_pdf(name))
+}
+
+fn is_pdf(name: &str) -> bool {
+    name.rsplit_once('.')
+        .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("pdf"))
 }
 
 fn has_words(category: i64) -> bool {
@@ -1438,6 +1483,7 @@ fn write_words(
     tx: &Transaction,
     id: i64,
     category: Category,
+    name: &str,
     words: Option<&str>,
     reading_pictures: bool,
 ) -> Result<()> {
@@ -1450,10 +1496,15 @@ fn write_words(
             .execute([id])?;
         return Ok(());
     }
+    let made_with = if !reading_pictures && waits_for_reading(category_code(category), name) {
+        0
+    } else {
+        WORDS_ID
+    };
     let folded = words.map(words::fold).filter(|folded| !folded.is_empty());
     let Some(folded) = folded.filter(|_| matches!(category, Category::Image | Category::Document)) else {
         tx.prepare_cached("UPDATE files SET read_with = ?2 WHERE id = ?1")?
-            .execute(params![id, WORDS_ID])?;
+            .execute(params![id, made_with])?;
         return Ok(());
     };
     if category == Category::Image {
@@ -1464,7 +1515,17 @@ fn write_words(
             .execute(params![id, folded])?;
     }
     tx.prepare_cached("UPDATE files SET read_with = ?2 WHERE id = ?1")?
-        .execute(params![id, WORDS_ID])?;
+        .execute(params![id, made_with])?;
+    Ok(())
+}
+
+fn write_page_texts(tx: &Transaction, id: i64, pages: &PageTexts) -> Result<()> {
+    tx.prepare_cached("DELETE FROM page_texts WHERE file_id = ?1")?
+        .execute([id])?;
+    for (page, text) in pages {
+        tx.prepare_cached("INSERT OR REPLACE INTO page_texts (file_id, page, text) VALUES (?1, ?2, ?3)")?
+            .execute(params![id, *page as i64, text])?;
+    }
     Ok(())
 }
 
@@ -1513,6 +1574,7 @@ mod tests {
                 record: vectors::random_record(),
             }],
             words: None,
+            pages: Vec::new(),
             words_only: false,
         }
     }
