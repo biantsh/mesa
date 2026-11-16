@@ -298,6 +298,10 @@ impl ProgressState {
         !self.jobs.is_empty()
     }
 
+    pub fn has_asked_for(&self) -> bool {
+        self.jobs.iter().any(|job| !job.quiet)
+    }
+
     fn position_of(&self, ticket: u64) -> Option<usize> {
         self.jobs.binary_search_by_key(&ticket, |job| job.ticket).ok()
     }

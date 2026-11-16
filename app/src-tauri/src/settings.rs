@@ -21,6 +21,8 @@ pub struct Settings {
     #[serde(skip_serializing)]
     pub indexed_types: Option<Vec<Category>>,
     pub search_hotkey: Option<String>,
+    pub always_full_speed: bool,
+    pub start_at_sign_in: bool,
 }
 
 impl Default for Settings {
@@ -29,6 +31,8 @@ impl Default for Settings {
             gpu_acceleration: true,
             indexed_types: None,
             search_hotkey: None,
+            always_full_speed: false,
+            start_at_sign_in: true,
         }
     }
 }

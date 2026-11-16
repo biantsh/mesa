@@ -1,22 +1,26 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { emit } from "@tauri-apps/api/event";
 
 export type Theme = "light" | "dark";
+export type ThemeChoice = Theme | "system";
 
 const KEY = "mesa.theme";
 export const THEME_EVENT = "theme-changed";
 
-export function chosenTheme(): Theme | null {
+const SYSTEM_DARK = "(prefers-color-scheme: dark)";
+
+export function themeChoice(): ThemeChoice {
   try {
     const kept = localStorage.getItem(KEY);
-    return kept === "light" || kept === "dark" ? kept : null;
+    return kept === "light" || kept === "dark" ? kept : "system";
   } catch {
-    return null;
+    return "system";
   }
 }
 
-export function currentTheme(): Theme {
-  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+export function themeOf(choice: ThemeChoice): Theme {
+  if (choice !== "system") return choice;
+  return typeof matchMedia !== "undefined" && matchMedia(SYSTEM_DARK).matches ? "dark" : "light";
 }
 
 const FADE_MS = 300;
@@ -32,20 +36,34 @@ export function followTheme(theme: Theme) {
   settling = window.setTimeout(() => delete root.dataset.themeChanging, SETTLED_MS);
 }
 
-function apply(theme: Theme) {
+function apply(choice: ThemeChoice) {
+  const theme = themeOf(choice);
   followTheme(theme);
   try {
-    localStorage.setItem(KEY, theme);
+    if (choice === "system") localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, choice);
   } catch {
   }
   void emit(THEME_EVENT, theme).catch(() => {});
 }
 
-export function useTheme(): [Theme, (theme: Theme) => void] {
-  const [theme, setTheme] = useState<Theme>(currentTheme);
-  const change = useCallback((next: Theme) => {
+export function useTheme(): [ThemeChoice, (choice: ThemeChoice) => void] {
+  const [choice, setChoice] = useState<ThemeChoice>(themeChoice);
+  const change = useCallback((next: ThemeChoice) => {
     apply(next);
-    setTheme(next);
+    setChoice(next);
   }, []);
-  return [theme, change];
+  return [choice, change];
+}
+
+export function useFollowSystemTheme() {
+  useEffect(() => {
+    if (typeof matchMedia === "undefined") return;
+    const system = matchMedia(SYSTEM_DARK);
+    const follow = () => {
+      if (themeChoice() === "system") followTheme(themeOf("system"));
+    };
+    system.addEventListener("change", follow);
+    return () => system.removeEventListener("change", follow);
+  }, []);
 }

@@ -6,7 +6,10 @@ import { isWebKit, platform } from "../platform";
 import type { HotkeyParts } from "../api";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useSearchHotkey } from "../useSearchHotkey";
-import { useTheme } from "../theme";
+import { useTheme, type ThemeChoice } from "../theme";
+import { api, type Settings } from "../api";
+import { useSwitchSetting } from "../useSwitchSetting";
+import { Segmented, type Segment } from "./Segmented";
 import { IconButton } from "./IconButton";
 import { Keycaps } from "./Keycaps";
 import { Modal } from "./Modal";
@@ -22,6 +25,8 @@ interface Props {
 export function SettingsDialog({ open, onClose }: Props) {
   const titleId = useId();
   const gpu = useGpuAcceleration();
+  const fullSpeed = useSwitchSetting(readFullSpeed, writeFullSpeed);
+  const signIn = useSwitchSetting(readSignIn, writeSignIn);
   const hotkey = useSearchHotkey(open);
   const close = () => {
     if (!hotkey.isRecording()) onClose();
@@ -39,14 +44,24 @@ export function SettingsDialog({ open, onClose }: Props) {
             </IconButton>
           </header>
           <div className={styles.body}>
-            <Group title="Appearance">
+            <Group title="General">
               <ThemeRow />
+              <SwitchRow
+                title="Start when you sign in"
+                description="Keep your index up to date in the background."
+                {...signIn}
+              />
             </Group>
             <Group title="Shortcuts">
               <HotkeyRow {...hotkey} />
             </Group>
             <Group title="Indexing">
               <GpuRow {...gpu} />
+              <SwitchRow
+                title="Indexing starts at full speed"
+                description="Faster, but uses more resources while indexing."
+                {...fullSpeed}
+              />
             </Group>
           </div>
         </div>
@@ -91,14 +106,44 @@ function Row({ title, description, note, control, disabled }: RowProps) {
   );
 }
 
+const THEMES: Segment<ThemeChoice>[] = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+];
+
 function ThemeRow() {
   const [theme, setTheme] = useTheme();
   return (
     <Row
-      title="Dark theme"
-      description="Light text on a dark background."
-      control={(ids) => <Switch checked={theme === "dark"} onChange={(dark) => setTheme(dark ? "dark" : "light")} {...ids} />}
+      title="Theme"
+      description="“System” matches your computer."
+      control={(ids) => <Segmented segments={THEMES} value={theme} onChange={setTheme} {...ids} />}
     />
+  );
+}
+
+const readFullSpeed = (settings: Settings) => settings.alwaysFullSpeed;
+const writeFullSpeed = (enabled: boolean) => api.setAlwaysFullSpeed(enabled);
+const readSignIn = (settings: Settings) => settings.startAtSignIn;
+const writeSignIn = (enabled: boolean) => api.setStartAtSignIn(enabled);
+
+function SwitchRow({ title, description, enabled, pending, error, change }: { title: string; description: string } & ReturnType<typeof useSwitchSetting>) {
+  return (
+    <>
+      <Row
+        title={title}
+        description={description}
+        control={(ids) =>
+          enabled === null ? (
+            <span className={styles.switchSpace} aria-hidden />
+          ) : (
+            <Switch checked={pending ?? enabled} disabled={pending !== null} onChange={change} {...ids} />
+          )
+        }
+      />
+      <SettingError error={error} />
+    </>
   );
 }
 

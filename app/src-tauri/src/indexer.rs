@@ -42,8 +42,13 @@ pub fn work(shared: &Shared) {
             continue;
         }
         if !shared.is_busy() {
-            shared.set_turbo(false);
-            power::follow(true);
+            let asked =
+                shared.asked_checks.load(std::sync::atomic::Ordering::SeqCst) && !lock(&shared.quiet).is_empty();
+            if !asked {
+                shared.asked_checks.store(false, std::sync::atomic::Ordering::SeqCst);
+                shared.set_turbo(false);
+                power::follow(true);
+            }
         }
         let next = lock(&shared.quiet).next();
         if let Some(path) = next {
@@ -991,6 +996,8 @@ mod tests {
             control: Control::with_turbo(false, true),
             quiet: Default::default(),
             embedder: embedder.clone(),
+            always_full_speed: Default::default(),
+            asked_checks: Default::default(),
         });
         let ticket = {
             let mut progress = lock(&shared.progress);

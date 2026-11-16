@@ -65,21 +65,22 @@
 }
 
 .dangerOutline {
-  border-color: var(--color-danger-ink);
+  border-color: var(--color-danger-border);
   background: transparent;
   color: var(--color-danger-ink);
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
 }
 
 .dangerOutline:hover:not(:disabled) {
-  border-color: var(--color-danger);
-  background: var(--color-danger);
-  color: var(--color-on-danger);
+  border-color: var(--color-danger-ink);
+  background: var(--color-danger-bg);
 }
 
 .dangerOutline:active:not(:disabled) {
-  border-color: var(--color-danger-active);
-  background: var(--color-danger-active);
-  color: var(--color-on-danger);
+  border-color: var(--color-danger-ink);
+  background: var(--color-danger-border);
 }
 
 .button:disabled {

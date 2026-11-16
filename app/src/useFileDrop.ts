@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api } from "./api";
 import { categoryOfPath } from "./examples";
+import { isWebKit } from "./platform";
 import { useLatest } from "./useLatest";
 
 interface Options {
@@ -39,8 +40,9 @@ export function useFileDrop({ enabled, isActive, targets, onDrop }: Options): Dr
     let last = { x: 0, y: 0 };
 
     const inside = (position: { x: number; y: number }) => {
-      const x = position.x / window.devicePixelRatio;
-      const y = position.y / window.devicePixelRatio;
+      const scale = isWebKit ? 1 : window.devicePixelRatio;
+      const x = position.x / scale;
+      const y = position.y / scale;
       return latest.current.targets().some((target) => {
         const box = target?.getBoundingClientRect();
         return !!box && x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;

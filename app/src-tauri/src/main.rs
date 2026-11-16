@@ -205,6 +205,7 @@ fn main() {
             embedder.warm_up();
             let index = index::Index::open_with(&dir, embedder, false, settings.get().indexed_before())
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
+            index.set_always_full_speed(settings.get().always_full_speed);
             let access = folder_access::FolderAccess::open(&dir, app.path().home_dir().ok().as_deref());
             access.indexing(index.indexed_roots().iter().map(std::path::PathBuf::as_path));
             app.manage(access);
@@ -215,7 +216,7 @@ fn main() {
             app.manage(shown_folder::ShownFolder::default());
             app.manage(shown_listing::ShownListing::default());
             surface::start(app.handle().clone(), dir.clone());
-            if let Err(e) = startup::register(app.handle()) {
+            if let Err(e) = startup::follow_setting(app.handle(), settings.get().start_at_sign_in) {
                 eprintln!("Mesa: {e}");
             }
             let search_key = hotkey::Hotkey::new(app.handle(), settings.get().search_hotkey.as_deref());
@@ -279,6 +280,8 @@ fn main() {
             commands::model_status,
             commands::retry_model_setup,
             commands::set_gpu_acceleration,
+            commands::set_always_full_speed,
+            commands::set_start_at_sign_in,
             commands::page_painted,
             commands::reveal_main,
             commands::hide_widget,

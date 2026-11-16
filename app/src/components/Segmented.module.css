@@ -1,0 +1,63 @@
+.group {
+  --corner: calc(var(--radius-sm) + 2px);
+  --slide: 220ms cubic-bezier(0.3, 0.7, 0.4, 1);
+  flex: none;
+  position: relative;
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--corner);
+  background: var(--color-surface);
+}
+
+.thumb {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--corner);
+  background: var(--color-surface-raised);
+}
+
+.sliding .thumb {
+  transition:
+    transform var(--slide),
+    width var(--slide);
+}
+
+.segment {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sliding .segment {
+  transition: color var(--slide);
+}
+
+.segment:hover:not(.chosen) {
+  color: var(--color-text);
+}
+
+.chosen {
+  color: var(--color-text);
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sliding .thumb,
+  .sliding .segment {
+    transition: none;
+  }
+}

@@ -41,6 +41,27 @@ pub fn register(app: &AppHandle) -> Result<(), String> {
     }
 }
 
+pub fn unregister(app: &AppHandle) -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::unregister(&app.package_info().name)
+            .map_err(|e| format!("Couldn't stop Mesa starting when you sign in. {e}"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        app.autolaunch()
+            .disable()
+            .map_err(|e| format!("Couldn't stop Mesa starting when you sign in. {e}"))
+    }
+}
+
+pub fn follow_setting(app: &AppHandle, on: bool) -> Result<(), String> {
+    if on { register(app) } else { unregister(app) }
+}
+
 #[cfg(any(target_os = "linux", test))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 mod linux {
@@ -71,6 +92,16 @@ mod linux {
         let partial = folder.join(format!(".{name}.desktop.partial"));
         fs::write(&partial, entry)?;
         fs::rename(&partial, &file)
+    }
+
+    pub fn unregister(name: &str) -> io::Result<()> {
+        let folder = crate::xdg::base_dir("XDG_CONFIG_HOME", ".config")
+            .ok_or_else(|| io::Error::other("there is no home folder"))?
+            .join("autostart");
+        match fs::remove_file(folder.join(format!("{name}.desktop"))) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
     }
 
     pub fn entry(name: &str, command: &[&str]) -> Option<String> {

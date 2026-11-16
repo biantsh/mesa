@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowUpRight, DatabaseZap, FolderPlus, FolderSearch, Info, Lock, Search } from "lucide-react";
+import { ArrowUpRight, DatabaseZap, FolderPlus, FolderSearch, Info, Lock, Search, Trash2 } from "lucide-react";
 import { api, errorText, type Category, type Estimate, type Overview, type Survey } from "../api";
 import { describeTotal, estimateSeconds, formatEstimateRange, joinNames } from "../fileSurvey";
 import { Button } from "../components/Button";
@@ -10,6 +10,8 @@ import { TypeTiles } from "../components/TypeTiles";
 import { DEFAULT_TYPES, TYPE_ORDER, describeTypes, hasNewTypes, typesToIndex } from "../indexTypes";
 import { HINT_DELAY_MS, hasShownBackgroundHint, markBackgroundHintShown } from "../backgroundHint";
 import { SWITCH_NAME } from "../indexView";
+import { MAIN_HIDDEN } from "../events";
+import { useTauriEvent } from "../useTauriEvent";
 import { changeWithTransition } from "../viewTransition";
 import { useIndexedTypes } from "../useIndexedTypes";
 import { cx } from "../cx";
@@ -156,6 +158,24 @@ export function SimpleIndexScreen({
     }
   };
 
+  const [removeAsked, setRemoveAsked] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  useTauriEvent(MAIN_HIDDEN, () => setRemoveAsked(false));
+  const removeIndex = async () => {
+    setRemoveAsked(false);
+    setRemoving(true);
+    setError(null);
+    try {
+      const { indexed: roots } = await api.indexLists();
+      await api.removeFromIndex(roots.map((root) => root.path));
+      await refresh();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const toggle = (type: Category) =>
     setPicked((now) => (now.includes(type) ? now.filter((t) => t !== type) : [...now, type]));
 
@@ -264,7 +284,7 @@ export function SimpleIndexScreen({
                   <h2 className={styles.cardTitle}>Your files are indexed</h2>
                   <p className={styles.cardText}>{everyType ? "Every type is indexed." : "Add more types:"}</p>
                   <TypeTiles checked={checked} locked={indexedTypes} disabled={starting} onToggle={toggle} />
-                  <div className={styles.actions}>
+                  <div className={cx(styles.actions, styles.buttonPair)}>
                     <Button
                       variant="primary"
                       onClick={start}
@@ -273,6 +293,10 @@ export function SimpleIndexScreen({
                     >
                       <DatabaseZap size={16} aria-hidden />
                       {starting ? "Starting…" : "Index these too"}
+                    </Button>
+                    <Button variant="dangerOutline" onClick={() => setRemoveAsked(true)} disabled={starting || removing}>
+                      <Trash2 size={16} aria-hidden />
+                      {removing ? "Removing…" : "Remove index"}
                     </Button>
                   </div>
                 </>
@@ -338,6 +362,21 @@ export function SimpleIndexScreen({
       >
         <p>This will stop indexing and remove what has been indexed so&nbsp;far. Your files themselves are not touched.</p>
       </ConfirmDialog>
+
+      <ConfirmDialog
+        open={removeAsked}
+        title="Remove the index?"
+        confirmLabel="Remove index"
+        danger
+        onCancel={() => setRemoveAsked(false)}
+        onConfirm={removeIndex}
+      >
+        <p>
+          This will remove all {fileCount.format(overview?.files ?? 0)} {overview?.files === 1 ? "file" : "files"} from the index. Your files
+          themselves are not touched.
+        </p>
+        <p>The types you chose and the items you excluded are kept, for if you index again later.</p>
+      </ConfirmDialog>
     </div>
   );
 }
@@ -346,6 +385,7 @@ function isCounted(survey: Survey | "counting" | "failed" | null): survey is Sur
   return typeof survey === "object" && survey !== null;
 }
 
+const fileCount = new Intl.NumberFormat();
 const ESTIMATE_POLL_MS = 1000;
 
 const COUNTING_TOTAL: Total = {

@@ -228,6 +228,10 @@
   white-space: nowrap;
 }
 
+.buttonPair {
+  gap: 10px;
+}
+
 .total {
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;

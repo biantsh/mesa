@@ -20,6 +20,7 @@ use crate::{
     settings::{Settings, SettingsStore},
     shown_folder::{self, ShownFolder},
     shown_listing::{self, ShownListing},
+    startup,
     store::{Filter, Hit},
     survey::{self, Survey},
     thumbnail::{FolderPreviews, PreviewServer},
@@ -568,7 +569,7 @@ pub fn set_indexed_types(types: Vec<Category>, index: State<'_, Index>) -> Resul
     let empty = index.is_empty();
     index.set_indexed_types(chosen)?;
     if !empty && !before.includes(chosen) {
-        index.check_for_changes();
+        index.check_for_added_types();
     }
     Ok(chosen.to_vec())
 }
@@ -614,6 +615,35 @@ pub fn set_gpu_acceleration(
         ..settings.get()
     };
     apply_setting(&settings, after, |s| index.set_device(s.device()))
+}
+
+#[tauri::command]
+pub fn set_always_full_speed(
+    enabled: bool,
+    settings: State<'_, SettingsStore>,
+    index: State<'_, Index>,
+) -> Result<(), String> {
+    settings
+        .set(Settings {
+            always_full_speed: enabled,
+            ..settings.get()
+        })
+        .map_err(|e| format!("Couldn't save the setting. {e}"))?;
+    index.set_always_full_speed(enabled);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn set_start_at_sign_in(enabled: bool, app: AppHandle, settings: State<'_, SettingsStore>) -> Result<(), String> {
+    startup::follow_setting(&app, enabled)?;
+    if let Err(e) = settings.set(Settings {
+        start_at_sign_in: enabled,
+        ..settings.get()
+    }) {
+        let _ = startup::follow_setting(&app, !enabled);
+        return Err(format!("Couldn't save the setting. {e}"));
+    }
+    Ok(())
 }
 
 fn apply_setting(

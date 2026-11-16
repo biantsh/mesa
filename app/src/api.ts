@@ -164,6 +164,8 @@ export interface Estimate {
 
 export interface Settings {
   gpuAcceleration: boolean;
+  alwaysFullSpeed: boolean;
+  startAtSignIn: boolean;
 }
 
 export interface HotkeyParts {
@@ -298,6 +300,8 @@ export const api = {
   retryModelSetup: () => invoke<void>("retry_model_setup"),
   embeddingGpu: () => invoke<{ name: string; shared: boolean } | null>("embedding_gpu"),
   setGpuAcceleration: (enabled: boolean) => invoke<void>("set_gpu_acceleration", { enabled }),
+  setAlwaysFullSpeed: (enabled: boolean) => invoke<void>("set_always_full_speed", { enabled }),
+  setStartAtSignIn: (enabled: boolean) => invoke<void>("set_start_at_sign_in", { enabled }),
   pagePainted: () => invoke<void>("page_painted"),
   revealMain: () => invoke<void>("reveal_main"),
   hideWidget: () => invoke<void>("hide_widget"),

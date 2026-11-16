@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex, MutexGuard,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{self, Sender},
     },
     thread,
@@ -114,6 +114,10 @@ impl Quiet {
         self.queued.remove(&path);
         Some(path)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
 }
 
 pub const QUERY_PIECES: usize = 64;
@@ -130,6 +134,8 @@ pub struct Shared {
     pub embedder: Arc<dyn Embedder>,
     pub counts: Arc<Counts>,
     pub indexed_types: AtomicU8,
+    pub always_full_speed: AtomicBool,
+    pub asked_checks: AtomicBool,
 }
 
 pub struct Control {
@@ -392,6 +398,8 @@ impl Index {
             embedder,
             counts,
             indexed_types: AtomicU8::new(types.bits()),
+            always_full_speed: AtomicBool::new(false),
+            asked_checks: AtomicBool::new(false),
         });
 
         let worker = shared.clone();
@@ -954,6 +962,21 @@ impl Index {
         chores.check_later(chores.roots());
     }
 
+    pub fn check_for_added_types(&self) {
+        self.check_for_changes();
+        if self.shared.always_full_speed.load(Ordering::SeqCst) {
+            self.shared.asked_checks.store(true, Ordering::SeqCst);
+            self.shared.set_turbo(true);
+        }
+    }
+
+    pub fn set_always_full_speed(&self, on: bool) {
+        self.shared.always_full_speed.store(on, Ordering::SeqCst);
+        if on && lock(&self.shared.progress).has_asked_for() {
+            self.shared.set_turbo(true);
+        }
+    }
+
     pub fn start_watching(&self) {
         #[cfg(target_os = "linux")]
         {
@@ -1052,6 +1075,9 @@ impl Index {
         let already = store.files_under_each(roots).unwrap_or_else(|_| vec![0; roots.len()]);
         for ((id, root), already) in ids.into_iter().zip(roots).zip(already) {
             self.queue_job_counted(id, root.clone(), already, counted(root));
+        }
+        if self.shared.always_full_speed.load(Ordering::SeqCst) {
+            self.shared.set_turbo(true);
         }
         Ok(())
     }

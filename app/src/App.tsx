@@ -17,6 +17,7 @@ import { useFrozenWhile } from "./useFrozenWhile";
 import { useIndexState } from "./useIndexState";
 import { useFullscreen, useMaximized } from "./useMaximized";
 import { useTauriEvent } from "./useTauriEvent";
+import { useFollowSystemTheme } from "./theme";
 import { useBlockContextMenu } from "./window";
 import { useModelStatus } from "./useModelStatus";
 import { useWidgetRequests } from "./useWidgetRequests";
@@ -33,6 +34,7 @@ const OPEN_ON_TOP = "dialog[open], [role='menu']";
 const Home = memo(HomeScreen);
 
 export default function App() {
+  useFollowSystemTheme();
   const [screen, setScreen] = useState<Screen>("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [querying, setQuerying] = useState(false);

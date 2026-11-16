@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { WIDGET_HIDDEN, WIDGET_SHOWN } from "./events";
-import { THEME_EVENT, chosenTheme, followTheme, type Theme } from "./theme";
+import { THEME_EVENT, followTheme, themeChoice, themeOf, useFollowSystemTheme, type Theme } from "./theme";
 import { HomeScreen, type HomeHandle } from "./screens/HomeScreen";
 import { useIndexState } from "./useIndexState";
 import { useModelStatus } from "./useModelStatus";
@@ -11,6 +11,7 @@ import { reportVisibleBox } from "./widgetBox";
 import styles from "./Widget.module.css";
 
 export default function Widget() {
+  useFollowSystemTheme();
   const [shown, setShown] = useState(0);
   const [there, setThere] = useState(false);
   const home = useRef<HomeHandle>(null);
@@ -27,8 +28,7 @@ export default function Widget() {
     setThere(false);
   });
   useTauriEvent(WIDGET_SHOWN, () => {
-    const theme = chosenTheme();
-    if (theme) followTheme(theme);
+    followTheme(themeOf(themeChoice()));
     cancelAnimationFrame(frame.current);
     frame.current = requestAnimationFrame(() => {
       setShown((now) => now + 1);
