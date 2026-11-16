@@ -39,7 +39,7 @@ pub fn of_picture(text: &str, query: &str) -> Details {
 pub fn of_document(path: &Path, query: &str, at: Option<u64>, scanned: &PageTexts) -> Result<Details, String> {
     let terms = words::terms(query);
     let paged = path.extension().is_some_and(|extension| {
-        ["pdf", "pptx", "pptm", "ppsx"]
+        ["pdf", "pptx", "pptm", "ppsx", "potx", "potm", "odp", "otp", "key"]
             .iter()
             .any(|paged| extension.eq_ignore_ascii_case(paged))
     });
@@ -92,7 +92,83 @@ pub fn of_document(path: &Path, query: &str, at: Option<u64>, scanned: &PageText
     drop(look);
     all.extend(some);
     all.truncate(MOST_SNIPPETS);
+    if is_laid_out(path)
+        && let Some(pages) = path
+            .to_str()
+            .and_then(crate::document_preview::page_texts)
+            .map(|texts| Pages::new(&texts))
+    {
+        for snippet in all.iter_mut() {
+            let from = snippet.parts.iter().position(|part| part.hit).unwrap_or(0);
+            snippet.page = pages.page_of(&snippet.parts[from..]);
+        }
+        if let Some(closest) = closest.as_mut() {
+            closest.page = pages.page_of(&closest.parts);
+        }
+    }
     Ok(Details { snippets: all, closest })
+}
+
+fn is_laid_out(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        [
+            "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "odt", "ott", "ods", "ots", "pages",
+            "numbers", "epub",
+        ]
+        .iter()
+        .any(|laid_out| extension.eq_ignore_ascii_case(laid_out))
+    })
+}
+
+struct Pages {
+    text: String,
+    starts: Vec<usize>,
+}
+
+const LOOKED_FOR: [(usize, usize); 2] = [(32, 8), (12, 16)];
+
+impl Pages {
+    fn new(texts: &[String]) -> Self {
+        let mut pages = Pages {
+            text: String::new(),
+            starts: Vec::with_capacity(texts.len()),
+        };
+        for text in texts {
+            pages.starts.push(pages.text.len());
+            pages.text.extend(folded(text));
+        }
+        pages
+    }
+
+    fn page_of(&self, parts: &[Part]) -> Option<u64> {
+        let piece: Vec<char> = parts
+            .iter()
+            .filter(|part| part.text != "…")
+            .flat_map(|part| folded(&part.text))
+            .collect();
+        for (length, tries) in LOOKED_FOR {
+            let length = length.min(piece.len());
+            if length == 0 {
+                return None;
+            }
+            for start in (0..tries)
+                .map(|n| n * length)
+                .filter(|&start| start + length <= piece.len())
+            {
+                let looked_for: String = piece[start..start + length].iter().collect();
+                if let Some(at) = self.text.find(&looked_for) {
+                    return Some(self.starts.partition_point(|&start| start <= at) as u64);
+                }
+            }
+        }
+        None
+    }
+}
+
+fn folded(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
 }
 
 fn snippets(text: &str, found: &[(usize, Range<usize>)], page: Option<u64>, most: usize) -> Vec<Snippet> {
@@ -215,5 +291,37 @@ mod tests {
         assert!(shown.contains("the [needle] is here"));
         assert!(shown.chars().count() < SNIPPET_CHARS + 10);
         assert_eq!(snippet.page, Some(4));
+    }
+
+    #[test]
+    fn finds_text_ignoring_spacing_and_case() {
+        let customers = "Customers\t1,204.50\tTirana, and the rest of the cities in the north";
+        let pages = Pages::new(&[
+            "Whales of the\nNorth Atlantic".to_owned(),
+            String::new(),
+            customers.to_owned(),
+        ]);
+        let piece = |text: &str| {
+            vec![
+                Part {
+                    text: "…".into(),
+                    hit: false,
+                },
+                Part {
+                    text: text.into(),
+                    hit: false,
+                },
+            ]
+        };
+        assert_eq!(pages.page_of(&piece("whales of the north atlantic")), Some(1));
+        assert_eq!(pages.page_of(&piece("Customers 1204.5 Tirana")), Some(3));
+        assert_eq!(
+            pages.page_of(&piece(
+                "Sheet1\nCustomers\t1204.5\tTirana, and the rest of the cities in the north"
+            )),
+            Some(3)
+        );
+        assert_eq!(pages.page_of(&piece("nowhere at all")), None);
+        assert_eq!(pages.page_of(&piece("…")), None);
     }
 }

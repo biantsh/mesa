@@ -1,10 +1,10 @@
 import type { Category } from "./api";
 
 export const EXAMPLE_KINDS: { category: Category; label: string; extensions: string[] }[] = [
-  { category: "image", label: "Images", extensions: ["jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif"] },
-  { category: "video", label: "Videos", extensions: ["mp4", "m4v", "mov", "mkv", "avi", "webm"] },
-  { category: "audio", label: "Audio", extensions: ["mp3", "wav", "wave", "flac", "m4a", "m4b", "aac", "aiff", "aif", "ogg"] },
-  { category: "document", label: "Documents", extensions: ["pdf", "txt", "md", "markdown", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "ppsx", "rtf"] },
+  { category: "image", label: "Images", extensions: ["jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "dng", "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "pef", "raf", "srw"] },
+  { category: "video", label: "Videos", extensions: ["mp4", "m4v", "mov", "mkv", "avi", "webm", "3gp", "3g2", "mpg", "mpeg", "mts", "m2ts", "wmv"] },
+  { category: "audio", label: "Audio", extensions: ["mp3", "wav", "wave", "flac", "m4a", "m4b", "aac", "aiff", "aif", "ogg", "opus", "caf", "amr", "wma"] },
+  { category: "document", label: "Documents", extensions: ["pdf", "txt", "md", "markdown", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "ppsx", "odt", "ods", "odp", "pages", "numbers", "key", "rtf", "epub", "dotx", "dotm", "xltx", "xltm", "potx", "potm", "ott", "ots", "otp"] },
 ];
 
 export const MAX_EXAMPLES = 16;

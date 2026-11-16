@@ -7,7 +7,7 @@ import { detailsAsked, detailsFor, detailsNow, wantsDetails as wantsDetailsOf } 
 import { cx } from "../cx";
 import { CATEGORY_LABELS, formatModified, formatSize } from "../format";
 import { prefersReducedMotion } from "../motion";
-import { pagingOf, pagingWord, type Paging } from "../paging";
+import { atIsPage, pagingOf, pagingWord, type Paging } from "../paging";
 import { middleCuts } from "../pathCut";
 import type { PanelLayout } from "../resultWindow";
 import { parentOf } from "../paths";
@@ -286,6 +286,66 @@ function useThumbFade(body: RefObject<HTMLDivElement | null>, room: RefObject<HT
   }, [body, room]);
 }
 
+const HEIGHT_FOLLOWS_MS = 70;
+
+function useSmoothHeight(content: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const element = content.current;
+    if (!element) return;
+    let held: number | null = null;
+    let own = element.getBoundingClientRect().height;
+    let frame = 0;
+    let last = 0;
+    const ownNow = () => {
+      const height = element.style.height;
+      element.style.height = "";
+      const now = element.getBoundingClientRect().height;
+      element.style.height = height;
+      return now;
+    };
+    const hold = (height: number | null) => {
+      held = height;
+      if (height === null) {
+        element.style.removeProperty("height");
+        element.style.removeProperty("overflow-y");
+      } else {
+        element.style.height = `${height}px`;
+        element.style.overflowY = "clip";
+      }
+    };
+    const step = (now: number) => {
+      const to = ownNow();
+      own = to;
+      const from = held ?? to;
+      const elapsed = Math.min(64, now - last);
+      last = now;
+      const next = from + (to - from) * (1 - Math.exp(-elapsed / HEIGHT_FOLLOWS_MS));
+      if (Math.abs(to - next) < 0.5) {
+        hold(null);
+        frame = 0;
+        return;
+      }
+      hold(next);
+      frame = requestAnimationFrame(step);
+    };
+    const watching = new ResizeObserver(() => {
+      const now = held === null ? element.getBoundingClientRect().height : ownNow();
+      const was = own;
+      own = now;
+      if (held !== null || Math.abs(now - was) < 1 || prefersReducedMotion()) return;
+      hold(was);
+      last = performance.now();
+      frame = requestAnimationFrame(step);
+    });
+    watching.observe(element);
+    return () => {
+      watching.disconnect();
+      cancelAnimationFrame(frame);
+      hold(null);
+    };
+  }, [content]);
+}
+
 function useLargeSize(frame: RefObject<HTMLElement | null>): number | null {
   const scale = usePixelRatio();
   const [size, setSize] = useState<number | null>(null);
@@ -324,8 +384,10 @@ interface OneProps {
 
 function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }: OneProps) {
   const body = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const thumbRoom = useRef<HTMLDivElement>(null);
   useThumbFade(body, thumbRoom);
+  useSmoothHeight(content);
   const head = useRef<HTMLDivElement>(null);
   const factsBox = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -359,8 +421,9 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
 
   const [pressedPage, setPressedPage] = useState<number | null>(null);
   const wordsPage = details?.snippets.find((snippet) => snippet.page !== null)?.page ?? null;
-  const waiting = paged && hit.reason === "words" && details === undefined;
-  const page = paged ? (pressedPage ?? wordsPage ?? hit.at ?? 1) : 1;
+  const closestPage = atIsPage(hit.name) ? hit.at : (details?.closest?.page ?? null);
+  const waiting = paged && wantsDetails && (hit.reason === "words" || !atIsPage(hit.name)) && details === undefined;
+  const page = paged ? (pressedPage ?? wordsPage ?? closestPage ?? 1) : 1;
 
   const small = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
   const frame = useRef<HTMLDivElement>(null);
@@ -386,7 +449,8 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
   const extension = extensionOf(hit.name);
 
   return (
-    <div ref={body} className={cx(styles.body, styles.single)}>
+    <div ref={body} className={styles.body}>
+      <div ref={content} className={styles.single}>
       <div className={styles.file}>
         <div className={cx(styles.stage, hit.category === "document" && styles.pageStage)}>
           <div
@@ -525,7 +589,8 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
       </section>
 
       </div>
-      <div ref={thumbRoom} className={styles.thumbRoom} aria-hidden />
+      </div>
+      <div ref={thumbRoom} aria-hidden />
     </div>
   );
 }
@@ -604,12 +669,15 @@ function describeKinds(hits: SearchHit[]): string {
 
 function SeveralFiles({ hits, actions, onFindSimilar, onSelectOnly }: { hits: SearchHit[]; actions: ResultActions; onFindSimilar: (paths: string[]) => void; onSelectOnly: (path: string) => void }) {
   const body = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const thumbRoom = useRef<HTMLDivElement>(null);
   useThumbFade(body, thumbRoom);
+  useSmoothHeight(content);
   const size = hits.reduce((total, hit) => total + hit.size, 0);
   const pictured = hits.slice(0, MOSAIC_MOST);
   return (
     <div ref={body} className={styles.body}>
+      <div ref={content}>
       <div className={styles.mosaic}>
         {pictured.map((hit, i) => (
           <Thumb key={hit.path} hit={hit} more={i === pictured.length - 1 ? hits.length - pictured.length : 0} />
@@ -656,6 +724,7 @@ function SeveralFiles({ hits, actions, onFindSimilar, onSelectOnly }: { hits: Se
         </ul>
         {hits.length > NAMED_MOST && <p className={styles.loading}>and {hits.length - NAMED_MOST} more</p>}
       </section>
+      </div>
       <div ref={thumbRoom} aria-hidden />
     </div>
   );

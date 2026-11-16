@@ -31,6 +31,7 @@ import { useShortcutTip } from "../useShortcutTip";
 import { useTauriEvent } from "../useTauriEvent";
 import styles from "./HomeScreen.module.css";
 
+const FAILURE_MS = 8000;
 const TOP_GAP_PX = 20;
 const BOTTOM_GAP_PX = 8;
 const PROGRESS_BOTTOM_PX = 4;
@@ -371,6 +372,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const [query, setQuery] = useState("");
   const [examples, setExamples] = useState<string[]>([]);
   const [exampleNotice, setExampleNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const examplesNow = useRef(examples);
   examplesNow.current = examples;
   const [limitNote, setLimitNote] = useState<string | null>(null);
@@ -525,6 +527,12 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const [barAway, setBarAway] = useState(false);
   const stowed = results && barAway;
   useEffect(() => setBarAway(false), [query]);
+  useEffect(() => setFailure(null), [query]);
+  useEffect(() => {
+    if (failure === null) return;
+    const timer = window.setTimeout(() => setFailure(null), FAILURE_MS);
+    return () => window.clearTimeout(timer);
+  }, [failure]);
   useEffect(() => {
     if (focused) setBarAway(false);
   }, [focused]);
@@ -534,12 +542,16 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const resultActions = useMemo<ResultActions>(
     () => ({
       open: (hit) => {
-        void api.openFile(hit.path).catch(() => {});
-        onDismiss?.();
+        api.openFile(hit.path).then(
+          () => onDismiss?.(),
+          (e) => setFailure(`Couldn't open ${hit.name}. ${errorText(e)}`),
+        );
       },
       showInFolder: (hit) => {
-        void api.showInFolder(hit.path).catch(() => {});
-        onDismiss?.();
+        api.showInFolder(hit.path).then(
+          () => onDismiss?.(),
+          (e) => setFailure(`Couldn't show ${hit.name} in its folder. ${errorText(e)}`),
+        );
       },
       copyFiles: (files) => api.copyFiles(files.map((file) => file.path)),
       copyPaths: async (files) => {
@@ -969,7 +981,15 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           <IndexStatus overview={overview} onOpenIndex={openIndexFromProgress} attention={attention} raised={dim} keepsFocus={focused} />
         </div>
       </div>
-      <ShortcutTip show={shortcutTip.visible} keys={shortcutTip.keys} lifted={overview?.progress != null} />
+      <ShortcutTip show={shortcutTip.visible && failure === null} keys={shortcutTip.keys} lifted={overview?.progress != null} />
+      {failure && (
+        <div className={cx(styles.failure, overview?.progress != null && styles.failureLifted)} role="alert">
+          <span>{failure}</span>
+          <button type="button" className={styles.failureDismiss} onClick={() => setFailure(null)} aria-label="Dismiss">
+            <X size={14} aria-hidden />
+          </button>
+        </div>
+      )}
       {menu && (
         <ContextMenu
           key={`${menu.hits[0].path}:${menu.x}:${menu.y}`}

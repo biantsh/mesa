@@ -1,7 +1,9 @@
 mod audio;
 #[cfg(target_os = "macos")]
 mod avfoundation;
+mod demux;
 mod documents;
+mod epub;
 #[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(target_os = "linux")]
@@ -10,15 +12,18 @@ pub mod gstreamer;
 pub mod heif;
 #[cfg(target_os = "macos")]
 mod imageio;
+mod iwork;
 mod llama;
 mod model;
 mod office;
+mod opendocument;
 mod picture;
 mod pipeline;
 mod prepare;
 mod prime;
 #[cfg(windows)]
 mod process_group;
+mod raw;
 mod resample;
 mod rtf;
 mod scans;
@@ -37,10 +42,28 @@ use std::{
 
 use crate::vectors::{Located, Record};
 
+pub(crate) use documents::entity;
 pub use llama::Locations;
 pub use model::{ModelState, ModelStatus};
+pub use office::shown_sheets;
+pub(crate) use opendocument::is_encrypted;
 pub use pipeline::{GENTLE_SLOWDOWN, Pipeline};
 pub use prepare::{MOST_PIECES, passages};
+#[cfg(target_os = "linux")]
+pub use raw::{EXTENSIONS as RAW_EXTENSIONS, decode as raw_photo};
+
+#[cfg(target_os = "macos")]
+pub fn video_frame(path: &std::path::Path) -> Option<Vec<u8>> {
+    let mut frame = None;
+    avfoundation::frames_at(path, &[0.1], &mut |unit| {
+        if let prepare::Prepared::Image(bytes) = unit.input {
+            frame = Some(bytes);
+        }
+        false
+    })
+    .ok()?;
+    frame
+}
 
 pub const MODEL_NAME: &str = "google/embeddinggemma-2, Q8_0, llama.cpp, 140 image tokens, 256 dimensions; pictures, video frames, 30 s of sound, passages of text";
 pub const IMAGE_TOKENS: u32 = 140;

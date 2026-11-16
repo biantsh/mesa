@@ -691,7 +691,7 @@ impl Index {
     }
 
     pub fn search_for(&self, window: &str, text: &str, files: &[PathBuf], filter: Filter) -> Result<Page, String> {
-        self.search_where(window, text, files, filter, |path| path.is_file())
+        self.search_where(window, text, files, filter, browse::is_file_like)
     }
 
     pub fn prepare_example(&self, path: &Path) -> Result<(), String> {
@@ -822,7 +822,7 @@ impl Index {
             .find(|ranking| ranking.id == id)
             .cloned();
         let ranking = ranking.ok_or_else(|| "That search has been replaced by a newer one.".to_owned())?;
-        self.next_page(&ranking, |path| path.is_file())
+        self.next_page(&ranking, browse::is_file_like)
     }
 
     fn next_page(&self, ranking: &Ranking, exists: impl Fn(&Path) -> bool) -> Result<Page, String> {
@@ -1173,7 +1173,7 @@ fn status_of(facts: &impl Facts, path: &Path, is_file: Option<bool>) -> IndexSta
     let kind = path
         .file_name()
         .and_then(|name| browse::category_of(&name.to_string_lossy()));
-    if kind.is_some_and(|kind| !types.contains(kind)) && is_file.unwrap_or_else(|| path.is_file()) {
+    if kind.is_some_and(|kind| !types.contains(kind)) && is_file.unwrap_or_else(|| browse::is_file_like(path)) {
         return IndexStatus::TypeNotIndexed;
     }
     if !facts.indexed(path) {

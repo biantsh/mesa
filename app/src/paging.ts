@@ -1,10 +1,21 @@
 export type Paging = "page" | "slide";
 
-export function pagingOf(name: string): Paging | null {
+const PRESENTATIONS = [".pptx", ".pptm", ".ppsx", ".potx", ".potm", ".odp", ".otp", ".key"];
+const LAID_OUT = [".docx", ".docm", ".dotx", ".dotm", ".xlsx", ".xlsm", ".xltx", ".xltm", ".odt", ".ott", ".ods", ".ots", ".pages", ".numbers", ".epub"];
+
+const endsWithAny = (name: string, extensions: string[]) => {
   const lower = name.toLowerCase();
-  if (lower.endsWith(".pdf")) return "page";
-  if ([".pptx", ".pptm", ".ppsx"].some((extension) => lower.endsWith(extension))) return "slide";
+  return extensions.some((extension) => lower.endsWith(extension));
+};
+
+export function pagingOf(name: string): Paging | null {
+  if (name.toLowerCase().endsWith(".pdf") || endsWithAny(name, LAID_OUT)) return "page";
+  if (endsWithAny(name, PRESENTATIONS)) return "slide";
   return null;
+}
+
+export function atIsPage(name: string): boolean {
+  return name.toLowerCase().endsWith(".pdf") || endsWithAny(name, PRESENTATIONS);
 }
 
 export function pagingWord(paging: Paging): string {

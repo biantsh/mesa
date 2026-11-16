@@ -229,6 +229,11 @@ export type ModelStatus =
   | { state: "ready" }
   | { state: "failed"; reason: string; setup: boolean };
 
+export interface Paging {
+  pages: number;
+  note: string | null;
+}
+
 export const api = {
   homeDir: () => invoke<string>("home_dir"),
   listDir: async (path: string): Promise<Listing> => listingOf(await invoke<SaidListing>("list_dir", { path })),
@@ -256,7 +261,7 @@ export const api = {
   search: (query: string, filter: SearchFilter, files: string[] = []) =>
     invoke<SearchPage>("search", { query, ...filter, files }),
   searchMore: (id: number) => invoke<SearchPage>("search_more", { id }),
-  pageCount: (path: string) => invoke<number | null>("page_count", { path }),
+  paging: (path: string) => invoke<Paging | null>("paging", { path }),
   allowPlaying: (path: string) => invoke<void>("allow_playing", { path }),
   matchDetails: (path: string, query: string, at: number | null) => invoke<MatchDetails>("match_details", { path, query, at }),
   setIndexingPaused: (paused: boolean) => invoke<void>("set_indexing_paused", { paused }),

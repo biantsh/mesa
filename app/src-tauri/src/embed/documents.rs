@@ -118,7 +118,7 @@ fn docx_text(xml: &[u8]) -> Result<String, String> {
     Ok(text)
 }
 
-pub(super) fn entity(reference: &BytesRef) -> Option<char> {
+pub(crate) fn entity(reference: &BytesRef) -> Option<char> {
     if let Ok(Some(c)) = reference.resolve_char_ref() {
         return Some(c);
     }

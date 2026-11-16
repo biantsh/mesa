@@ -35,6 +35,7 @@ const MIGRATIONS: &[&str] = &[
     REDO_TINY_DOCUMENTS,
     ADD_PAGE_TEXTS,
     REDO_SOUND_VIDEO_AND_DOCUMENTS,
+    REDO_VIDEOS_FOR_THEIR_SOUND,
 ];
 
 const WORDS_ID: u32 = 2;
@@ -118,6 +119,7 @@ END;
 
 const REDO_TINY_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category = 3 AND size < 1024;";
 const REDO_SOUND_VIDEO_AND_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category IN (1, 2, 3);";
+const REDO_VIDEOS_FOR_THEIR_SOUND: &str = "UPDATE files SET embedded_with = 0 WHERE category = 1;";
 const ADD_PAGE_TEXTS: &str = "
 CREATE TABLE page_texts (
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,

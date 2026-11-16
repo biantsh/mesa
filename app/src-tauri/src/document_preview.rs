@@ -2,18 +2,30 @@ use std::{
     fs::File,
     io::{BufReader, Cursor, Read},
     path::Path,
+    sync::Arc,
 };
 
 use image::{ImageFormat, imageops::FilterType};
 
+mod epub;
+mod iwork;
+mod opendocument;
+
 const MAX_THUMBNAIL_BYTES: u64 = 8 * 1024 * 1024;
-const SAVED_THUMBNAILS: [&str; 3] = [
+const SAVED_THUMBNAILS: [&str; 5] = [
     "docProps/thumbnail.jpeg",
     "docProps/thumbnail.jpg",
     "docProps/thumbnail.png",
+    "Thumbnails/thumbnail.png",
+    "preview.jpg",
 ];
+const MAX_IWORK_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_EPUB_BYTES: u64 = 100 * 1024 * 1024;
 
 fn read_whole(path: &str, most: u64) -> Option<Vec<u8>> {
+    if Path::new(path).is_dir() {
+        return crate::iwork_read::package_bytes(Path::new(path), most);
+    }
     let file = File::open(path).ok()?;
     let length = file.metadata().ok()?.len();
     if length > most {
@@ -28,13 +40,48 @@ fn extension_of(path: &str) -> Option<String> {
     Some(Path::new(path).extension()?.to_str()?.to_ascii_lowercase())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Family {
+    Pdf,
+    Word,
+    Excel,
+    PowerPoint,
+    OpenText,
+    OpenSheet,
+    OpenSlides,
+    Pages,
+    Numbers,
+    Keynote,
+    Epub,
+}
+
+fn family_of(path: &str) -> Option<Family> {
+    Some(match extension_of(path)?.as_str() {
+        "pdf" => Family::Pdf,
+        "docx" | "docm" | "dotx" | "dotm" => Family::Word,
+        "xlsx" | "xlsm" | "xltx" | "xltm" => Family::Excel,
+        "pptx" | "pptm" | "ppsx" | "potx" | "potm" => Family::PowerPoint,
+        "odt" | "ott" => Family::OpenText,
+        "ods" | "ots" => Family::OpenSheet,
+        "odp" | "otp" => Family::OpenSlides,
+        "pages" => Family::Pages,
+        "numbers" => Family::Numbers,
+        "key" => Family::Keynote,
+        "epub" => Family::Epub,
+        _ => return None,
+    })
+}
+
 pub fn render_before_system(path: &str, size: u32) -> Option<Vec<u8>> {
-    match extension_of(path)?.as_str() {
-        "pdf" => pdf::first_page(path, size),
-        "docx" | "docm" => docx_page::first_page(path, size),
-        "pptx" | "pptm" | "ppsx" => slides::first(path, size),
-        "xlsx" | "xlsm" => workbook_page::first_page(path, size),
-        _ => None,
+    match family_of(path)? {
+        Family::Pdf => pdf::first_page(path, size),
+        Family::Word | Family::OpenText => docx_page::first_page(path, size),
+        Family::PowerPoint | Family::OpenSlides => slides::first(path, size),
+        Family::Excel | Family::OpenSheet => workbook_page::first_page(path, size),
+        Family::Pages | Family::Numbers | Family::Keynote => {
+            saved_thumbnail(Path::new(path), size).or_else(|| render_page(path, size, 1))
+        }
+        Family::Epub => epub::cover(path, size).or_else(|| docx_page::first_page(path, size)),
     }
 }
 
@@ -43,50 +90,121 @@ pub fn warm_up() {
 }
 
 pub fn render_after_system(path: &str, size: u32) -> Option<Vec<u8>> {
-    match extension_of(path)?.as_str() {
-        "docx" | "docm" | "xlsx" | "xlsm" | "pptx" | "pptm" | "ppsx" => saved_thumbnail(Path::new(path), size),
+    match family_of(path)? {
         #[cfg(windows)]
-        "pdf" => windows_pdf::first_page(path, size),
-        _ => None,
+        Family::Pdf => windows_pdf::first_page(path, size),
+        #[cfg(not(windows))]
+        Family::Pdf => None,
+        _ => saved_thumbnail(Path::new(path), size),
     }
 }
 
-pub fn page_count(path: &str) -> Option<usize> {
-    match extension_of(path)?.as_str() {
-        "pdf" => pdf::page_count(path),
-        "pptx" | "pptm" | "ppsx" => slides::count(path),
-        _ => None,
+fn is_made_whole(path: &str) -> bool {
+    family_of(path).is_some_and(|family| family != Family::Pdf)
+}
+
+fn whole_of(path: &str) -> Option<Arc<whole::Made>> {
+    let alone = |pdf: Option<Vec<u8>>| pdf.map(|pdf| (pdf, None));
+    match family_of(path)? {
+        Family::Pdf => None,
+        Family::PowerPoint => whole::of(path, slides::MAX_BYTES, |data| alone(slides::convert(data, None))),
+        Family::OpenSlides => whole::of(path, slides::MAX_BYTES, |data| {
+            alone(slides::convert(&opendocument::slides::pptx(data, None)?, None))
+        }),
+        Family::Word => whole::of(path, docx_page::MAX_BYTES, |data| alone(docx_page::whole(data))),
+        Family::OpenText => whole::of(path, docx_page::MAX_BYTES, |data| {
+            alone(docx_page::whole(&opendocument::text::docx(data, None)?))
+        }),
+        Family::Excel | Family::OpenSheet => {
+            whole::of(path, workbook_page::MAX_BYTES, |data| workbook_page::whole(path, data))
+        }
+        Family::Numbers => whole::of(path, MAX_IWORK_BYTES, |data| workbook_page::whole(path, data)),
+        Family::Keynote => whole::of(path, MAX_IWORK_BYTES, |data| {
+            alone(slides::convert(&iwork::keynote::pptx(data, None)?, None))
+        }),
+        Family::Epub => whole::of(path, MAX_EPUB_BYTES, |data| {
+            alone(docx_page::whole(&epub::docx(data, None)?))
+        }),
+        Family::Pages => whole::of(path, MAX_IWORK_BYTES, |data| {
+            alone(match iwork::pages::office(data, None)? {
+                iwork::pages::Made::Word(docx) => docx_page::whole(&docx),
+                iwork::pages::Made::Pages(pptx) => slides::convert(&pptx, None),
+            })
+        }),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Paging {
+    pub pages: usize,
+    pub note: Option<String>,
+}
+
+pub fn paging(path: &str) -> Option<Paging> {
+    match family_of(path)? {
+        Family::Pdf => Some(Paging {
+            pages: pdf::page_count(path)?,
+            note: None,
+        }),
+        _ => {
+            let made = whole_of(path)?;
+            Some(Paging {
+                pages: pdf::count_bytes(Arc::clone(&made.pdf))?,
+                note: made.note.clone(),
+            })
+        }
     }
 }
 
 pub fn render_page(path: &str, size: u32, page: u32) -> Option<Vec<u8>> {
     let index = page.checked_sub(1)? as usize;
-    match extension_of(path)?.as_str() {
-        "pdf" => pdf::page(path, size, index),
-        "pptx" | "pptm" | "ppsx" => slides::page(path, size, index),
-        _ => None,
+    match family_of(path)? {
+        Family::Pdf => pdf::page(path, size, index),
+        _ => pdf::page_bytes(Arc::clone(&whole_of(path)?.pdf), size, index),
     }
 }
 
 pub fn draws_every_page(path: &str) -> bool {
-    extension_of(path).is_some_and(|extension| matches!(extension.as_str(), "pptx" | "pptm" | "ppsx"))
+    is_made_whole(path)
+}
+
+pub fn page_texts(path: &str) -> Option<Arc<Vec<String>>> {
+    match family_of(path)? {
+        Family::Word
+        | Family::Excel
+        | Family::OpenText
+        | Family::OpenSheet
+        | Family::Pages
+        | Family::Numbers
+        | Family::Keynote
+        | Family::Epub => whole_of(path)?.texts(),
+        _ => None,
+    }
 }
 
 fn saved_thumbnail(path: &Path, size: u32) -> Option<Vec<u8>> {
-    let mut archive = zip::ZipArchive::new(BufReader::new(File::open(path).ok()?)).ok()?;
-    let index = (0..archive.len()).find(|&i| {
-        archive.by_index_raw(i).is_ok_and(|file| {
-            file.name()
-                .is_ok_and(|name| SAVED_THUMBNAILS.iter().any(|known| known.eq_ignore_ascii_case(&name)))
-        })
-    })?;
     let mut bytes = Vec::new();
-    archive
-        .by_index(index)
-        .ok()?
-        .take(MAX_THUMBNAIL_BYTES)
-        .read_to_end(&mut bytes)
-        .ok()?;
+    if path.is_dir() {
+        File::open(path.join("preview.jpg"))
+            .ok()?
+            .take(MAX_THUMBNAIL_BYTES)
+            .read_to_end(&mut bytes)
+            .ok()?;
+    } else {
+        let mut archive = zip::ZipArchive::new(BufReader::new(File::open(path).ok()?)).ok()?;
+        let index = (0..archive.len()).find(|&i| {
+            archive.by_index_raw(i).is_ok_and(|file| {
+                file.name()
+                    .is_ok_and(|name| SAVED_THUMBNAILS.iter().any(|known| known.eq_ignore_ascii_case(&name)))
+            })
+        })?;
+        archive
+            .by_index(index)
+            .ok()?
+            .take(MAX_THUMBNAIL_BYTES)
+            .read_to_end(&mut bytes)
+            .ok()?;
+    }
     let picture = image::load_from_memory(&bytes).ok()?;
     let picture = if picture.width() > size || picture.height() > size {
         picture.resize(size, size, FilterType::Triangle)
@@ -216,48 +334,65 @@ mod pdf {
     }
 }
 
-mod slides {
+mod whole {
     use std::{
         fs,
-        io::{Cursor, Write},
         panic::{AssertUnwindSafe, catch_unwind},
-        sync::{Arc, Mutex, PoisonError},
+        sync::{Arc, Mutex, OnceLock, PoisonError},
         time::SystemTime,
     };
 
-    use office2pdf::config::{ConvertOptions, Format, SlideRange};
-
-    const MAX_BYTES: u64 = 100 * 1024 * 1024;
     const KEPT: usize = 4;
     type Key = (String, u64, Option<SystemTime>);
-    type Made = Vec<(Key, Option<Arc<Vec<u8>>>)>;
 
-    static MADE: Mutex<Made> = Mutex::new(Vec::new());
-    static MAKING: Mutex<()> = Mutex::new(());
-
-    pub fn count(path: &str) -> Option<usize> {
-        super::pdf::count_bytes(pdf_of(path)?)
+    pub(super) struct Made {
+        pub pdf: Arc<Vec<u8>>,
+        pub note: Option<String>,
+        texts: OnceLock<Option<Arc<Vec<String>>>>,
     }
 
-    pub fn page(path: &str, size: u32, index: usize) -> Option<Vec<u8>> {
-        super::pdf::page_bytes(pdf_of(path)?, size, index)
-    }
-
-    pub fn first(path: &str, size: u32) -> Option<Vec<u8>> {
-        if let Some(Some(pdf)) = key_of(path).and_then(|key| made(&key)) {
-            return super::pdf::page_bytes(pdf, size, 0);
+    impl Made {
+        pub fn texts(&self) -> Option<Arc<Vec<String>>> {
+            self.texts
+                .get_or_init(|| {
+                    let _slot = super::pdf::slots().take();
+                    catch_unwind(AssertUnwindSafe(|| {
+                        let document = pdf_oxide::PdfDocument::from_bytes(self.pdf.to_vec()).ok()?;
+                        let count = document.page_count().ok()?;
+                        Some(Arc::new(
+                            (0..count)
+                                .map(|page| document.extract_text(page).unwrap_or_default())
+                                .collect(),
+                        ))
+                    }))
+                    .ok()
+                    .flatten()
+                })
+                .clone()
         }
-        let data = super::read_whole(path, MAX_BYTES)?;
-        let _slot = super::pdf::slots().take();
-        super::pdf::draw_held(convert(&data, Some(SlideRange::new(1, 1)))?, size, 0)
     }
+
+    static MADE: Mutex<Vec<(Key, Option<Arc<Made>>)>> = Mutex::new(Vec::new());
+    static MAKING: Mutex<()> = Mutex::new(());
 
     fn key_of(path: &str) -> Option<Key> {
         let metadata = fs::metadata(path).ok()?;
+        if metadata.is_dir() {
+            let (size, newest) = crate::browse::package_state(std::path::Path::new(path))?;
+            return Some((path.to_owned(), size, Some(newest)));
+        }
         Some((path.to_owned(), metadata.len(), metadata.modified().ok()))
     }
 
-    fn pdf_of(path: &str) -> Option<Arc<Vec<u8>>> {
+    pub fn kept(path: &str) -> Option<Arc<Made>> {
+        made(&key_of(path)?).flatten()
+    }
+
+    pub fn of(
+        path: &str,
+        most: u64,
+        make: impl FnOnce(&[u8]) -> Option<(Vec<u8>, Option<String>)>,
+    ) -> Option<Arc<Made>> {
         let key = key_of(path)?;
         if let Some(made) = made(&key) {
             return made;
@@ -266,12 +401,18 @@ mod slides {
         if let Some(made) = made(&key) {
             return made;
         }
-        let pdf = super::read_whole(path, MAX_BYTES)
+        let pdf = super::read_whole(path, most)
             .and_then(|data| {
                 let _slot = super::pdf::slots().take();
-                convert(&data, None)
+                catch_unwind(AssertUnwindSafe(|| make(&data))).ok().flatten()
             })
-            .map(Arc::new);
+            .map(|(pdf, note)| {
+                Arc::new(Made {
+                    pdf: Arc::new(pdf),
+                    note,
+                    texts: OnceLock::new(),
+                })
+            });
         let mut kept = MADE.lock().unwrap_or_else(PoisonError::into_inner);
         kept.retain(|(other, _)| other.0 != key.0);
         kept.insert(0, (key, pdf.clone()));
@@ -279,9 +420,40 @@ mod slides {
         pdf
     }
 
-    fn made(key: &Key) -> Option<Option<Arc<Vec<u8>>>> {
+    fn made(key: &Key) -> Option<Option<Arc<Made>>> {
         let kept = MADE.lock().unwrap_or_else(PoisonError::into_inner);
         kept.iter().find(|(other, _)| other == key).map(|(_, pdf)| pdf.clone())
+    }
+}
+
+mod slides {
+    use std::{
+        io::{Cursor, Write},
+        panic::{AssertUnwindSafe, catch_unwind},
+        sync::Arc,
+    };
+
+    use office2pdf::config::{ConvertOptions, Format, SlideRange};
+
+    pub(super) const MAX_BYTES: u64 = 100 * 1024 * 1024;
+
+    pub fn first(path: &str, size: u32) -> Option<Vec<u8>> {
+        if let Some(made) = super::whole::kept(path) {
+            return super::pdf::page_bytes(Arc::clone(&made.pdf), size, 0);
+        }
+        let data = super::read_whole(path, MAX_BYTES)?;
+        let _slot = super::pdf::slots().take();
+        let pdf = if super::family_of(path) == Some(super::Family::OpenSlides) {
+            convert(
+                &catch_unwind(AssertUnwindSafe(|| super::opendocument::slides::pptx(&data, Some(1))))
+                    .ok()
+                    .flatten()?,
+                None,
+            )?
+        } else {
+            convert(&data, Some(SlideRange::new(1, 1)))?
+        };
+        super::pdf::draw_held(pdf, size, 0)
     }
 
     pub(super) fn convert(data: &[u8], slides: Option<SlideRange>) -> Option<Vec<u8>> {
@@ -347,42 +519,155 @@ mod slides {
 
 mod workbook_page {
     use std::{
+        collections::HashMap,
+        fmt::Write as _,
         io::{Cursor, Read, Write},
         panic::{AssertUnwindSafe, catch_unwind},
+        path::Path,
+        sync::Arc,
     };
 
     use office2pdf::config::{ConvertOptions, Format};
-    use quick_xml::{Reader, events::Event};
+    use quick_xml::{
+        Reader,
+        events::{BytesStart, Event},
+    };
 
-    const MAX_BYTES: u64 = 64 * 1024 * 1024;
+    pub(super) const MAX_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_SHEET_BYTES: u64 = 512 * 1024 * 1024;
-    pub(super) const ROWS: usize = 100;
 
-    pub fn first_page(path: &str, size: u32) -> Option<Vec<u8>> {
-        let bytes = super::read_whole(path, MAX_BYTES)?;
-        let _slot = super::pdf::slots().take();
-        catch_unwind(AssertUnwindSafe(|| draw(&bytes, size))).ok().flatten()
+    #[derive(Clone, Copy, Debug)]
+    pub(super) struct Room {
+        pub rows: usize,
+        pub columns: usize,
+        pub cells: usize,
     }
 
-    fn draw(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
-        let cut = cut_down(bytes)?;
-        let pdf = office2pdf::convert_bytes(&cut, Format::Xlsx, &ConvertOptions::default())
-            .ok()?
-            .pdf;
+    pub(super) const FIRST_PAGE: Room = Room {
+        rows: 100,
+        columns: 40,
+        cells: 4_000,
+    };
+    pub(super) const PAGED: Room = Room {
+        rows: 2_000,
+        columns: 50,
+        cells: 10_000,
+    };
+
+    pub fn first_page(path: &str, size: u32) -> Option<Vec<u8>> {
+        if let Some(made) = super::whole::kept(path) {
+            return super::pdf::page_bytes(Arc::clone(&made.pdf), size, 0);
+        }
+        let bytes = super::read_whole(path, MAX_BYTES)?;
+        let _slot = super::pdf::slots().take();
+        let (pdf, _) = catch_unwind(AssertUnwindSafe(|| convert(path, &bytes, FIRST_PAGE)))
+            .ok()
+            .flatten()?;
         super::pdf::draw_held(pdf, size, 0)
     }
 
-    pub(super) fn cut_down(bytes: &[u8]) -> Option<Vec<u8>> {
+    pub(super) fn whole(path: &str, bytes: &[u8]) -> Option<(Vec<u8>, Option<String>)> {
+        let (pdf, cuts) = convert(path, bytes, PAGED)?;
+        Some((pdf, note(&cuts, PAGED)))
+    }
+
+    fn convert(path: &str, bytes: &[u8], room: Room) -> Option<(Vec<u8>, Cuts)> {
+        let (cut, cuts) = match super::family_of(path) {
+            Some(super::Family::OpenSheet) => super::opendocument::sheets::xlsx(bytes, room)?,
+            Some(super::Family::Numbers) => super::iwork::numbers::xlsx(bytes, room)?,
+            _ => {
+                let sheets = crate::embed::shown_sheets(Path::new(path)).ok()?;
+                cut_down(bytes, &sheets, room)?
+            }
+        };
+        let pdf = office2pdf::convert_bytes(&cut, Format::Xlsx, &ConvertOptions::default())
+            .ok()?
+            .pdf;
+        Some((pdf, cuts))
+    }
+
+    pub(super) type Cuts = Vec<(String, Cut)>;
+
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub(super) struct Cut {
+        pub rows: Option<usize>,
+        pub columns: bool,
+    }
+
+    pub(super) fn note(cuts: &[(String, Cut)], room: Room) -> Option<String> {
+        let cut = cuts.iter().filter(|(_, cut)| cut.rows.is_some() || cut.columns);
+        let (partly, none): (Vec<_>, Vec<_>) = cut.partition(|(_, cut)| cut.rows != Some(0) || cut.columns);
+        let sheets = |count: usize| {
+            if count == 1 {
+                "1 sheet".to_owned()
+            } else {
+                format!("{count} sheets")
+            }
+        };
+        match (partly.as_slice(), none.len()) {
+            ([], 0) => None,
+            ([(name, cut)], rest) => {
+                let what = match (cut.rows, cut.columns) {
+                    (Some(rows), false) => format!("First {} rows", thousands(rows)),
+                    (Some(rows), true) => format!("First {} rows and {} columns", thousands(rows), room.columns),
+                    _ => format!("First {} columns", room.columns),
+                };
+                let of = if cuts.len() > 1 {
+                    format!(" of \u{201c}{name}\u{201d}")
+                } else {
+                    String::new()
+                };
+                let after = match rest {
+                    0 => String::new(),
+                    1 => "; 1 more sheet not shown".into(),
+                    more => format!("; {more} more sheets not shown"),
+                };
+                Some(format!("{what}{of} shown{after}"))
+            }
+            ([], rest) => Some(format!("{} not shown", sheets(rest))),
+            (several, rest) => Some(format!("Only the start of {} shown", sheets(several.len() + rest))),
+        }
+    }
+
+    fn thousands(n: usize) -> String {
+        let digits = n.to_string();
+        let mut written = String::new();
+        for (at, digit) in digits.chars().enumerate() {
+            if at > 0 && (digits.len() - at).is_multiple_of(3) {
+                written.push(',');
+            }
+            written.push(digit);
+        }
+        written
+    }
+
+    pub(super) fn cut_down(bytes: &[u8], sheets: &[(String, String)], room: Room) -> Option<(Vec<u8>, Cuts)> {
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).ok()?;
+        let mut read = |name: &str| -> Option<Vec<u8>> {
+            let mut xml = Vec::new();
+            archive
+                .by_name(name)
+                .ok()?
+                .take(MAX_SHEET_BYTES)
+                .read_to_end(&mut xml)
+                .ok()?;
+            Some(xml)
+        };
+        let mut cut = HashMap::new();
+        let mut cuts = Vec::new();
+        let mut cells = room.cells;
+        for (name, sheet) in sheets {
+            let Some(xml) = read(sheet) else { continue };
+            let (xml, kept, left_out) = cut_sheet(&xml, Room { cells, ..room })?;
+            cells -= kept;
+            cut.insert(sheet.as_str(), xml);
+            cuts.push((name.clone(), left_out));
+        }
         let mut out = Cursor::new(Vec::new());
         let mut writer = zip::ZipWriter::new(&mut out);
         for i in 0..archive.len() {
-            let name: String = {
-                let file = archive.by_index_raw(i).ok()?;
-                file.name().ok()?.to_string()
-            };
-            let sheet = name.starts_with("xl/worksheets/") && name.ends_with(".xml");
-            let cut = if sheet {
+            let name: String = archive.by_index_raw(i).ok()?.name().ok()?.to_string();
+            if name.starts_with("xl/tables/") && name.ends_with(".xml") {
                 let mut xml = Vec::new();
                 archive
                     .by_index(i)
@@ -390,62 +675,263 @@ mod workbook_page {
                     .take(MAX_SHEET_BYTES)
                     .read_to_end(&mut xml)
                     .ok()?;
-                first_rows(&xml)
-            } else {
-                None
-            };
-            match cut {
-                Some(xml) => {
-                    writer
-                        .start_file(&*name, zip::write::SimpleFileOptions::default())
-                        .ok()?;
-                    writer.write_all(&xml).ok()?;
-                }
-                None => writer.raw_copy_file(archive.by_index_raw(i).ok()?).ok()?,
+                writer
+                    .start_file(&*name, zip::write::SimpleFileOptions::default())
+                    .ok()?;
+                writer.write_all(&cut_table(&xml, room).unwrap_or(xml)).ok()?;
+                continue;
             }
+            if !(name.starts_with("xl/worksheets/") && name.ends_with(".xml")) {
+                writer.raw_copy_file(archive.by_index_raw(i).ok()?).ok()?;
+                continue;
+            }
+            let xml = match cut.remove(name.as_str()) {
+                Some(xml) => xml,
+                None => {
+                    let mut xml = Vec::new();
+                    archive
+                        .by_index(i)
+                        .ok()?
+                        .take(MAX_SHEET_BYTES)
+                        .read_to_end(&mut xml)
+                        .ok()?;
+                    cut_sheet(&xml, Room { cells: 0, ..room })?.0
+                }
+            };
+            writer
+                .start_file(&*name, zip::write::SimpleFileOptions::default())
+                .ok()?;
+            writer.write_all(&xml).ok()?;
         }
         writer.finish().ok()?;
-        Some(out.into_inner())
+        Some((out.into_inner(), cuts))
     }
 
-    pub(super) fn first_rows(xml: &[u8]) -> Option<Vec<u8>> {
+    pub(super) fn cut_sheet(xml: &[u8], room: Room) -> Option<(Vec<u8>, usize, Cut)> {
         let xml = xml.strip_prefix(b"\xEF\xBB\xBF".as_slice()).unwrap_or(xml);
-        let mut reader = Reader::from_reader(xml);
-        let mut rows = 0;
+        let mut out = Vec::new();
+        let (mut copied, mut offset) = (0, 0);
+        let reader_of = |xml| {
+            let mut reader = Reader::from_reader(xml);
+            reader.config_mut().allow_unmatched_ends = true;
+            reader
+        };
+        let mut reader = reader_of(xml);
+        let (mut rows, mut cells, mut column) = (0, 0, 0);
+        let (mut row, mut left_out) = (0, Cut::default());
         loop {
-            let before = reader.buffer_position() as usize;
+            let before = offset + reader.buffer_position() as usize;
             match reader.read_event().ok()? {
                 Event::Start(tag) | Event::Empty(tag) if tag.local_name().as_ref() == "row" => {
-                    if rows == ROWS {
-                        let end = before + rows_end(&xml[before..])?;
-                        let mut cut = xml[..before].to_vec();
-                        cut.extend_from_slice(&xml[end..]);
-                        return Some(cut);
+                    if rows == room.rows || cells >= room.cells {
+                        left_out.rows.get_or_insert(row);
+                        out.extend_from_slice(&xml[copied..before]);
+                        copied = before + end_tag(&xml[before..], b"sheetData", true)?;
+                        break;
                     }
                     rows += 1;
+                    column = 0;
+                    row = tag
+                        .try_get_attribute("r")
+                        .ok()
+                        .flatten()
+                        .and_then(|r| r.value.parse().ok())
+                        .unwrap_or(row + 1);
                 }
-                Event::Eof => return None,
+                Event::Start(tag) | Event::Empty(tag) if tag.local_name().as_ref() == "c" => {
+                    column = column_of(&tag).unwrap_or(column + 1);
+                    if column > room.columns {
+                        left_out.columns = true;
+                    } else if cells >= room.cells {
+                        left_out.rows.get_or_insert(row);
+                    }
+                    if column > room.columns || cells >= room.cells {
+                        out.extend_from_slice(&xml[copied..before]);
+                        copied = before + end_tag(&xml[before..], b"row", false)?;
+                        offset = copied;
+                        reader = reader_of(&xml[copied..]);
+                        continue;
+                    }
+                    cells += 1;
+                }
+                Event::Eof => break,
                 _ => {}
             }
         }
+        out.extend_from_slice(&xml[copied..]);
+        Some((out, cells, left_out))
     }
 
-    fn rows_end(xml: &[u8]) -> Option<usize> {
-        const NAME: &[u8] = b"sheetData>";
-        let mut until = xml.len();
-        while let Some(at) = xml[..until].windows(NAME.len()).rposition(|window| window == NAME) {
-            let open = xml[..at].iter().rposition(|&byte| byte == b'<')?;
-            let between = &xml[open + 1..at];
-            if between.first() == Some(&b'/')
-                && between[1..]
-                    .iter()
-                    .all(|&byte| byte.is_ascii_alphanumeric() || byte == b':')
-            {
-                return Some(open);
-            }
-            until = at;
+    pub(super) fn cut_table(xml: &[u8], room: Room) -> Option<Vec<u8>> {
+        let text = std::str::from_utf8(xml).ok()?;
+        let start = text.find(" ref=\"")? + 6;
+        let end = start + text[start..].find('"')?;
+        let range = &text[start..end];
+        let (first, last) = range.split_once(':')?;
+        let place = |cell: &str| -> Option<(usize, usize)> {
+            let letters: String = cell.chars().take_while(char::is_ascii_alphabetic).collect();
+            let row: usize = cell[letters.len()..].parse().ok()?;
+            let column = letters.bytes().try_fold(0usize, |column, letter| {
+                column
+                    .checked_mul(26)?
+                    .checked_add(usize::from(letter.to_ascii_uppercase() - b'A') + 1)
+            })?;
+            Some((column, row))
+        };
+        let ((first_column, first_row), (last_column, last_row)) = (place(first)?, place(last)?);
+        let kept_last_column = last_column
+            .min(first_column + room.columns.saturating_sub(1))
+            .max(first_column);
+        let kept_last_row = last_row.min(first_row + room.rows).max(first_row);
+        if (kept_last_column, kept_last_row) == (last_column, last_row) {
+            return None;
         }
-        None
+        let name = |mut column: usize| {
+            let mut letters = Vec::new();
+            while column > 0 {
+                column -= 1;
+                letters.push(b'A' + (column % 26) as u8);
+                column /= 26;
+            }
+            letters.reverse();
+            String::from_utf8(letters).unwrap_or_default()
+        };
+        let kept = format!("{first}:{}{kept_last_row}", name(kept_last_column));
+        let text = text.replace(&format!("ref=\"{range}\""), &format!("ref=\"{kept}\""));
+        let columns = kept_last_column - first_column + 1;
+        let Some(open) = text.find("<tableColumns") else {
+            return Some(text.into_bytes());
+        };
+        let close = text[open..].find("</tableColumns>").map(|at| open + at)?;
+        let inside_start = open + text[open..].find('>')? + 1;
+        let mut out = String::with_capacity(text.len());
+        out.push_str(&text[..open]);
+        let _ = write!(out, r#"<tableColumns count="{columns}">"#);
+        let (mut at, mut taken) = (inside_start, 0);
+        while taken < columns {
+            let Some(found) = text[at..close].find("<tableColumn") else {
+                break;
+            };
+            let begin = at + found;
+            let head_end = begin + text[begin..].find('>')?;
+            let end = if text[..=head_end].ends_with("/>") {
+                head_end + 1
+            } else {
+                begin + text[begin..].find("</tableColumn>")? + "</tableColumn>".len()
+            };
+            out.push_str(&text[begin..end]);
+            at = end;
+            taken += 1;
+        }
+        out.push_str(&text[close..]);
+        Some(out.into_bytes())
+    }
+
+    fn column_of(tag: &BytesStart) -> Option<usize> {
+        let reference = tag.try_get_attribute("r").ok()??.value;
+        let mut column: usize = 0;
+        for letter in reference.bytes().take_while(|byte| byte.is_ascii_alphabetic()) {
+            column = column
+                .checked_mul(26)?
+                .checked_add(usize::from(letter.to_ascii_uppercase() - b'A') + 1)?;
+        }
+        (column > 0).then_some(column)
+    }
+
+    fn end_tag(xml: &[u8], name: &[u8], last: bool) -> Option<usize> {
+        let name = [name, b">"].concat();
+        let is_end = |at: usize| {
+            let open = xml[..at].iter().rposition(|&byte| byte == b'<');
+            open.filter(|&open| {
+                let between = &xml[open + 1..at];
+                between.first() == Some(&b'/')
+                    && (between.len() == 1 || between.ends_with(b":"))
+                    && between[1..]
+                        .iter()
+                        .all(|&byte| byte.is_ascii_alphanumeric() || byte == b':' || byte == b'_' || byte == b'-')
+            })
+        };
+        let mut found = xml
+            .windows(name.len())
+            .enumerate()
+            .filter(|(_, window)| *window == name.as_slice())
+            .map(|(at, _)| at);
+        if last {
+            let mut until = xml.len();
+            while let Some(at) = xml[..until]
+                .windows(name.len())
+                .rposition(|window| window == name.as_slice())
+            {
+                if let Some(open) = is_end(at) {
+                    return Some(open);
+                }
+                until = at;
+            }
+            None
+        } else {
+            found.find_map(is_end)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        const ROOM: Room = Room {
+            rows: 100,
+            columns: 3,
+            cells: 1_000,
+        };
+
+        fn sheet(rows: usize, columns: usize) -> String {
+            let rows: String = (1..=rows)
+                .map(|n| {
+                    let cells: String = (0..columns)
+                        .map(|c| format!(r#"<c r="{}{n}"><v>{n}</v></c>"#, (b'A' + c as u8) as char))
+                        .collect();
+                    format!(r#"<row r="{n}">{cells}</row>"#)
+                })
+                .collect();
+            format!(
+                r#"<?xml version="1.0"?><worksheet xmlns="x"><cols><col min="1" max="1" width="9"/></cols><sheetData>{rows}</sheetData><mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells></worksheet>"#
+            )
+        }
+
+        fn cut_of(xml: &str, room: Room) -> (String, usize, Cut) {
+            let (cut, kept, left_out) = cut_sheet(xml.as_bytes(), room).unwrap();
+            (String::from_utf8(cut).unwrap(), kept, left_out)
+        }
+
+        #[test]
+        fn sheet_truncated_to_first_rows() {
+            let (cut, kept, left_out) = cut_of(&sheet(150, 1), ROOM);
+            assert_eq!((cut.matches("<row ").count(), kept), (100, 100));
+            assert_eq!(
+                left_out,
+                Cut {
+                    rows: Some(100),
+                    columns: false
+                }
+            );
+            assert!(cut.contains(r#"<row r="100">"#) && !cut.contains(r#"<row r="101">"#));
+            assert!(
+                cut.ends_with(
+                    r#"</row></sheetData><mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells></worksheet>"#
+                ),
+                "{}",
+                &cut[cut.len() - 120..]
+            );
+            assert!(cut.contains("<cols>"));
+            assert_eq!(
+                cut_sheet(sheet(100, 1).as_bytes(), ROOM).unwrap(),
+                (sheet(100, 1).into_bytes(), 100, Cut::default())
+            );
+            let prefixed = sheet(101, 1)
+                .replace("sheetData>", "x:sheetData>")
+                .replace("<row ", "<x:row ")
+                .replace("</row>", "</x:row>");
+            assert!(cut_of(&prefixed, ROOM).0.contains("</x:row></x:sheetData>"));
+        }
     }
 }
 
@@ -453,20 +939,39 @@ mod docx_page {
     use std::{
         io::{Cursor, Read},
         panic::{AssertUnwindSafe, catch_unwind},
+        sync::Arc,
     };
 
     use docxide_pdf::{ConvertOptions, convert_docx_bytes_to_pdf_bytes_with};
     use quick_xml::{Reader, events::Event};
 
-    const MAX_BYTES: u64 = 64 * 1024 * 1024;
+    pub(super) const MAX_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_XML_BYTES: u64 = 32 * 1024 * 1024;
     const MAX_BLOCKS: usize = 120;
     const MAX_TEXT: usize = 8_000;
 
     pub fn first_page(path: &str, size: u32) -> Option<Vec<u8>> {
+        if let Some(made) = super::whole::kept(path) {
+            return super::pdf::page_bytes(Arc::clone(&made.pdf), size, 0);
+        }
         let bytes = super::read_whole(path, MAX_BYTES)?;
         let _slot = super::pdf::slots().take();
-        catch_unwind(AssertUnwindSafe(|| draw(&bytes, size))).ok().flatten()
+        catch_unwind(AssertUnwindSafe(|| match super::family_of(path) {
+            Some(super::Family::OpenText) => draw(
+                &super::opendocument::text::docx(
+                    &bytes,
+                    Some(super::opendocument::text::Limit {
+                        blocks: MAX_BLOCKS,
+                        chars: MAX_TEXT,
+                    }),
+                )?,
+                size,
+            ),
+            Some(super::Family::Epub) => draw(&super::epub::docx(&bytes, Some(MAX_BLOCKS))?, size),
+            _ => draw(&bytes, size),
+        }))
+        .ok()
+        .flatten()
     }
 
     fn draw(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
@@ -474,6 +979,10 @@ mod docx_page {
         let source = cut.as_deref().unwrap_or(bytes);
         let pdf = convert_docx_bytes_to_pdf_bytes_with(source, &ConvertOptions::new()).ok()?;
         super::pdf::draw_bytes(pdf, size)
+    }
+
+    pub(super) fn whole(bytes: &[u8]) -> Option<Vec<u8>> {
+        convert_docx_bytes_to_pdf_bytes_with(bytes, &ConvertOptions::new()).ok()
     }
 
     fn cut_down(bytes: &[u8]) -> Option<Vec<u8>> {

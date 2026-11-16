@@ -84,6 +84,108 @@ fn read(path: &Path, times: &dyn Fn(f64) -> Vec<f64>, emit: &mut dyn FnMut(Unit)
     }
 }
 
+#[allow(deprecated)]
+pub fn sound(path: &Path, from: f64, seconds: Option<f64>, each: &mut dyn FnMut(&[f32]) -> bool) -> Result<(), String> {
+    use objc2::{AnyThread, rc::Retained, runtime::AnyObject};
+    use objc2_av_foundation::{AVAssetReader, AVAssetReaderTrackOutput, AVMediaTypeAudio};
+    use objc2_core_media::CMTimeRange;
+    use objc2_foundation::{NSDictionary, NSNumber};
+
+    let path = path.to_str().ok_or("the file's name can't be used")?;
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+        let asset = AVURLAsset::URLAssetWithURL_options(&url, None);
+        if !asset.isReadable() {
+            return Err("macOS can't open this kind of file".into());
+        }
+        let tracks = asset.tracksWithMediaType(AVMediaTypeAudio.ok_or("macOS has no type for sound")?);
+        let track = tracks.firstObject().ok_or("there is no sound in it")?;
+        let reader = AVAssetReader::assetReaderWithAsset_error(&asset)
+            .map_err(|e| format!("macOS can't read its sound: {}", e.localizedDescription()))?;
+        let keys = [
+            "AVFormatIDKey",
+            "AVSampleRateKey",
+            "AVNumberOfChannelsKey",
+            "AVLinearPCMBitDepthKey",
+            "AVLinearPCMIsFloatKey",
+            "AVLinearPCMIsNonInterleaved",
+            "AVLinearPCMIsBigEndianKey",
+        ]
+        .map(NSString::from_str);
+        let values: [Retained<NSNumber>; 7] = [
+            NSNumber::new_u32(u32::from_be_bytes(*b"lpcm")),
+            NSNumber::new_f64(f64::from(super::resample::MODEL_RATE)),
+            NSNumber::new_u32(1),
+            NSNumber::new_u32(32),
+            NSNumber::new_bool(true),
+            NSNumber::new_bool(false),
+            NSNumber::new_bool(false),
+        ];
+        let key_refs: Vec<&NSString> = keys.iter().map(|key| &**key).collect();
+        let value_refs: Vec<&AnyObject> = values.iter().map(|value| value.as_ref()).collect();
+        let settings = NSDictionary::from_slices(&key_refs, &value_refs);
+        let output = AVAssetReaderTrackOutput::initWithTrack_outputSettings(
+            AVAssetReaderTrackOutput::alloc(),
+            &track,
+            Some(&settings),
+        );
+        output.setAlwaysCopiesSampleData(false);
+        if !reader.canAddOutput(&output) {
+            return Err("macOS can't decode its sound".into());
+        }
+        reader.addOutput(&output);
+        if from > 0.0 || seconds.is_some() {
+            let start = CMTime::with_seconds(from, TIMESCALE);
+            let duration = match seconds {
+                Some(seconds) => CMTime::with_seconds(seconds, TIMESCALE),
+                None => CMTime::with_seconds((asset.duration().seconds() - from).max(0.0), TIMESCALE),
+            };
+            reader.setTimeRange(CMTimeRange { start, duration });
+        }
+        if !reader.startReading() {
+            let why = reader
+                .error()
+                .map(|e| e.localizedDescription().to_string())
+                .unwrap_or_default();
+            return Err(format!("macOS can't decode its sound: {why}"));
+        }
+        let mut samples: Vec<f32> = Vec::new();
+        while let Some(buffer) = output.copyNextSampleBuffer() {
+            let Some(block) = buffer.data_buffer() else { continue };
+            let length = block.data_length();
+            if length < 4 {
+                continue;
+            }
+            samples.clear();
+            samples.resize(length / 4, 0.0);
+            let room = std::ptr::NonNull::new(samples.as_mut_ptr().cast()).ok_or("no room for the sound")?;
+            if block.copy_data_bytes(0, samples.len() * 4, room) != 0 {
+                continue;
+            }
+            if !each(&samples) {
+                reader.cancelReading();
+                return Ok(());
+            }
+        }
+        match reader.error() {
+            Some(e) if samples.is_empty() => Err(format!("macOS can't decode its sound: {}", e.localizedDescription())),
+            _ => Ok(()),
+        }
+    })
+}
+
+pub fn sound_length(path: &Path) -> Option<f64> {
+    let path = path.to_str()?;
+    objc2::rc::autoreleasepool(|_| {
+        let seconds = unsafe {
+            AVURLAsset::URLAssetWithURL_options(&NSURL::fileURLWithPath(&NSString::from_str(path)), None)
+                .duration()
+                .seconds()
+        };
+        (seconds.is_finite() && seconds > 0.0).then_some(seconds)
+    })
+}
+
 fn frame_times(duration: f64) -> Vec<f64> {
     if !(duration > 0.0) {
         return vec![0.0];

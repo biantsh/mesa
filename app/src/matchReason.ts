@@ -1,5 +1,5 @@
 import type { SearchHit } from "./api";
-import { pagingOf } from "./paging";
+import { atIsPage, pagingOf } from "./paging";
 
 export interface MatchReason {
   kind: "words" | "meaning" | "filters";
@@ -33,7 +33,7 @@ export function matchReason({ hit, query, withFiles, weak }: Found): MatchReason
   const where =
     hit.at === null
       ? undefined
-      : paging
+      : paging && atIsPage(hit.name)
         ? `Best match on ${paging} ${hit.at}`
         : (hit.category === "video" || hit.category === "audio") && hit.at > 0
           ? `Best match at ${formatMoment(hit.at)}`

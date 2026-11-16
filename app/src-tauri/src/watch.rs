@@ -278,6 +278,10 @@ impl State {
     }
 
     fn note(&mut self, path: PathBuf, what: What) {
+        let (path, what) = match browse::package_holding(&path) {
+            Some(package) => (package, What::Changed),
+            None => (path, what),
+        };
         if let Some(heard) = self.heard.get_mut(&path) {
             heard.hear(what);
             return;
@@ -357,7 +361,7 @@ impl State {
                 Err(e) if e.kind() == io::ErrorKind::NotFound => gone.push(path),
                 Err(_) => {}
                 Ok(_) if hidden_below_a_root(&path, &roots) => {}
-                Ok(metadata) if metadata.is_dir() => {
+                Ok(metadata) if metadata.is_dir() && !browse::is_package(&path) => {
                     if heard.arrived {
                         look.push(path);
                     }

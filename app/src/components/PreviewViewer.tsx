@@ -42,10 +42,18 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
 
   const [page, setPage] = useState(firstPage);
   const [pages, setPages] = useState<number | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     if (!paged) return;
     let live = true;
-    api.pageCount(hit.path).then((count) => live && setPages(count), () => {});
+    api.paging(hit.path).then(
+      (paging) => {
+        if (!live) return;
+        setPages(paging?.pages ?? null);
+        setNote(paging?.note ?? null);
+      },
+      () => {},
+    );
     return () => {
       live = false;
     };
@@ -209,6 +217,11 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
                 <ChevronRight size={18} aria-hidden />
               </IconButton>
             </div>
+          )}
+          {note && (
+            <span className={styles.note} data-tooltip={note}>
+              {note}
+            </span>
           )}
           <Button variant="primary" onClick={onOpen}>
             Open

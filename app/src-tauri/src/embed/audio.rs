@@ -2,7 +2,7 @@ use std::{fs::File, path::Path};
 
 use symphonia::core::{
     audio::SampleBuffer,
-    codecs::{CODEC_TYPE_NULL, DecoderOptions},
+    codecs::{CODEC_TYPE_NULL, CODEC_TYPE_OPUS, DecoderOptions},
     errors::Error as DecodeError,
     formats::{FormatOptions, FormatReader},
     io::MediaSourceStream,
@@ -25,7 +25,21 @@ const MAX_CLIPS: usize = 32;
 type Emit<'a> = &'a mut dyn FnMut(Unit) -> bool;
 
 pub fn file(path: &Path, emit: Emit) -> Result<(), String> {
-    let mut sound = Sound::open(path)?;
+    let sent = std::cell::Cell::new(false);
+    let mut counted = |unit: Unit| {
+        sent.set(true);
+        emit(unit)
+    };
+    let read = Sound::open(path).and_then(|sound| read_through(sound, &mut counted));
+    match read {
+        Err(why) if !sent.get() => {
+            system_file(path, &mut counted).map_err(|system| if system.is_empty() { why } else { system })
+        }
+        read => read,
+    }
+}
+
+fn read_through(mut sound: Sound, emit: Emit) -> Result<(), String> {
     if let Some(starts) = sound.seconds().and_then(spread_starts) {
         return sound.clips_at(&starts, emit);
     }
@@ -42,6 +56,87 @@ pub fn file(path: &Path, emit: Emit) -> Result<(), String> {
     sound.finish(&mut resampled);
     clips.push(&resampled);
     clips.finish()
+}
+
+fn system_file(path: &Path, emit: Emit) -> Result<(), String> {
+    if let Some(starts) = system_length(path).and_then(spread_starts) {
+        return system_clips_at(path, &starts, emit);
+    }
+    let mut clips = Clips::new(emit);
+    system_sound(path, 0.0, None, &mut |sound| clips.push(sound))?;
+    clips.finish()
+}
+
+fn system_clips_at(path: &Path, starts: &[f64], emit: Emit) -> Result<(), String> {
+    let mut sent = 0;
+    for &start in starts {
+        let start = start.max(0.0);
+        let mut clip = Vec::<i16>::with_capacity(CLIP);
+        let read = system_sound(path, start, Some(CLIP as f64 / RATE as f64), &mut |sound| {
+            clip.extend(sound.iter().map(|s| (s.clamp(-1.0, 1.0) * 32767.0).round() as i16));
+            clip.len() < CLIP
+        });
+        clip.truncate(CLIP);
+        if read.is_err() || clip.len() < SHORTEST {
+            continue;
+        }
+        sent += 1;
+        if !emit(Unit {
+            locator: (start * 1000.0).round() as u64,
+            input: Prepared::Audio(wav(&clip)),
+        }) {
+            return Ok(());
+        }
+    }
+    if sent == 0 {
+        return Err("no sound could be decoded from it".into());
+    }
+    Ok(())
+}
+
+fn system_sound(
+    path: &Path,
+    from: f64,
+    seconds: Option<f64>,
+    each: &mut dyn FnMut(&[f32]) -> bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        super::avfoundation::sound(path, from, seconds, each)
+    }
+    #[cfg(windows)]
+    {
+        super::video::sound(path, from, seconds, each)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        super::gstreamer::sound(path, from, seconds, each)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (path, from, seconds, each);
+        Err(String::new())
+    }
+}
+
+fn system_length(path: &Path) -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    {
+        super::avfoundation::sound_length(path)
+    }
+    #[cfg(windows)]
+    {
+        super::video::sound_length(path)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        super::gstreamer::sound_length(path)
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path;
+        None
+    }
 }
 
 pub fn clip_count(seconds: f64) -> usize {
@@ -75,17 +170,92 @@ fn spread_starts(seconds: f64) -> Option<Vec<f64>> {
 }
 
 pub fn length(path: &Path) -> Option<f64> {
-    Sound::open(path).ok()?.seconds()
+    match Sound::open(path) {
+        Ok(sound) => sound.seconds(),
+        Err(_) => system_length(path),
+    }
 }
 
 pub fn clips_at(path: &Path, starts: &[f64], emit: Emit) -> Result<(), String> {
-    Sound::open(path)?.clips_at(starts, emit)
+    match Sound::open(path) {
+        Ok(mut sound) => sound.clips_at(starts, emit),
+        Err(why) => system_clips_at(path, starts, emit).map_err(|_| why),
+    }
+}
+
+pub fn clips_around(path: &Path, places: impl FnOnce(usize) -> Vec<f64>, emit: Emit) -> bool {
+    let mut sent = false;
+    let mut counted = |unit: Unit| {
+        sent = true;
+        emit(unit)
+    };
+    let starts = |seconds: f64| -> Vec<f64> {
+        places(clip_count(seconds))
+            .into_iter()
+            .map(|at| clip_start(seconds, at))
+            .collect()
+    };
+    match Sound::open(path) {
+        Ok(mut sound) => {
+            if let Some(seconds) = sound.seconds() {
+                let _ = sound.clips_at(&starts(seconds), &mut counted);
+            }
+        }
+        Err(_) => {
+            if let Some(seconds) = system_length(path) {
+                let _ = system_clips_at(path, &starts(seconds), &mut counted);
+            }
+        }
+    }
+    sent
+}
+
+enum Decoder {
+    Symphonia(Box<dyn symphonia::core::codecs::Decoder>),
+    Opus(Box<Opus>),
+}
+
+struct Opus {
+    decoder: rusty_opus::OpusDecoder,
+    channels: usize,
+    skip: usize,
+    pcm: Vec<f32>,
+}
+
+const OPUS_MOST: usize = MODEL_RATE as usize * 120 / 1000;
+
+impl Opus {
+    fn new(head: Option<&[u8]>, channels: Option<usize>) -> Result<Self, String> {
+        let head = head.filter(|head| head.starts_with(b"OpusHead"));
+        let channels = head
+            .and_then(|head| head.get(9))
+            .map(|&count| usize::from(count))
+            .or(channels)
+            .unwrap_or(2);
+        if head.and_then(|head| head.get(18)).is_some_and(|&family| family != 0) || !(1..=2).contains(&channels) {
+            return Err(format!(
+                "its Opus sound has {channels} channels in a layout that isn't read"
+            ));
+        }
+        let skip = head
+            .and_then(|head| Some(usize::from(u16::from_le_bytes([*head.get(10)?, *head.get(11)?]))))
+            .unwrap_or(0)
+            / 3;
+        let decoder = rusty_opus::OpusDecoder::new(MODEL_RATE as i32, channels)
+            .map_err(|e| format!("can't decode its Opus sound: {e}"))?;
+        Ok(Self {
+            decoder,
+            channels,
+            skip,
+            pcm: vec![0.0; OPUS_MOST * channels],
+        })
+    }
 }
 
 struct Sound {
     format: Box<dyn FormatReader>,
     track_id: u32,
-    decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    decoder: Decoder,
     samples: Option<SampleBuffer<f32>>,
     resampler: Option<Resampler>,
     mono: Vec<f32>,
@@ -100,19 +270,39 @@ impl Sound {
         if let Some(extension) = path.extension().and_then(|e| e.to_str()) {
             hint.with_extension(extension);
         }
-        let format = symphonia::default::get_probe()
-            .format(&hint, stream, &FormatOptions::default(), &MetadataOptions::default())
-            .map_err(|e| format!("not a sound the reader knows: {e}"))?
-            .format;
+        let probe = symphonia::default::get_probe();
+        let format = match probe.format(&hint, stream, &FormatOptions::default(), &MetadataOptions::default()) {
+            Ok(probed) => probed.format,
+            Err(why) => {
+                let (sound, codec) =
+                    super::demux::sound_of(path).ok_or_else(|| format!("not a sound the reader knows: {why}"))?;
+                let mut hint = Hint::new();
+                hint.with_extension(codec.extension());
+                let stream = MediaSourceStream::new(Box::new(sound), Default::default());
+                probe
+                    .format(&hint, stream, &FormatOptions::default(), &MetadataOptions::default())
+                    .map_err(|e| format!("can't read its sound: {e}"))?
+                    .format
+            }
+        };
         let track = format
             .tracks()
             .iter()
             .find(|track| track.codec_params.codec != CODEC_TYPE_NULL)
             .ok_or("there is no sound in it")?;
         let track_id = track.id;
-        let decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
-            .map_err(|e| format!("can't decode this kind of sound: {e}"))?;
+        let decoder = if track.codec_params.codec == CODEC_TYPE_OPUS {
+            Decoder::Opus(Box::new(Opus::new(
+                track.codec_params.extra_data.as_deref(),
+                track.codec_params.channels.map(|channels| channels.count()),
+            )?))
+        } else {
+            Decoder::Symphonia(
+                symphonia::default::get_codecs()
+                    .make(&track.codec_params, &DecoderOptions::default())
+                    .map_err(|e| format!("can't decode this kind of sound: {e}"))?,
+            )
+        };
         Ok(Self {
             format,
             track_id,
@@ -140,7 +330,26 @@ impl Sound {
                 Err(e) => return Err(format!("can't read the sound: {e}")),
             }
         };
-        let audio = match self.decoder.decode(&packet) {
+        let decoder = match &mut self.decoder {
+            Decoder::Symphonia(decoder) => decoder,
+            Decoder::Opus(opus) => {
+                let Ok(frames) = opus.decoder.decode(packet.buf(), OPUS_MOST, &mut opus.pcm) else {
+                    return Ok(true);
+                };
+                self.decoded = true;
+                let skipped = opus.skip.min(frames);
+                opus.skip -= skipped;
+                self.mono.clear();
+                self.mono.extend(
+                    opus.pcm[skipped * opus.channels..frames * opus.channels]
+                        .chunks_exact(opus.channels)
+                        .map(|frame| frame.iter().sum::<f32>() / opus.channels as f32),
+                );
+                out.extend_from_slice(&self.mono);
+                return Ok(true);
+            }
+        };
+        let audio = match decoder.decode(&packet) {
             Ok(audio) => audio,
             Err(DecodeError::DecodeError(_)) | Err(DecodeError::IoError(_)) => return Ok(true),
             Err(e) => return Err(format!("can't decode the sound: {e}")),
@@ -195,7 +404,14 @@ impl Sound {
             if self.format.seek(SeekMode::Accurate, to).is_err() {
                 continue;
             }
-            self.decoder.reset();
+            match &mut self.decoder {
+                Decoder::Symphonia(decoder) => decoder.reset(),
+                Decoder::Opus(opus) => {
+                    if let Ok(fresh) = rusty_opus::OpusDecoder::new(MODEL_RATE as i32, opus.channels) {
+                        opus.decoder = fresh;
+                    }
+                }
+            }
             self.resampler = None;
             let mut clip = Vec::<i16>::with_capacity(CLIP);
             while clip.len() < CLIP && self.next(&mut sound).unwrap_or(false) {

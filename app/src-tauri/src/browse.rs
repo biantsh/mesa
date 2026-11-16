@@ -1,6 +1,7 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use serde::{Deserialize, Serialize};
@@ -16,18 +17,28 @@ const INDEXABLE: &[(Category, &[&str])] = &[
     (
         Category::Image,
         &[
-            "jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif",
+            "jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "dng",
+            "cr2", "cr3", "nef", "nrw", "arw", "srf", "sr2", "orf", "rw2", "pef", "raf", "srw",
         ],
     ),
-    (Category::Video, &["mp4", "m4v", "mov", "mkv", "avi", "webm"]),
+    (
+        Category::Video,
+        &[
+            "mp4", "m4v", "mov", "mkv", "avi", "webm", "3gp", "3g2", "mpg", "mpeg", "mts", "m2ts", "wmv",
+        ],
+    ),
     (
         Category::Audio,
-        &["mp3", "wav", "wave", "flac", "m4a", "m4b", "aac", "aiff", "aif", "ogg"],
+        &[
+            "mp3", "wav", "wave", "flac", "m4a", "m4b", "aac", "aiff", "aif", "ogg", "opus", "caf", "amr", "wma",
+        ],
     ),
     (
         Category::Document,
         &[
-            "pdf", "txt", "md", "markdown", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "ppsx", "rtf",
+            "pdf", "txt", "md", "markdown", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "ppsx", "odt", "ods",
+            "odp", "pages", "numbers", "key", "rtf", "epub", "dotx", "dotm", "xltx", "xltm", "potx", "potm", "ott",
+            "ots", "otp",
         ],
     ),
 ];
@@ -196,7 +207,7 @@ pub fn list(path: &str) -> io::Result<Listing> {
 pub fn describe(path: &Path) -> (Entry, bool) {
     let name = display_name(path);
     let (entry, missing) = match fs::metadata(path) {
-        Ok(metadata) if metadata.is_dir() => (
+        Ok(metadata) if metadata.is_dir() && !is_package(path) => (
             if path.parent().is_none() {
                 Entry::drive(path)
             } else {
@@ -507,16 +518,21 @@ fn entry_of(item: &fs::DirEntry) -> Option<Entry> {
         None
     };
     let is_dir = followed.as_ref().map_or(file_type.is_dir(), fs::Metadata::is_dir);
-    let shown = if is_dir {
+    let package = is_dir && is_package(&item.path());
+    let shown = if is_dir && !package {
         Shown::Folder
     } else {
-        Shown::File(category_of(&name)?)
+        Shown::File(category_of(&name).filter(|_| is_what_it_is_named(&item.path()))?)
     };
     let own = item.metadata().ok();
     if is_hidden_entry(&name, || own.clone()) {
         return None;
     }
-    let facts = followed.as_ref().or(own.as_ref()).and_then(indexer::facts_of);
+    let facts = if package {
+        indexer::package_facts(&item.path())
+    } else {
+        followed.as_ref().or(own.as_ref()).and_then(indexer::facts_of)
+    };
     let modified = facts.map(|(modified, _)| modified);
     let path = item.path();
     Some(match shown {
@@ -542,10 +558,10 @@ pub fn classify(item: &fs::DirEntry) -> Option<(String, Shown)> {
     if is_hidden(item, &name) {
         return None;
     }
-    let shown = if is_dir(item)? {
+    let shown = if is_dir(item)? && !is_package(&item.path()) {
         Shown::Folder
     } else {
-        Shown::File(category_of(&name)?)
+        Shown::File(category_of(&name).filter(|_| is_what_it_is_named(&item.path()))?)
     };
     Some((name, shown))
 }
@@ -617,16 +633,83 @@ pub fn is_hidden_path(path: &Path) -> bool {
 }
 
 pub fn is_listed_file(path: &Path) -> bool {
-    path.is_file()
+    is_file_like(path)
         && path
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| category_of(name).is_some())
+        && is_what_it_is_named(path)
+}
+
+pub fn is_what_it_is_named(path: &Path) -> bool {
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("key"))
+    {
+        return true;
+    }
+    if path.is_dir() {
+        return is_package(path);
+    }
+    let mut start = [0u8; 4];
+    fs::File::open(path)
+        .and_then(|mut file| io::Read::read_exact(&mut file, &mut start))
+        .is_ok()
+        && start == *b"PK\x03\x04"
+}
+
+const IWORK: [&str; 3] = ["pages", "numbers", "key"];
+
+pub fn is_package(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|extension| IWORK.iter().any(|known| extension.eq_ignore_ascii_case(known)))
+        && path.is_dir()
+        && (path.join("Index").is_dir() || path.join("Index.zip").is_file())
+}
+
+pub fn package_holding(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .skip(1)
+        .find(|above| is_package(above))
+        .map(Path::to_owned)
+}
+
+pub fn is_folder(path: &Path) -> bool {
+    path.is_dir() && !is_package(path)
+}
+
+pub fn is_file_like(path: &Path) -> bool {
+    path.is_file() || is_package(path)
+}
+
+pub fn package_state(path: &Path) -> Option<(u64, SystemTime)> {
+    fn add(folder: &Path, depth: usize, size: &mut u64, newest: &mut SystemTime) -> Option<()> {
+        let metadata = fs::symlink_metadata(folder).ok()?;
+        *newest = (*newest).max(metadata.modified().ok()?);
+        if depth > 8 {
+            return Some(());
+        }
+        for item in fs::read_dir(folder).ok()?.flatten() {
+            let Ok(kind) = item.file_type() else { continue };
+            if kind.is_dir() {
+                add(&item.path(), depth + 1, size, newest)?;
+            } else if kind.is_file() {
+                let metadata = item.metadata().ok()?;
+                *size += metadata.len();
+                *newest = (*newest).max(metadata.modified().ok()?);
+            }
+        }
+        Some(())
+    }
+    let (mut size, mut newest) = (0, SystemTime::UNIX_EPOCH);
+    add(path, 0, &mut size, &mut newest)?;
+    Some((size, newest))
 }
 
 pub fn has_listed_name(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| category_of(&name.to_string_lossy()).is_some())
+        && (!path.is_file() || is_what_it_is_named(path))
 }
 
 pub fn category_of(name: &str) -> Option<Category> {

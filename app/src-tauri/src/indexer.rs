@@ -62,7 +62,7 @@ fn take_next(shared: &Shared) -> Vec<Job> {
     let upcoming = lock(&shared.progress).upcoming(RUN_MOST);
     let mut run: Vec<Job> = Vec::new();
     for (ticket, id, root) in upcoming {
-        let is_dir = root.is_dir();
+        let is_dir = browse::is_folder(&root);
         if is_dir && !run.is_empty() {
             break;
         }
@@ -226,7 +226,7 @@ fn count_files(shared: &Shared, ticket: u64, root: &Path) {
         || lock(&shared.progress).has(ticket),
         found_in,
     );
-    if found > 0 && root.is_file() {
+    if found > 0 && browse::is_file_like(root) {
         found_in(root, found);
     }
     lock(&shared.progress).finish_counting(ticket);
@@ -244,7 +244,7 @@ fn supported_files(
     go_on: impl Fn() -> bool + Sync,
     found: impl Fn(&Path, u64) + Sync,
 ) -> u64 {
-    if root.is_dir() {
+    if browse::is_folder(root) {
         let total = AtomicU64::new(0);
         crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
             if !counted(&dir) || !go_on() {
@@ -263,7 +263,7 @@ fn supported_files(
             subdirs
         });
         total.into_inner()
-    } else if root.is_file()
+    } else if browse::is_file_like(root)
         && counted(root)
         && root
             .file_name()
@@ -284,7 +284,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
     let in_progress = tracking.is_in_progress();
     let mut walker = Walker::new(shared, tracking, root);
 
-    if root.is_dir() {
+    if browse::is_folder(root) {
         let (listed, found) = bounded::<ScannedDir>(LISTED_AHEAD);
         thread::scope(|scope| {
             scope.spawn(move || {
@@ -769,7 +769,7 @@ pub fn survey_folder(dir: &Path, mut file: impl FnMut(Category, PathBuf, u64)) -
     let mut subdirs = Vec::new();
     each_entry(dir, Categories::ALL, |item, _, shown| match shown {
         Shown::Folder => subdirs.push(item.path()),
-        Shown::File(category) => file(category, item.path(), item.metadata().map_or(0, |meta| meta.len())),
+        Shown::File(category) => file(category, item.path(), facts(item).map_or(0, |(_, size)| size)),
     })?;
     Some(subdirs)
 }
@@ -816,7 +816,7 @@ fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
 fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
     let name = path.file_name()?.to_string_lossy().into_owned();
     let category = browse::category_of(&name).filter(|&category| types.contains(category))?;
-    let (modified_ms, size) = facts_of(&fs::metadata(path).ok()?)?;
+    let (modified_ms, size) = facts_of_path(path)?;
     Some(ScannedDir {
         path: path.parent()?.to_owned(),
         files: vec![ScannedFile {
@@ -840,7 +840,23 @@ pub fn facts(item: &fs::DirEntry) -> Option<(i64, u64)> {
     } else {
         item.metadata().ok()?
     };
+    if metadata.is_dir() && browse::is_package(&item.path()) {
+        return package_facts(&item.path());
+    }
     facts_of(&metadata)
+}
+
+pub fn package_facts(path: &Path) -> Option<(i64, u64)> {
+    let (size, newest) = browse::package_state(path)?;
+    Some((unix_millis(newest), size))
+}
+
+fn facts_of_path(path: &Path) -> Option<(i64, u64)> {
+    if browse::is_package(path) {
+        package_facts(path)
+    } else {
+        facts_of(&fs::metadata(path).ok()?)
+    }
 }
 
 pub fn facts_of(metadata: &fs::Metadata) -> Option<(i64, u64)> {

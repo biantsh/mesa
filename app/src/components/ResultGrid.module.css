@@ -1,3 +1,9 @@
+@property --pane-room {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 @property --fade-top {
   syntax: "<length>";
   inherits: false;
@@ -26,7 +32,9 @@
   position: absolute;
   z-index: 1;
   left: calc((100% - var(--column)) / 2);
-  width: calc(var(--column) + var(--scrollbar-size));
+  --pane-room-to: 0px;
+  --pane-room: var(--pane-room-to);
+  width: calc(var(--column) - var(--pane-room-to) - round(nearest, var(--pane-room) - var(--pane-room-to), 1px) + var(--scrollbar-size));
   transform: translateX(calc(-1 * var(--results-shift, 0px)));
   top: 0;
   bottom: calc(var(--bottom-gap) + var(--for-progress) + var(--for-count));
@@ -52,14 +60,14 @@
     opacity calc(var(--focus-time) * 0.3) ease-out,
     visibility 0s linear calc(var(--focus-time) * 0.3),
     bottom var(--focus-time) var(--focus-ease),
-    width 260ms cubic-bezier(0.32, 0.72, 0, 1),
+    --pane-room 260ms cubic-bezier(0.32, 0.72, 0, 1),
     transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
     --fade-top var(--focus-time) var(--focus-ease),
     --fade-length var(--focus-time) var(--focus-ease);
 }
 
 .pane.besidePanel {
-  width: calc(var(--column) - var(--panel-drag-room, var(--panel-room, 0px)) + var(--scrollbar-size));
+  --pane-room-to: var(--panel-drag-room, var(--panel-room, 0px));
 }
 
 .pane::-webkit-scrollbar-track {
@@ -85,7 +93,7 @@
     opacity calc(var(--focus-time) * 0.5) ease var(--results-delay, calc(var(--focus-time) * 0.2)),
     visibility 0s,
     bottom var(--focus-time) var(--focus-ease),
-    width 260ms cubic-bezier(0.32, 0.72, 0, 1),
+    --pane-room 260ms cubic-bezier(0.32, 0.72, 0, 1),
     transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
     --fade-top var(--focus-time) var(--focus-ease),
     --fade-length var(--focus-time) var(--focus-ease);

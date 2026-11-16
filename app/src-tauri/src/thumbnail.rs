@@ -716,6 +716,21 @@ pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
         .or_else(|| crate::document_preview::render_after_system(path, size))
 }
 
+#[cfg(target_os = "macos")]
+fn video_frame(path: &str, size: u32) -> Option<Vec<u8>> {
+    if crate::browse::category_of(path) != Some(crate::browse::Category::Video) {
+        return None;
+    }
+    let picture = image::load_from_memory(&crate::embed::video_frame(Path::new(path))?).ok()?;
+    let picture = if picture.width() > size || picture.height() > size {
+        picture.resize(size, size, image::imageops::FilterType::Triangle)
+    } else {
+        picture
+    };
+    let rgba = picture.to_rgba8();
+    quicklook::encode_png(rgba.width(), rgba.height(), &rgba)
+}
+
 fn system_preview(path: &str, size: u32) -> Option<Vec<u8>> {
     #[cfg(windows)]
     {
@@ -723,7 +738,9 @@ fn system_preview(path: &str, size: u32) -> Option<Vec<u8>> {
     }
     #[cfg(target_os = "macos")]
     {
-        imageio::render(path, size).or_else(|| quicklook::render(path, size))
+        imageio::render(path, size)
+            .or_else(|| quicklook::render(path, size))
+            .or_else(|| video_frame(path, size))
     }
     #[cfg(target_os = "linux")]
     {
@@ -749,8 +766,7 @@ mod freedesktop {
 
     const SIZES: &[(&str, u32)] = &[("normal", 128), ("large", 256), ("x-large", 512), ("xx-large", 1024)];
     const PICTURES: &[&str] = &["jpg", "jpeg", "jfif", "jpe", "png", "gif", "webp", "bmp", "tif", "tiff"];
-    const HEIF: &[&str] = &["heic", "heif"];
-    const VIDEOS: &[&str] = &["mp4", "m4v", "mov", "mkv", "avi", "webm"];
+    const HEIF: &[&str] = &["heic", "heif", "avif"];
 
     pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
         let file = Path::new(path);
@@ -826,7 +842,10 @@ mod freedesktop {
         if HEIF.contains(&extension.as_str()) {
             return fit(from_rgb(crate::embed::heif::decode(file).ok()?)?, size);
         }
-        if VIDEOS.contains(&extension.as_str()) {
+        if crate::embed::RAW_EXTENSIONS.contains(&extension.as_str()) {
+            return fit(from_rgb(crate::embed::raw_photo(file).ok()?)?, size);
+        }
+        if crate::browse::category_of(path) == Some(crate::browse::Category::Video) {
             return fit(from_rgb(crate::embed::gstreamer::preview_frame(file)?)?, size);
         }
         if !PICTURES.contains(&extension.as_str()) {

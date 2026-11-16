@@ -3,12 +3,14 @@ use std::{path::Path, ptr, sync::OnceLock};
 use windows::{
     Win32::{
         Media::MediaFoundation::{
-            IMFAttributes, IMFMediaType, IMFSample, IMFSourceReader, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_SIZE,
-            MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE, MF_MT_VIDEO_ROTATION, MF_PD_DURATION,
-            MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-            MF_SOURCE_READER_MEDIASOURCE, MF_SOURCE_READERF_ENDOFSTREAM, MF_VERSION, MFCreateAttributes,
-            MFCreateMediaType, MFCreateSourceReaderFromURL, MFMediaType_Video, MFSTARTUP_FULL, MFStartup,
-            MFVideoFormat_RGB32,
+            IMFAttributes, IMFMediaType, IMFSample, IMFSourceReader, MF_MT_AUDIO_NUM_CHANNELS,
+            MF_MT_AUDIO_SAMPLES_PER_SECOND, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_SIZE, MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
+            MF_MT_VIDEO_ROTATION, MF_PD_DURATION, MF_SOURCE_READER_ALL_STREAMS,
+            MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, MF_SOURCE_READER_FIRST_AUDIO_STREAM,
+            MF_SOURCE_READER_FIRST_VIDEO_STREAM, MF_SOURCE_READER_MEDIASOURCE,
+            MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED, MF_SOURCE_READERF_ENDOFSTREAM, MF_VERSION, MFAudioFormat_Float,
+            MFCreateAttributes, MFCreateMediaType, MFCreateSourceReaderFromURL, MFMediaType_Audio, MFMediaType_Video,
+            MFSTARTUP_FULL, MFStartup, MFVideoFormat_RGB32,
         },
         System::Com::{COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize},
     },
@@ -18,6 +20,7 @@ use windows::{
 use super::{
     picture,
     prepare::{Prepared, Unit},
+    resample::{MODEL_RATE, Resampler},
 };
 
 const FRAME_EVERY: f64 = 10.0;
@@ -114,6 +117,147 @@ fn read(path: &Path, times: &dyn Fn(f64) -> Vec<f64>, emit: &mut dyn FnMut(Unit)
         }
         if sent == 0 {
             return Err("no frames could be read from it".into());
+        }
+        Ok(())
+    }
+}
+
+pub fn sound(path: &Path, from: f64, seconds: Option<f64>, each: &mut dyn FnMut(&[f32]) -> bool) -> Result<(), String> {
+    with_com(|| read_sound(path, from, seconds, each))
+}
+
+pub fn sound_length(path: &Path) -> Option<f64> {
+    let mut seconds = None;
+    let _ = with_com(|| {
+        startup()?;
+        let duration = unsafe {
+            duration_of(
+                &MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None::<&IMFAttributes>)
+                    .map_err(|e| e.to_string())?,
+            )
+        };
+        seconds = (duration > 0.0).then_some(duration);
+        Ok(())
+    });
+    seconds
+}
+
+fn read_sound(
+    path: &Path,
+    from: f64,
+    seconds: Option<f64>,
+    each: &mut dyn FnMut(&[f32]) -> bool,
+) -> Result<(), String> {
+    startup()?;
+    unsafe {
+        let reader = MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None::<&IMFAttributes>)
+            .map_err(|e| format!("Windows can't open it: {e}"))?;
+        let stream = MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32;
+        let _ = reader.SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS.0 as u32, false);
+        reader
+            .SetStreamSelection(stream, true)
+            .map_err(|_| "there is no sound in it".to_owned())?;
+        let wanted = MFCreateMediaType().map_err(|e| e.to_string())?;
+        wanted
+            .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)
+            .map_err(|e| e.to_string())?;
+        wanted
+            .SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_Float)
+            .map_err(|e| e.to_string())?;
+        reader
+            .SetCurrentMediaType(stream, None, &wanted)
+            .map_err(|e| format!("Windows has no decoder for its sound: {e}"))?;
+        let shape = |reader: &IMFSourceReader| -> Result<(usize, u32), String> {
+            let current = reader.GetCurrentMediaType(stream).map_err(|e| e.to_string())?;
+            let channels = current
+                .GetUINT32(&MF_MT_AUDIO_NUM_CHANNELS)
+                .map_err(|e| e.to_string())?
+                .max(1) as usize;
+            let rate = current
+                .GetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND)
+                .map_err(|e| e.to_string())?;
+            Ok((channels, rate))
+        };
+        let (mut channels, mut rate) = shape(&reader)?;
+        let start = (from.max(0.0) * HUNDRED_NANOSECONDS) as i64;
+        if start > 0 {
+            let position = windows::Win32::System::Com::StructuredStorage::PROPVARIANT::from(start);
+            reader
+                .SetCurrentPosition(&GUID::zeroed(), &position)
+                .map_err(|e| format!("can't move through its sound: {e}"))?;
+        }
+        let mut left = seconds.map(|seconds| (seconds * f64::from(MODEL_RATE)) as usize);
+        let mut resampler: Option<Resampler> = None;
+        let (mut mono, mut out) = (Vec::new(), Vec::new());
+        loop {
+            let (mut flags, mut timestamp) = (0u32, 0i64);
+            let mut sample: Option<IMFSample> = None;
+            reader
+                .ReadSample(
+                    stream,
+                    0,
+                    None,
+                    Some(&mut flags),
+                    Some(&mut timestamp),
+                    Some(&mut sample),
+                )
+                .map_err(|e| format!("can't read its sound: {e}"))?;
+            if flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED.0 as u32 != 0 {
+                (channels, rate) = shape(&reader)?;
+                resampler = None;
+            }
+            if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                break;
+            }
+            let Some(sample) = sample else { continue };
+            let buffer = sample.ConvertToContiguousBuffer().map_err(|e| e.to_string())?;
+            let (mut data, mut length) = (ptr::null_mut(), 0u32);
+            buffer
+                .Lock(&mut data, None, Some(&mut length))
+                .map_err(|e| e.to_string())?;
+            mono.clear();
+            if !data.is_null() {
+                let bytes = std::slice::from_raw_parts(data, length as usize);
+                let early = if timestamp < start {
+                    ((start - timestamp) as f64 / HUNDRED_NANOSECONDS * f64::from(rate)) as usize
+                } else {
+                    0
+                };
+                mono.extend(bytes.chunks_exact(4 * channels).skip(early).map(|frame| {
+                    frame
+                        .chunks_exact(4)
+                        .map(|four| f32::from_le_bytes([four[0], four[1], four[2], four[3]]))
+                        .sum::<f32>()
+                        / channels as f32
+                }));
+            }
+            let _ = buffer.Unlock();
+            out.clear();
+            if rate == MODEL_RATE {
+                out.extend_from_slice(&mono);
+            } else {
+                resampler
+                    .get_or_insert_with(|| Resampler::new(rate, MODEL_RATE))
+                    .push(&mono, &mut out);
+            }
+            if let Some(left) = left.as_mut() {
+                out.truncate(*left);
+                *left -= out.len();
+            }
+            let more = out.is_empty() || each(&out);
+            if !more || left == Some(0) {
+                return Ok(());
+            }
+        }
+        out.clear();
+        if let Some(resampler) = resampler.as_mut() {
+            resampler.finish(&mut out);
+        }
+        if let Some(left) = left {
+            out.truncate(left);
+        }
+        if !out.is_empty() {
+            each(&out);
         }
         Ok(())
     }

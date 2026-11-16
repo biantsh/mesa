@@ -236,18 +236,42 @@ pub fn remove_from_index(paths: Vec<String>, index: State<'_, Index>) -> Result<
 
 #[tauri::command(async)]
 pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
-    if !browse::is_listed_file(Path::new(&path)) {
+    let file = Path::new(&path);
+    if !browse::is_listed_file(file) {
         return Err("That isn't a file Mesa opens.".into());
     }
-    app.opener().open_path(path, None::<&str>).map_err(|e| e.to_string())
+    let kind = file.extension().map_or_else(
+        || "this kind of".to_owned(),
+        |extension| format!(".{}", extension.to_string_lossy().to_lowercase()),
+    );
+    #[cfg(target_os = "macos")]
+    if !has_app_for(file) {
+        return Err(format!("No app on this Mac opens {kind} files."));
+    }
+    app.opener().open_path(path.as_str(), None::<&str>).map_err(|e| {
+        let why = e.to_string();
+        if why.starts_with("Launcher") {
+            format!("Nothing on this computer opened it: no app may be set to open {kind} files.")
+        } else {
+            why
+        }
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn has_app_for(path: &Path) -> bool {
+    let url = objc2_foundation::NSURL::fileURLWithPath(&objc2_foundation::NSString::from_str(&path.to_string_lossy()));
+    objc2_app_kit::NSWorkspace::sharedWorkspace()
+        .URLForApplicationToOpenURL(&url)
+        .is_some()
 }
 
 #[tauri::command(async)]
-pub fn page_count(path: String) -> Option<usize> {
+pub fn paging(path: String) -> Option<crate::document_preview::Paging> {
     if !browse::is_listed_file(Path::new(&path)) {
         return None;
     }
-    crate::document_preview::page_count(&path)
+    crate::document_preview::paging(&path)
 }
 
 #[tauri::command]

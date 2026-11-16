@@ -77,6 +77,13 @@ pub fn xlsx(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
     documents::send_passages(path, &text, |n| n as u64, MAX_PASSAGES, emit, words)
 }
 
+pub fn shown_sheets(path: &Path) -> Result<Vec<(String, String)>, String> {
+    let mut package = Package::open(path, "an Excel workbook")?;
+    let workbook = package.main_part("xl/workbook.xml");
+    let relationships = package.relationships(&workbook);
+    sheets_of(&mut package, &workbook, &relationships)
+}
+
 pub fn pptx(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
     documents::send_sections(path, &slides_of(path)?, MAX_PASSAGES, emit, words)
 }

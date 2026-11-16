@@ -8,6 +8,7 @@ use gstreamer_video::{self as gst_video, prelude::*};
 use super::{
     picture,
     prepare::{Prepared, Unit},
+    resample::MODEL_RATE,
 };
 
 const FRAME_EVERY: f64 = 10.0;
@@ -16,6 +17,9 @@ const STEP_TIMEOUT: gst::ClockTime = gst::ClockTime::from_seconds(15);
 
 const SINK: &str = "videoflip video-direction=auto ! videoconvert ! videoscale ! video/x-raw,format=RGB,pixel-aspect-ratio=1/1 ! \
                     appsink name=frames sync=false max-buffers=1";
+
+const SOUND_SINK: &str = "audioconvert ! audioresample ! audio/x-raw,format=F32LE,layout=interleaved,channels=1,rate=16000 ! \
+                          appsink name=sound sync=false max-buffers=16";
 
 fn started() -> Result<(), String> {
     static STARTED: OnceLock<Result<(), String>> = OnceLock::new();
@@ -118,26 +122,11 @@ impl Video {
     }
 
     fn settle(&self, what: &str) -> Result<(), String> {
-        let bus = self.pipeline.bus().ok_or_else(|| what.to_owned())?;
-        match bus.timed_pop_filtered(STEP_TIMEOUT, &[gst::MessageType::AsyncDone, gst::MessageType::Error]) {
-            Some(message) => match message.view() {
-                gst::MessageView::AsyncDone(_) => Ok(()),
-                gst::MessageView::Error(error) => Err(explain(what, &error.error())),
-                _ => Err(what.to_owned()),
-            },
-            None => Err(format!("{what} (it took too long)")),
-        }
+        settle(&self.pipeline, what)
     }
 
     fn reason(&self, what: &str) -> String {
-        self.pipeline
-            .bus()
-            .and_then(|bus| bus.pop_filtered(&[gst::MessageType::Error]))
-            .and_then(|message| match message.view() {
-                gst::MessageView::Error(error) => Some(explain(what, &error.error())),
-                _ => None,
-            })
-            .unwrap_or_else(|| what.to_owned())
+        reason(&self.pipeline, what)
     }
 
     fn frame_at(&self, seconds: f64) -> Result<(Vec<u8>, u32, u32), String> {
@@ -168,6 +157,128 @@ impl Video {
             rgb.extend_from_slice(&data[row * stride..row * stride + width * 3]);
         }
         Ok((rgb, width as u32, height as u32))
+    }
+}
+
+fn settle(pipeline: &gst::Element, what: &str) -> Result<(), String> {
+    let bus = pipeline.bus().ok_or_else(|| what.to_owned())?;
+    match bus.timed_pop_filtered(STEP_TIMEOUT, &[gst::MessageType::AsyncDone, gst::MessageType::Error]) {
+        Some(message) => match message.view() {
+            gst::MessageView::AsyncDone(_) => Ok(()),
+            gst::MessageView::Error(error) => Err(explain(what, &error.error())),
+            _ => Err(what.to_owned()),
+        },
+        None => Err(format!("{what} (it took too long)")),
+    }
+}
+
+fn reason(pipeline: &gst::Element, what: &str) -> String {
+    pipeline
+        .bus()
+        .and_then(|bus| bus.pop_filtered(&[gst::MessageType::Error]))
+        .and_then(|message| match message.view() {
+            gst::MessageView::Error(error) => Some(explain(what, &error.error())),
+            _ => None,
+        })
+        .unwrap_or_else(|| what.to_owned())
+}
+
+pub fn sound(path: &Path, from: f64, seconds: Option<f64>, each: &mut dyn FnMut(&[f32]) -> bool) -> Result<(), String> {
+    let recording = Recording::open(path)?;
+    let from = from.max(0.0);
+    if from > 0.0 {
+        let at = gst::ClockTime::from_nseconds((from * 1e9) as u64);
+        recording
+            .pipeline
+            .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, at)
+            .map_err(|_| format!("GStreamer can't go to {from:.1} s in it"))?;
+        settle(&recording.pipeline, "GStreamer can't go to the place in its sound")?;
+    }
+    recording
+        .pipeline
+        .set_state(gst::State::Playing)
+        .map_err(|_| reason(&recording.pipeline, "GStreamer can't play its sound"))?;
+    let mut left = seconds.map(|seconds| (seconds * f64::from(MODEL_RATE)) as usize);
+    let mut samples = Vec::new();
+    while left != Some(0) {
+        let Some(sample) = recording.sink.try_pull_sample(STEP_TIMEOUT) else {
+            if recording.sink.is_eos() {
+                break;
+            }
+            return Err(reason(&recording.pipeline, "GStreamer stopped reading its sound"));
+        };
+        let Some(buffer) = sample.buffer() else { continue };
+        let Ok(map) = buffer.map_readable() else { continue };
+        let early = buffer.pts().map_or(0, |pts| {
+            ((from - pts.nseconds() as f64 / 1e9).max(0.0) * f64::from(MODEL_RATE)) as usize
+        });
+        samples.clear();
+        samples.extend(
+            map.chunks_exact(4)
+                .skip(early)
+                .map(|four| f32::from_le_bytes([four[0], four[1], four[2], four[3]])),
+        );
+        if let Some(left) = left.as_mut() {
+            samples.truncate(*left);
+            *left -= samples.len();
+        }
+        if !samples.is_empty() && !each(&samples) {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn sound_length(path: &Path) -> Option<f64> {
+    Some(Recording::open(path).ok()?.duration).filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+}
+
+struct Recording {
+    pipeline: gst::Element,
+    sink: gst_app::AppSink,
+    duration: f64,
+}
+
+impl Drop for Recording {
+    fn drop(&mut self) {
+        let _ = self.pipeline.set_state(gst::State::Null);
+    }
+}
+
+impl Recording {
+    fn open(path: &Path) -> Result<Self, String> {
+        started()?;
+        let uri = gst::glib::filename_to_uri(path, None).map_err(|_| "the file's name can't be used")?;
+        let pipeline = gst::ElementFactory::make("playbin")
+            .property("uri", uri.as_str())
+            .build()
+            .map_err(|_| missing("playbin"))?;
+        pipeline.set_property_from_str("flags", "audio");
+        let sink_bin = gst::parse::bin_from_description(SOUND_SINK, true)
+            .map_err(|e| format!("GStreamer can't make what reads sound ({e})"))?;
+        let sink = sink_bin
+            .by_name("sound")
+            .and_then(|sink| sink.downcast::<gst_app::AppSink>().ok())
+            .ok_or("GStreamer can't make what reads sound")?;
+        pipeline.set_property("audio-sink", &sink_bin);
+        let mut recording = Self {
+            pipeline,
+            sink,
+            duration: f64::NAN,
+        };
+        recording
+            .pipeline
+            .set_state(gst::State::Paused)
+            .map_err(|_| reason(&recording.pipeline, "GStreamer can't open it"))?;
+        settle(&recording.pipeline, "GStreamer can't open it")?;
+        if recording.pipeline.property::<i32>("n-audio") == 0 {
+            return Err("there is no sound in it".into());
+        }
+        recording.duration = recording
+            .pipeline
+            .query_duration::<gst::ClockTime>()
+            .map_or(f64::NAN, |length| length.nseconds() as f64 / 1e9);
+        Ok(recording)
     }
 }
 

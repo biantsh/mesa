@@ -103,6 +103,7 @@ interface Slide {
   more: { element: HTMLElement; left: number; top: number } | null;
   anchor: { at: number; top: number } | null;
   scrollTo: number | null;
+  height: number;
 }
 
 function slideFrom(grid: HTMLElement, pane: HTMLElement, active: string | null): Slide {
@@ -122,6 +123,7 @@ function slideFrom(grid: HTMLElement, pane: HTMLElement, active: string | null):
     more: more && button ? { element: more, left: button.left, top: button.top } : null,
     anchor: tile && place ? { at: Number(tile.dataset.result), top: place.top } : null,
     scrollTo: null,
+    height: grid.offsetHeight,
   };
 }
 
@@ -240,12 +242,18 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
   }, [paneRef]);
   const remeasured = useRef(0);
   const measuredFor = useRef("");
+  const sliding = useRef<Animation[]>([]);
   useLayoutEffect(() => {
     const element = grid.current;
     const pane = paneRef.current;
     if (!element || !pane) return;
     const what = `${made.start} ${made.end} ${made.divider} ${hits.length} ${weakAt} ${resized} ${layout}`;
     if (measured && what === measuredFor.current) return;
+    if (sliding.current.length > 0) {
+      if (!slide.current) return;
+      for (const animation of sliding.current) animation.cancel();
+      sliding.current = [];
+    }
     measuredFor.current = what;
     const tiles = Array.from(element.querySelectorAll<HTMLElement>("[data-result]"));
     if (tiles.length === 0) return;
@@ -292,7 +300,6 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
   const layout = panel ? `beside ${panelColumns}` : "alone";
   const laidOutFor = useRef(layout);
   const slide = useRef<Slide | null>(null);
-  const sliding = useRef<Animation[]>([]);
   if (laidOutFor.current !== layout) {
     laidOutFor.current = layout;
     slide.current = grid.current && paneRef.current && !prefersReducedMotion() ? slideFrom(grid.current, paneRef.current, active) : null;
@@ -321,8 +328,13 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
     const after = placesOf(element);
     const go = (target: HTMLElement, keyframes: Keyframe[]) => {
       const animation = target.animate(keyframes, { duration: EASE_MS, easing: EASE_CURVE });
-      animation.onfinish = () => animation.cancel();
+      animation.onfinish = () => {
+        animation.cancel();
+        sliding.current = sliding.current.filter((running) => running !== animation);
+        if (sliding.current.length === 0) setResized((n) => n + 1);
+      };
       sliding.current.push(animation);
+      return animation;
     };
     for (const [tile, was] of now.before) {
       const is = after.get(tile);
@@ -332,10 +344,17 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
       if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
       go(tile, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }]);
     }
+    const height = element.offsetHeight;
+    const growth = height - now.height;
+    const glides = Math.abs(growth) >= 1 && (growth < 0 || pane.scrollTop + pane.clientHeight <= pane.scrollHeight - growth);
+    if (glides) {
+      element.style.overflowY = "clip";
+      go(element, [{ height: `${now.height}px` }, { height: `${height}px` }]).oncancel = () => element.style.removeProperty("overflow-y");
+    }
     const more = pane.querySelector<HTMLElement>("[data-more]");
     if (more && now.more && more === now.more.element) {
       const box = more.getBoundingClientRect();
-      const [dx, dy] = [now.more.left - box.left, now.more.top - box.top];
+      const [dx, dy] = [now.more.left - box.left, now.more.top - box.top + (glides ? growth : 0)];
       if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) go(more, [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }]);
     }
     const divider = element.querySelector<HTMLElement>("[data-divider]");

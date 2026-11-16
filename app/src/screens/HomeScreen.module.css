@@ -852,3 +852,54 @@
 .row .iconOnly:hover {
   color: var(--color-text);
 }
+
+.failure {
+  position: absolute;
+  z-index: 6;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--bottom-gap, 16px) + 8px);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: min(480px, calc(100% - 32px));
+  margin-inline: auto;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(var(--color-danger-bg), var(--color-danger-bg)), var(--color-surface-raised);
+  color: var(--color-danger-ink);
+  box-shadow: var(--shadow-menu);
+  font-size: 13px;
+  line-height: 20px;
+  pointer-events: none;
+}
+
+.failure span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.failureLifted {
+  bottom: calc(var(--pill-bottom, 16px) + 36px + 10px + 8px);
+}
+
+.failureDismiss {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.failureDismiss:hover {
+  background: var(--color-danger-bg);
+}

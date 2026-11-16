@@ -8,6 +8,7 @@ mod commands;
 mod crawl;
 mod document_preview;
 mod embed;
+mod epub_read;
 mod estimate;
 mod examples;
 mod folder_access;
@@ -16,6 +17,7 @@ mod gnome_keys;
 mod hotkey;
 mod index;
 mod indexer;
+mod iwork_read;
 mod main_window;
 mod matches;
 mod page_scale;
@@ -245,7 +247,7 @@ fn main() {
             commands::search,
             commands::search_more,
             commands::match_details,
-            commands::page_count,
+            commands::paging,
             commands::allow_playing,
             commands::set_indexing_paused,
             commands::set_indexing_turbo,
