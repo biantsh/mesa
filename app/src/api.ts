@@ -3,7 +3,7 @@ import { withShape, sameShape } from "./entriesShape";
 import { applyRuns, entriesOf, listedOf, type Columns, type ListedColumns, type Run, type StatusChange } from "./listingColumns";
 
 export type Kind = "drive" | "folder" | "file";
-export type Category = "image" | "video" | "audio" | "document";
+export type Category = "image" | "video" | "audio" | "document" | "code";
 export type IndexStatus =
   | "notIndexed"
   | "indexing"
@@ -191,9 +191,17 @@ export interface SearchHit {
   modified: number;
   size: number;
   score: number;
-  reason: "words" | "meaning" | "fewFiles" | null;
-  byWords: "words" | "phrase" | null;
+  reason: "words" | "meaning" | "fewFiles" | "clues" | null;
+  byWords: "words" | "phrase" | "name" | null;
   at: number | null;
+  copies: string[];
+}
+
+export interface AlsoIn {
+  path: string;
+  line: number;
+  symbol: string;
+  similarity: number;
 }
 
 export interface MatchSnippet {
@@ -201,9 +209,34 @@ export interface MatchSnippet {
   page: number | null;
 }
 
+export interface CodeView {
+  language: string;
+  project: string | null;
+  symbol: string;
+  start: number;
+  end: number;
+  lines: CodePart[][];
+}
+
+export type CodeKind = "keyword" | "string" | "comment" | "number" | "function" | "type" | "property" | "variable";
+
+export interface CodePart {
+  text: string;
+  hit?: boolean;
+  kind?: CodeKind;
+}
+
+export interface CodeFile {
+  language: string;
+  lines: CodePart[][];
+  total: number;
+}
+
 export interface MatchDetails {
   snippets: MatchSnippet[];
   closest: MatchSnippet | null;
+  code: CodeView | null;
+  alsoIn?: AlsoIn[];
 }
 
 export interface SearchPage {
@@ -218,6 +251,9 @@ export interface SearchFilter {
   category: Category | null;
   from: number | null;
   to: number | null;
+  language?: string | null;
+  project?: string | null;
+  tests?: boolean | null;
 }
 
 export const COMPUTER = "";
@@ -261,7 +297,7 @@ export const api = {
   indexView: (listing: number | null, lists: number | null, listStates: boolean) =>
     invoke<IndexView>("index_view", { listing, lists, listStates }),
   search: (query: string, filter: SearchFilter, files: string[] = []) =>
-    invoke<SearchPage>("search", { query, ...filter, files }),
+    invoke<SearchPage>("search", { query, filter, files }),
   searchMore: (id: number) => invoke<SearchPage>("search_more", { id }),
   paging: (path: string) => invoke<Paging | null>("paging", { path }),
   allowPlaying: (path: string) => invoke<void>("allow_playing", { path }),
@@ -277,6 +313,11 @@ export const api = {
   openProjectPage: () => invoke<void>("open_project_page"),
   openPrivacySettings: (pane: PrivacyPane) => invoke<void>("open_privacy_settings", { pane }),
   openFile: (path: string) => invoke<void>("open_file", { path }),
+  openCode: (path: string, line: number) => invoke<void>("open_code", { path, line }),
+  codePeek: (path: string, line: number | null) => invoke<CodePart[][]>("code_peek", { path, line }),
+  codeProjects: () => invoke<string[]>("code_projects"),
+  alsoIn: (path: string, line: number) => invoke<AlsoIn[]>("also_in", { path, line }),
+  codeFile: (path: string, query: string) => invoke<CodeFile>("code_file", { path, query }),
   copyFiles: (paths: string[]) => invoke<void>("copy_files", { paths }),
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   excludeFromIndex: (paths: string[]) => invoke<void>("exclude_from_index", { paths }),

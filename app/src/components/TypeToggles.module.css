@@ -15,15 +15,6 @@
   background: var(--color-surface);
 }
 
-.sizer {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: max-content;
-  visibility: hidden;
-  pointer-events: none;
-}
-
 .button {
   display: flex;
   align-items: center;
@@ -42,9 +33,24 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.compact > .group:not(.sizer) > .button {
+.button {
   width: 34px;
   padding: 0;
+}
+
+.label {
+  display: none;
+}
+
+@container topbar-middle (min-width: 960px) {
+  .button {
+    width: auto;
+    padding: 0 11px;
+  }
+
+  .label {
+    display: inline;
+  }
 }
 
 .button:hover:not(:disabled) {

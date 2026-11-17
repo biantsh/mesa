@@ -20,6 +20,13 @@ use crate::{browse, index::Chores};
 
 #[cfg_attr(target_os = "linux", allow(dead_code))]
 pub const SETTLE: Duration = Duration::from_secs(4);
+const CODE_SETTLE_TIMES: u32 = 6;
+
+fn settle_for(settle: Duration, path: &Path) -> Duration {
+    let code = crate::embed::code::is_code_path(path);
+    if code { settle * CODE_SETTLE_TIMES } else { settle }
+}
+
 const MOST_DEFERRED: Duration = Duration::from_secs(60);
 const BULK: usize = 16;
 const TICK: Duration = Duration::from_millis(200);
@@ -335,7 +342,11 @@ impl State {
         let due: Vec<PathBuf> = self
             .heard
             .iter()
-            .filter(|(_, heard)| heard.last.is_some_and(|at| now.duration_since(at) >= settle))
+            .filter(|(path, heard)| {
+                heard
+                    .last
+                    .is_some_and(|at| now.duration_since(at) >= settle_for(settle, path))
+            })
             .map(|(path, _)| path.clone())
             .collect();
         let due = self.not_deferred(due, now);

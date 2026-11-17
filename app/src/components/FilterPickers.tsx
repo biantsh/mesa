@@ -82,33 +82,38 @@ function Popover({ anchor, role, label, onClose, children }: PopoverProps) {
   );
 }
 
-const TYPES: Category[] = ["image", "audio", "video", "document"];
+const TYPES: Category[] = ["image", "audio", "video", "document", "code"];
 
 interface TypePickerProps {
   anchor: HTMLElement;
   value: Category | null;
+  indexed: Category[] | null;
   onChoose: (value: Category | null) => void;
   onClose: () => void;
 }
 
-export function TypePicker({ anchor, value, onChoose, onClose }: TypePickerProps) {
-  const item = (type: Category | null, icon: ReactNode, name: string) => (
-    <button
-      key={name}
-      type="button"
-      role="menuitemradio"
-      aria-checked={value === type}
-      className={styles.item}
-      onClick={() => {
-        onClose();
-        onChoose(type);
-      }}
-    >
-      {icon}
-      <span className={styles.itemName}>{name}</span>
-      {value === type && <Check size={14} aria-hidden />}
-    </button>
-  );
+export function TypePicker({ anchor, value, indexed, onChoose, onClose }: TypePickerProps) {
+  const item = (type: Category | null, icon: ReactNode, name: string) => {
+    const off = type !== null && indexed !== null && !indexed.includes(type);
+    return (
+      <button
+        key={name}
+        type="button"
+        role="menuitemradio"
+        aria-checked={value === type}
+        className={cx(styles.item, off && styles.itemOff)}
+        onClick={() => {
+          onClose();
+          onChoose(type);
+        }}
+      >
+        {icon}
+        <span className={styles.itemName}>{name}</span>
+        {off && <span className={styles.itemNote}>Not indexed</span>}
+        {value === type && <Check size={14} aria-hidden />}
+      </button>
+    );
+  };
   return (
     <Popover anchor={anchor} role="menu" label="File type" onClose={onClose}>
       {item(null, <Files size={14} aria-hidden />, "Any type")}

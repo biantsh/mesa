@@ -9,7 +9,8 @@ export function wantsPreview(entry: Previewable): boolean {
     entry.kind === "file" &&
     entry.readable &&
     entry.category !== null &&
-    entry.category !== "audio"
+    entry.category !== "audio" &&
+    entry.category !== "code"
   );
 }
 

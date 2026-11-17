@@ -125,7 +125,7 @@ impl Default for Legend {
 
 const LETTERS: &[u8; 32] = b"0123456789abcdefghijklmnopqrstuv";
 const KINDS: [Kind; 3] = [Kind::Drive, Kind::Folder, Kind::File];
-const CATEGORIES: [Category; 4] = browse::CATEGORIES;
+const CATEGORIES: [Category; 5] = browse::CATEGORIES;
 const STATUSES: [IndexStatus; 8] = [
     IndexStatus::NotIndexed,
     IndexStatus::Indexing,

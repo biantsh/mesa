@@ -1,6 +1,7 @@
 mod audio;
 #[cfg(target_os = "macos")]
 mod avfoundation;
+pub mod code;
 mod demux;
 mod documents;
 mod epub;
@@ -17,6 +18,7 @@ mod llama;
 mod model;
 mod office;
 mod opendocument;
+pub(crate) mod outline;
 mod picture;
 mod pipeline;
 mod prepare;
@@ -154,6 +156,10 @@ pub trait Embedder: Send + Sync {
     }
 
     fn warm_up(&self) {}
+
+    fn read_text(&self, _path: &Path) -> Option<String> {
+        None
+    }
 
     fn reads_text(&self) -> bool {
         true

@@ -25,6 +25,8 @@ pub struct PerType<T> {
     pub video: T,
     pub audio: T,
     pub document: T,
+    #[serde(default)]
+    pub code: T,
 }
 
 impl<T> PerType<T> {
@@ -34,6 +36,7 @@ impl<T> PerType<T> {
             Category::Video => &self.video,
             Category::Audio => &self.audio,
             Category::Document => &self.document,
+            Category::Code => &self.code,
         }
     }
 
@@ -43,6 +46,7 @@ impl<T> PerType<T> {
             Category::Video => &mut self.video,
             Category::Audio => &mut self.audio,
             Category::Document => &mut self.document,
+            Category::Code => &mut self.code,
         }
     }
 }

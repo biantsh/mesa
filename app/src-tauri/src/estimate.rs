@@ -145,7 +145,7 @@ impl Estimator {
             return None;
         }
         let of = |counts: &PerType<u64>| {
-            ORDER
+            crate::browse::CATEGORIES
                 .iter()
                 .filter(|&&kind| types.contains(kind))
                 .map(|&kind| *counts.get(kind))
@@ -277,6 +277,7 @@ impl Estimator {
         for kind in ORDER {
             *seconds.get_mut(kind) = seconds_for(survey, kind, *costs.get(kind));
         }
+        seconds.code = seconds_for(survey, Category::Code, *costs.get(Category::Document));
         Estimate {
             seconds,
             measuring: lock(&CURRENT).is_some(),

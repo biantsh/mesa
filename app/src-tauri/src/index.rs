@@ -38,6 +38,7 @@ struct Ranking {
     by_words: HashMap<i64, crate::store::WordsMatch>,
     at: HashMap<i64, u64>,
     next: Mutex<usize>,
+    copied: Mutex<HashSet<i64>>,
 }
 
 impl Ranking {
@@ -360,7 +361,7 @@ impl Index {
                 let types = chosen.unwrap_or(if rules.is_empty() {
                     Categories::of(&DEFAULT_TYPES)
                 } else {
-                    Categories::ALL
+                    Categories::BEFORE_CODE
                 });
                 store.set_indexed_types(types)?;
                 types
@@ -703,7 +704,9 @@ impl Index {
     }
 
     pub fn prepare_example(&self, path: &Path) -> Result<(), String> {
-        self.examples.add(&self.shared.embedder, path)
+        let read_text =
+            lock(&self.shared.store).picture_text(path).ok().flatten().is_none() && self.shared.embedder.reads_text();
+        self.examples.add_reading(&self.shared.embedder, path, read_text)
     }
 
     pub fn example_progress(&self, paths: &[PathBuf]) -> Vec<Option<crate::examples::Progress>> {
@@ -751,7 +754,14 @@ impl Index {
         let mut by_words = HashMap::new();
         let ranked = if let Some(query) = query {
             let mut store = lock(&self.shared.store);
-            let exact = store.exact(text, filter)?;
+            let mut exact = store.exact(text, filter)?;
+            let in_content: HashSet<i64> = exact.iter().map(|&(file, _)| file).collect();
+            let name_only: Vec<i64> = store
+                .named(text, filter)?
+                .into_iter()
+                .filter(|file| !in_content.contains(file))
+                .collect();
+            exact.extend(name_only.iter().map(|&file| (file, false)));
             let terms = crate::words::terms(text).len();
             let phrase = match terms {
                 _ if exact.is_empty() => Vec::new(),
@@ -777,7 +787,32 @@ impl Index {
                     )
                 })
                 .collect();
-            store.rank(&query, filter, &margins)?
+            for file in &name_only {
+                if by_words.contains_key(file) {
+                    by_words.insert(*file, crate::store::WordsMatch::Name);
+                }
+            }
+            let mut ranked = store.rank(&query, filter, &margins)?;
+            if !files.is_empty() || text.contains('.') {
+                let read: Vec<(PathBuf, Option<String>)> = files
+                    .iter()
+                    .map(|file| {
+                        let indexed = store.picture_text(file).ok().flatten();
+                        (file.clone(), indexed.or_else(|| self.examples.text(file)))
+                    })
+                    .collect();
+                let clued = crate::clues::code_by_clues(&store, text, &read, filter)?;
+                if !clued.is_empty() {
+                    put_first(&mut ranked, &clued, &store, &mut by_words)?;
+                }
+            }
+            if looks_like_a_name(text) {
+                let named = store.named_exactly(text, filter)?;
+                if !named.is_empty() {
+                    put_named_first(&mut ranked, &named, &mut by_words);
+                }
+            }
+            ranked
         } else if filter != Filter::default() {
             Ranked::all_close(lock(&self.shared.store).newest(filter)?)
         } else {
@@ -799,6 +834,7 @@ impl Index {
             by_words,
             at: ranked.at,
             next: Mutex::new(0),
+            copied: Mutex::default(),
         });
         lock(&self.latest_search).insert(window.to_owned(), ranking.clone());
         if ranking.close == 0 {
@@ -814,6 +850,9 @@ impl Index {
     }
 
     pub fn match_details(&self, path: &Path, query: &str, at: Option<u64>) -> Result<crate::matches::Details, String> {
+        if crate::embed::code::is_code_path(path) {
+            return crate::matches::of_code(path, query, at);
+        }
         let (text, scanned) = {
             let store = lock(&self.shared.store);
             (store.picture_text(path)?, store.page_texts(path)?)
@@ -850,6 +889,14 @@ impl Index {
                     continue;
                 }
                 let file = hit.file;
+                if hit.category == browse::Category::Code {
+                    if lock(&ranking.copied).contains(&file) {
+                        continue;
+                    }
+                    let copies = self.copies_of(&hit)?;
+                    lock(&ranking.copied).extend(copies.iter().map(|(id, _)| *id));
+                    hit.copies = copies.into_iter().map(|(_, path)| path).collect();
+                }
                 hit.why = ranking.why(file);
                 found.push(hit);
                 if found.len() == SEARCH_RESULTS {
@@ -869,6 +916,82 @@ impl Index {
             close,
             more_close: *next < ranking.close,
         })
+    }
+
+    pub fn code_projects(&self) -> Result<Vec<(String, PathBuf)>, String> {
+        let folders = lock(&self.shared.store).code_folders()?;
+        let mut roots: HashMap<PathBuf, usize> = HashMap::new();
+        for folder in folders {
+            if let Some(root) = crate::embed::code::project_root(&folder.join("_")) {
+                *roots.entry(root).or_default() += 1;
+            }
+        }
+        let mut by_name: HashMap<String, (PathBuf, usize)> = HashMap::new();
+        for (root, count) in roots {
+            let name = root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if name.is_empty() {
+                continue;
+            }
+            let entry = by_name.entry(name).or_insert((root.clone(), 0));
+            if count > entry.1 {
+                *entry = (root, count);
+            }
+        }
+        let mut out: Vec<(String, PathBuf)> = by_name.into_iter().map(|(name, (root, _))| (name, root)).collect();
+        out.sort();
+        Ok(out)
+    }
+
+    pub fn code_project_folder(&self, name: &str) -> Result<Option<i64>, String> {
+        let Some((_, root)) = self
+            .code_projects()?
+            .into_iter()
+            .find(|(known, _)| known.eq_ignore_ascii_case(name))
+        else {
+            return Ok(None);
+        };
+        Ok(lock(&self.shared.store).folder_id(&root)?)
+    }
+
+    fn copies_of(&self, hit: &crate::store::Hit) -> Result<Vec<(i64, PathBuf)>, String> {
+        let candidates = lock(&self.shared.store).code_of_size(hit.size, hit.file)?;
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Ok(this) = std::fs::read(&hit.path) else {
+            return Ok(Vec::new());
+        };
+        Ok(candidates
+            .into_iter()
+            .filter(|(_, path)| std::fs::read(path).is_ok_and(|other| other == this))
+            .collect())
+    }
+
+    pub fn also_in(&self, path: &Path, line: u64) -> Result<Vec<AlsoIn>, String> {
+        let found = lock(&self.shared.store).like_code(path, line, ALSO_IN, 5)?;
+        Ok(found
+            .into_iter()
+            .map(|(other, at, score)| {
+                let symbol = crate::embed::code::chunks_of(&other)
+                    .ok()
+                    .and_then(|chunks| {
+                        chunks
+                            .into_iter()
+                            .find(|chunk| u64::from(chunk.start) == at)
+                            .map(|chunk| chunk.symbol)
+                    })
+                    .unwrap_or_default();
+                AlsoIn {
+                    path: other.to_string_lossy().into_owned(),
+                    line: at,
+                    symbol,
+                    similarity: score,
+                }
+            })
+            .collect())
     }
 
     pub fn gpu(&self) -> Option<String> {
@@ -1183,6 +1306,92 @@ trait Facts {
     fn pending(&self, path: &Path) -> bool;
     fn queued(&self, path: &Path) -> bool;
     fn paused(&self) -> bool;
+}
+
+fn looks_like_a_name(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    match words.len() {
+        0 => false,
+        1 => true,
+        2..=4 => words
+            .iter()
+            .any(|word| word.contains(['.', '_', '-']) || word.chars().any(|c| c.is_ascii_digit())),
+        _ => false,
+    }
+}
+
+fn put_named_first(ranked: &mut Ranked, named: &[i64], by_words: &mut HashMap<i64, crate::store::WordsMatch>) {
+    let first: HashSet<i64> = named.iter().copied().collect();
+    let was_close: HashSet<i64> = ranked.files[..ranked.close].iter().map(|&(file, _)| file).collect();
+    let scores: HashMap<i64, f32> = ranked.files.iter().copied().collect();
+    let rest: Vec<(i64, f32)> = ranked
+        .files
+        .iter()
+        .copied()
+        .filter(|(file, _)| !first.contains(file))
+        .collect();
+    let still_close = rest.iter().filter(|(file, _)| was_close.contains(file)).count();
+    let mut files: Vec<(i64, f32)> = named
+        .iter()
+        .map(|&file| (file, scores.get(&file).copied().unwrap_or(0.0)))
+        .collect();
+    for &file in named {
+        ranked.reasons.insert(file, crate::relevance::Reason::Words);
+        by_words.insert(file, crate::store::WordsMatch::Name);
+    }
+    ranked.close = files.len() + still_close;
+    files.extend(rest);
+    ranked.files = files;
+}
+
+fn put_first(
+    ranked: &mut Ranked,
+    clued: &[crate::clues::Found],
+    store: &crate::store::Store,
+    by_words: &mut HashMap<i64, crate::store::WordsMatch>,
+) -> Result<(), String> {
+    for found in clued {
+        by_words.remove(&found.file);
+    }
+    let first: HashSet<i64> = clued.iter().map(|found| found.file).collect();
+    let was_close: HashSet<i64> = ranked.files[..ranked.close].iter().map(|&(file, _)| file).collect();
+    let scores: HashMap<i64, f32> = ranked.files.iter().copied().collect();
+    let rest: Vec<(i64, f32)> = ranked
+        .files
+        .iter()
+        .copied()
+        .filter(|(file, _)| !first.contains(file))
+        .collect();
+    let still_close = rest.iter().filter(|(file, _)| was_close.contains(file)).count();
+    let mut files: Vec<(i64, f32)> = clued
+        .iter()
+        .map(|found| (found.file, scores.get(&found.file).copied().unwrap_or(0.0)))
+        .collect();
+    let paths = store.hits(&files).map_err(|e| e.to_string())?;
+    for hit in &paths {
+        let Some(found) = clued.iter().find(|found| found.file == hit.file) else {
+            continue;
+        };
+        ranked.reasons.insert(found.file, crate::relevance::Reason::Clues);
+        if let Some(line) = crate::clues::best_line(&hit.path, &found.phrases) {
+            ranked.at.insert(found.file, line);
+        }
+    }
+    ranked.close = files.len() + still_close;
+    files.extend(rest);
+    ranked.files = files;
+    Ok(())
+}
+
+const ALSO_IN: f32 = 0.97;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlsoIn {
+    pub path: String,
+    pub line: u64,
+    pub symbol: String,
+    pub similarity: f32,
 }
 
 fn status_of(facts: &impl Facts, path: &Path, is_file: Option<bool>) -> IndexStatus {

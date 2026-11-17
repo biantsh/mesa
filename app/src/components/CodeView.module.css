@@ -1,0 +1,114 @@
+.block {
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+  display: block;
+  margin: 0 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+
+.block:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.block[data-loading] {
+  height: 160px;
+  background: var(--color-preview-bg);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.symbol {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.where {
+  color: var(--color-text-faint);
+  font-size: 11px;
+}
+
+/* Fixed height: shrunk by flexbox, WebKit first draws it without room for the horizontal scrollbar. */
+.scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.code {
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.lineNumber {
+  position: sticky;
+  left: 0;
+  padding: 0 10px 0 12px;
+  color: var(--color-text-faint);
+  text-align: right;
+  vertical-align: top;
+  user-select: none;
+  white-space: nowrap;
+  background: var(--color-bg);
+}
+
+.text {
+  padding-right: 12px;
+  color: var(--color-text-muted);
+  white-space: pre;
+  tab-size: 4;
+}
+
+.text mark {
+  border-radius: 3px;
+  background: var(--color-leader-bg);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.keyword {
+  color: var(--syntax-keyword);
+}
+.string {
+  color: var(--syntax-string);
+}
+.comment {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+.number {
+  color: var(--syntax-number);
+}
+.function {
+  color: var(--syntax-function);
+}
+.type {
+  color: var(--syntax-type);
+}
+.property {
+  color: var(--syntax-property);
+}
+.variable {
+  color: var(--syntax-variable);
+}
+
+.more {
+  margin: 0;
+  padding: 6px 12px 8px;
+  color: var(--color-text-faint);
+  font-size: 11px;
+}

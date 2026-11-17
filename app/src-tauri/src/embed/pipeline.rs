@@ -104,6 +104,50 @@ pub struct Pipeline<B: Backend> {
     unit_time: Mutex<Option<f64>>,
     ocr: Option<Arc<ocr::Lazy>>,
     ocr_preparing: Arc<AtomicUsize>,
+    chunks: Mutex<ChunkCache>,
+}
+
+#[derive(Default)]
+struct ChunkCache {
+    vectors: std::collections::HashMap<u64, Vec<half::f16>>,
+    order: std::collections::VecDeque<u64>,
+}
+
+const MOST_CHUNKS: usize = 20_000;
+
+impl ChunkCache {
+    fn get(&self, key: u64) -> Option<Vec<f32>> {
+        self.vectors
+            .get(&key)
+            .map(|values| values.iter().map(|v| v.to_f32()).collect())
+    }
+
+    fn put(&mut self, key: u64, values: &[f32]) {
+        if self.vectors.contains_key(&key) {
+            return;
+        }
+        if self.order.len() >= MOST_CHUNKS
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.vectors.remove(&oldest);
+        }
+        self.vectors
+            .insert(key, values.iter().map(|&v| half::f16::from_f32(v)).collect());
+        self.order.push_back(key);
+    }
+}
+
+fn chunk_key(file: &Path, input: &Prepared) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let Prepared::Text(prompt) = input else { return None };
+    if !super::code::is_code_path(file) {
+        return None;
+    }
+    let (head, text) = prompt.split_once(" | text: ")?;
+    let symbol = head.rsplit_once(" · ").map_or("", |(_, symbol)| symbol);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (symbol, text).hash(&mut hasher);
+    Some(hasher.finish())
 }
 
 struct Searching<'a> {
@@ -130,6 +174,7 @@ impl<B: Backend> Pipeline<B> {
             unit_time: Mutex::new(None),
             ocr: None,
             ocr_preparing: Arc::new(AtomicUsize::new(0)),
+            chunks: Mutex::default(),
         }
     }
 
@@ -411,6 +456,24 @@ impl<B: Backend> Pipeline<B> {
 }
 
 impl<B: Backend> Embedder for Pipeline<B> {
+    fn read_text(&self, path: &Path) -> Option<String> {
+        let ocr = self.ocr.as_ref()?;
+        let item = Item {
+            path: path.to_path_buf(),
+            words_only: true,
+        };
+        let mut text = None;
+        let mut read = |_: u64, rgb: Vec<u8>, width: u32, height: u32| {
+            text = ocr.text(ocr::Picture {
+                rgb: &rgb,
+                width: width as usize,
+                height: height as usize,
+            });
+        };
+        prepare::prepare(&item, Some(&mut read), &mut |_| true, &mut String::new()).ok()?;
+        text.filter(|text| !text.trim().is_empty())
+    }
+
     fn embed(
         &self,
         items: &[Item],
@@ -473,6 +536,22 @@ impl<B: Backend> Embedder for Pipeline<B> {
                                     return false;
                                 }
                                 if file.words_only {
+                                    return true;
+                                }
+                                if let Some(values) =
+                                    chunk_key(&file.path, &unit.input).and_then(|key| lock(&self.chunks).get(key))
+                                {
+                                    if event_in
+                                        .send(Event::Unit {
+                                            item,
+                                            locator: unit.locator,
+                                            output: Ok(values),
+                                        })
+                                        .is_err()
+                                    {
+                                        return false;
+                                    }
+                                    units += 1;
                                     return true;
                                 }
                                 if ready_in.send((item, unit)).is_err() {
@@ -598,6 +677,11 @@ impl<B: Backend> Embedder for Pipeline<B> {
                             Ok(outputs) => {
                                 self.came_back(inputs.len(), started.elapsed());
                                 for ((item, unit), output) in batch.iter().zip(outputs) {
+                                    if let (Ok(values), Some(key)) =
+                                        (&output, chunk_key(&items[*item].path, &unit.input))
+                                    {
+                                        lock(&self.chunks).put(key, values);
+                                    }
                                     let event = Event::Unit {
                                         item: *item,
                                         locator: unit.locator,

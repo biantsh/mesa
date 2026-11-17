@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Category } from "./api";
-import { chooseDateEnd, chooseFileType, keepChosen, monthOf, understand, understandChosen, type Chosen } from "./understand";
+import { chooseDateEnd, chooseFileType, keepChosen, monthOf, understand, understandChosen, type Chosen, setCodeProjects } from "./understand";
 
 const NOW = new Date(2026, 10, 2, 12);
 

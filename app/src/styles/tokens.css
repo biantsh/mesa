@@ -226,6 +226,15 @@
   --color-hover-bg: rgba(226, 105, 49, 0.08);
   --color-selected-bg: rgba(226, 105, 49, 0.15);
   --color-leader-bg: rgba(226, 105, 49, 0.26);
+
+  --syntax-keyword: #a8431c;
+  --syntax-string: #3d7a2c;
+  --syntax-comment: #8a7b70;
+  --syntax-number: #9b5a00;
+  --syntax-function: #2d5f9a;
+  --syntax-type: #7b3f98;
+  --syntax-property: #7c5418;
+  --syntax-variable: #a03a3a;
   --color-selected-border: rgba(226, 105, 49, 0.5);
   --color-overlay: rgba(42, 26, 20, 0.42);
   --color-border-strong-dimmed: color-mix(in srgb, var(--color-border-strong), rgb(42, 26, 20) 42%);
@@ -284,6 +293,15 @@
   --color-hover-bg: rgba(226, 105, 49, 0.14);
   --color-selected-bg: rgba(226, 105, 49, 0.24);
   --color-leader-bg: rgba(226, 105, 49, 0.38);
+
+  --syntax-keyword: #ee8a5c;
+  --syntax-string: #a7c97f;
+  --syntax-comment: #8f8177;
+  --syntax-number: #e0b06a;
+  --syntax-function: #8fbbe6;
+  --syntax-type: #cf9de0;
+  --syntax-property: #dcbb86;
+  --syntax-variable: #ec9f93;
   --color-selected-border: rgba(226, 105, 49, 0.6);
   --color-overlay: rgba(0, 0, 0, 0.6);
   --color-border-strong-dimmed: color-mix(in srgb, var(--color-border-strong), black 60%);

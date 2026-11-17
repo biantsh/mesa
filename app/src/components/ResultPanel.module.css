@@ -431,6 +431,8 @@
   column-gap: 18px;
   align-items: start;
   align-content: start;
+  grid-template-rows: max-content;
+  grid-auto-rows: max-content;
 }
 
 .middleLayout .file > .stage {
@@ -568,4 +570,9 @@
   .shown {
     transform: none;
   }
+}
+
+.alsoFolder,
+.alsoSymbol {
+  color: var(--color-text-faint);
 }

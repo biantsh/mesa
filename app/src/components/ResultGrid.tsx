@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode, type RefObject, type UIEvent } from "react";
-import { Check, FileText, Film, Image as ImageIcon, Music, X, type LucideProps } from "lucide-react";
+import { Check, CodeXml, FileText, Film, Image as ImageIcon, Music, X, type LucideProps } from "lucide-react";
 import { type Category, type SearchHit } from "../api";
 import { cx } from "../cx";
 import { formatMonth, formatSize } from "../format";
@@ -12,14 +12,21 @@ import { NAV_KEYS } from "../navigation";
 import { useLatest } from "../useLatest";
 import { isForSomethingElse } from "../useSelection";
 import { EASE_CURVE, EASE_MS } from "./PanelSplitter";
+import { CodeThumb } from "./CodeThumb";
 import styles from "./ResultGrid.module.css";
 import { fileManager, shortcut } from "../platform";
+
+const CODE_SCALE = 0.82;
+function CodeIcon({ strokeWidth = 2, style, ...props }: LucideProps) {
+  return <CodeXml {...props} strokeWidth={Number(strokeWidth) / CODE_SCALE} style={{ ...style, transform: `scale(${CODE_SCALE})` }} />;
+}
 
 export const CATEGORY_ICONS: Record<Category, ComponentType<LucideProps>> = {
   image: ImageIcon,
   video: Film,
   audio: Music,
   document: FileText,
+  code: CodeIcon,
 };
 
 export interface ResultMessage {
@@ -620,6 +627,7 @@ const Result = memo(function Result({ hit, at, index, entering, selected, onSele
     >
       <span className={styles.preview}>
         <Icon className={styles.icon} size={56} strokeWidth={1} aria-hidden />
+        {hit.category === "code" && <CodeThumb path={hit.path} modified={hit.modified} line={hit.at} />}
         {wanted && (
           <img
             className={cx(styles.thumb, loaded && styles.loaded, hit.category === "document" && styles.contain)}

@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use super::{Item, audio, documents, epub, iwork, office, opendocument, picture, raw, rtf};
+use super::{Item, audio, code, documents, epub, iwork, office, opendocument, picture, raw, rtf};
 
 pub type ReadText<'a> = Option<&'a mut dyn FnMut(u64, Vec<u8>, u32, u32)>;
 
@@ -34,19 +34,25 @@ enum Kind {
     Numbers,
     Keynote,
     Epub,
+    Html,
     Rtf,
     Pdf,
     Sound,
     Video,
+    Code,
 }
 
 fn kind(path: &Path) -> Option<Kind> {
+    if code::is_code_path(path) {
+        return Some(Kind::Code);
+    }
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     Some(match extension.as_str() {
         "jpg" | "jpeg" | "jfif" | "jpe" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" => Kind::Picture,
         "heic" | "heif" | "avif" => Kind::SystemPicture,
         extension if raw::EXTENSIONS.contains(&extension) => Kind::Raw,
         "txt" | "md" | "markdown" => Kind::Text,
+        "html" | "htm" | "xhtml" => Kind::Html,
         "docx" | "docm" | "dotx" | "dotm" => Kind::Word,
         "xlsx" | "xlsm" | "xltx" | "xltm" => Kind::Excel,
         "pptx" | "pptm" | "ppsx" | "potx" | "potm" => Kind::PowerPoint,
@@ -115,6 +121,7 @@ pub fn passages(path: &Path, each: &mut dyn FnMut(u64, &str) -> bool) -> Result<
             Some(Kind::Numbers) => iwork::numbers(path, &mut emit, &mut words),
             Some(Kind::Keynote) => iwork::keynote_slides(path, &mut emit, &mut words),
             Some(Kind::Epub) => epub::epub(path, &mut emit, &mut words),
+            Some(Kind::Html) => documents::html(path, &mut emit, &mut words),
             Some(Kind::Rtf) => rtf::rtf(path, &mut emit, &mut words),
             Some(Kind::Pdf) => documents::pdf(path, &mut emit, &mut words, None),
             _ => Err("it isn't a document".into()),
@@ -145,6 +152,7 @@ fn read(item: &Item, text: ReadText, emit: &mut dyn FnMut(Unit) -> bool, words: 
         Some(Kind::Numbers) => iwork::numbers(path, emit, words),
         Some(Kind::Keynote) => iwork::keynote(path, emit, words),
         Some(Kind::Epub) => epub::epub(path, emit, words),
+        Some(Kind::Html) => documents::html(path, emit, words),
         Some(Kind::Rtf) => rtf::rtf(path, emit, words),
         Some(Kind::Pdf) => documents::pdf(
             path,
@@ -156,6 +164,7 @@ fn read(item: &Item, text: ReadText, emit: &mut dyn FnMut(Unit) -> bool, words: 
             }),
         ),
         Some(Kind::Sound) => audio::file(path, emit),
+        Some(Kind::Code) => code::read(path, emit, words),
         #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         Some(Kind::Video) => video(path, emit),
         #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
@@ -415,7 +424,8 @@ mod tests {
         assert_eq!(kind(Path::new("voice memo.amr")), Some(Kind::Sound));
         assert_eq!(kind(Path::new("track 01.wma")), Some(Kind::Sound));
         assert_eq!(kind(Path::new("talk.opus")), Some(Kind::Sound));
-        assert_eq!(kind(Path::new("index.ts")), None);
+        assert_eq!(kind(Path::new("index.ts")), Some(Kind::Code));
+        assert_eq!(kind(Path::new("CMakeLists.txt")), Some(Kind::Code));
         assert_eq!(kind(Path::new("Moby Dick.EPUB")), Some(Kind::Epub));
         assert_eq!(kind(Path::new("setup.exe")), None);
         assert_eq!(kind(Path::new("README")), None);

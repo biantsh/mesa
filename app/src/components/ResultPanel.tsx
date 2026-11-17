@@ -2,7 +2,11 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import { Check, Copy, FolderOpen, Link, ListFilter, ScanSearch, Sparkles, TextSearch, type LucideProps } from "lucide-react";
 import { MAX_EXAMPLES } from "../examples";
 import { matchReason, type MatchReason } from "../matchReason";
-import { largePreviewUrl, type MatchDetails, type MatchSnippet, type SearchHit } from "../api";
+import { api, largePreviewUrl, type AlsoIn, type MatchDetails, type MatchSnippet, type SearchHit } from "../api";
+import { CodeThumb } from "./CodeThumb";
+import { CodeView } from "./CodeView";
+import { CodeViewer } from "./CodeViewer";
+import { codeLanguageOf, fileNameOf } from "../examples";
 import { detailsAsked, detailsFor, detailsNow, wantsDetails as wantsDetailsOf } from "../matchDetails";
 import { cx } from "../cx";
 import { CATEGORY_LABELS, formatModified, formatSize } from "../format";
@@ -26,6 +30,7 @@ interface Props {
   shown: boolean;
   query: string;
   withFiles: boolean;
+  files: string[];
   isWeak: (path: string) => boolean;
   progress: boolean;
   away: boolean;
@@ -53,7 +58,7 @@ const DETAILS_DELAY_MS = 120;
 const MOSAIC_MOST = 9;
 const NAMED_MOST = 12;
 
-export function ResultPanel({ hits, shown, query, withFiles, isWeak, progress, away, actions, onFindSimilar, onSelectOnly, beside, resize, layout }: Props) {
+export function ResultPanel({ hits, shown, query, withFiles, files, isWeak, progress, away, actions, onFindSimilar, onSelectOnly, beside, resize, layout }: Props) {
   const kept = useRef(hits);
   if (hits.length > 0) kept.current = hits;
   const showing = kept.current;
@@ -75,6 +80,7 @@ export function ResultPanel({ hits, shown, query, withFiles, isWeak, progress, a
           hit={showing[0]}
           query={query}
           withFiles={withFiles}
+          files={files}
           weak={isWeak(showing[0].path)}
           actions={actions}
           onFindSimilar={onFindSimilar}
@@ -199,12 +205,40 @@ function breakable(text: string): ReactNode {
   ));
 }
 
-function Snippet({ snippet, paging, onPage, current }: { snippet: MatchSnippet; paging: Paging | null; onPage?: (page: number) => void; current: boolean }) {
+interface ShownCode {
+  path: string;
+  name: string;
+  line: number;
+  found: { start: number; end: number } | null;
+  from: () => DOMRect | null;
+}
+
+function AlsoInRow({ path, symbol, detail, onShow }: { path: string; symbol?: string; detail: string; onShow: (from: () => DOMRect | null) => void }) {
+  const row = useRef<HTMLButtonElement>(null);
+  const folder = parentOf(path).split(/[\\/]/).pop();
+  return (
+    <button
+      ref={row}
+      type="button"
+      className={cx(styles.snippet, styles.pressable)}
+      onClick={() => onShow(() => (row.current?.isConnected ? row.current.getBoundingClientRect() : null))}
+    >
+      <span className={styles.page}>{detail}</span>
+      <span className={styles.snippetText}>
+        {fileNameOf(path)}
+        {folder && <span className={styles.alsoFolder}> in {folder}</span>}
+        {symbol && <span className={styles.alsoSymbol}> · {symbol}</span>}
+      </span>
+    </button>
+  );
+}
+
+function Snippet({ snippet, paging, onPage, current, lines }: { snippet: MatchSnippet; paging: Paging | null; onPage?: (page: number) => void; current: boolean; lines?: boolean }) {
   const body = (
     <>
       {snippet.page !== null && (
         <span className={styles.page}>
-          {paging === "slide" ? "slide" : "p."} {snippet.page}
+          {lines ? "line" : paging === "slide" ? "slide" : "p."} {snippet.page}
         </span>
       )}
       <span className={styles.snippetText}>
@@ -215,7 +249,7 @@ function Snippet({ snippet, paging, onPage, current }: { snippet: MatchSnippet; 
   if (snippet.page === null || !onPage) return <div className={styles.snippet}>{body}</div>;
   const page = snippet.page;
   return (
-    <button type="button" className={cx(styles.snippet, styles.pressable, current && styles.current)} onClick={() => onPage(page)} data-tooltip={`Show ${paging ?? "page"} ${page}`}>
+    <button type="button" className={cx(styles.snippet, styles.pressable, current && styles.current)} onClick={() => onPage(page)} data-tooltip={lines ? `Show line ${page}` : `Show ${paging ?? "page"} ${page}`}>
       {body}
     </button>
   );
@@ -377,12 +411,13 @@ interface OneProps {
   layout: PanelLayout;
   query: string;
   withFiles: boolean;
+  files: string[];
   weak: boolean;
   actions: ResultActions;
   onFindSimilar: (paths: string[]) => void;
 }
 
-function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }: OneProps) {
+function OneFile({ hit, query, withFiles, files, weak, actions, onFindSimilar, layout }: OneProps) {
   const body = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const thumbRoom = useRef<HTMLDivElement>(null);
@@ -441,10 +476,37 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
   const [viewing, setViewing] = useState<number | null>(null);
   const view = () => setViewing(page);
   const closeViewer = useCallback(() => setViewing(null), []);
+  const codeBlock = useRef<HTMLElement>(null);
+  const [codeShown, setCodeShown] = useState<ShownCode | null>(null);
+  const closeCode = useCallback(() => setCodeShown(null), []);
+  const rectOf = (element: HTMLElement | null) => () => (element?.isConnected ? element.getBoundingClientRect() : null);
+  const showOwnCode = (line: number) =>
+    setCodeShown({
+      path: hit.path,
+      name: hit.name,
+      line,
+      found: details?.code ? { start: details.code.start, end: details.code.end } : null,
+      from: rectOf(codeBlock.current),
+    });
+  const [askedAlsoIn, setAskedAlsoIn] = useState<AlsoIn[]>([]);
+  const shownStart = details?.code?.start;
+  const cameWith = details?.alsoIn;
+  useEffect(() => {
+    if (hit.category !== "code" || shownStart === undefined || cameWith !== undefined) return;
+    let live = true;
+    api.alsoIn(hit.path, shownStart).then(
+      (found) => live && setAskedAlsoIn(found),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [hit.category, hit.path, shownStart, cameWith]);
+  const alsoIn = (cameWith ?? askedAlsoIn).filter((other) => !hit.copies.includes(other.path));
 
   useSteadyPicture(frame, layout === "middle" ? head : layout === "wide" ? factsBox : null);
 
-  const reason = matchReason({ hit, query, withFiles, weak });
+  const reason = matchReason({ hit, query, withFiles, files, weak });
   const ReasonIcon = REASON_ICONS[reason.kind];
   const extension = extensionOf(hit.name);
 
@@ -452,48 +514,68 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
     <div ref={body} className={styles.body}>
       <div ref={content} className={styles.single}>
       <div className={styles.file}>
-        <div className={cx(styles.stage, hit.category === "document" && styles.pageStage)}>
-          <div
-            ref={frame}
-            data-glide="picture"
-            className={cx(styles.frame, shape !== null && styles.fitted, !small.wanted && styles.iconOnly, viewable && styles.zoomable)}
-            style={shape !== null ? ({ "--shape": shape } as CSSProperties) : undefined}
-            role={viewable ? "button" : undefined}
-            tabIndex={viewable ? 0 : undefined}
-            aria-label={viewable ? "Show larger" : undefined}
-            onClick={viewable ? view : undefined}
-            onKeyDown={
-              viewable
-                ? (e) => {
-                    if (e.key !== "Enter" && e.key !== " ") return;
-                    e.preventDefault();
-                    view();
-                  }
-                : undefined
-            }
-          >
-            <Icon className={styles.icon} size={56} strokeWidth={1} aria-hidden />
-            {small.wanted && (
-              <img className={cx(styles.image, small.loaded && styles.loaded)} src={small.src} alt="" draggable={false} decoding="async" onLoad={loadedSmall} onError={small.onError} />
-            )}
-            {largeSrc && (
-              <img
-                key={largeSrc}
-                className={cx(styles.image, largeLoaded === largeSrc && styles.loaded)}
-                src={largeSrc}
-                alt=""
-                draggable={false}
-                decoding="async"
-                onLoad={() => setLargeLoaded(largeSrc)}
-              />
-            )}
-            {paging && page > 1 && (
-              <span className={styles.pageBadge}>
-                {pagingWord(paging)} {page}
-              </span>
-            )}
+        {hit.category === "code" ? (
+          <CodeView
+            code={details === undefined ? undefined : (details?.code ?? null)}
+            blockRef={codeBlock}
+            onExpand={() => showOwnCode(details?.code?.start ?? hit.at ?? 1)}
+          />
+        ) : (
+          <div className={cx(styles.stage, hit.category === "document" && styles.pageStage)}>
+            <div
+              ref={frame}
+              data-glide="picture"
+              className={cx(styles.frame, shape !== null && styles.fitted, !small.wanted && styles.iconOnly, viewable && styles.zoomable)}
+              style={shape !== null ? ({ "--shape": shape } as CSSProperties) : undefined}
+              role={viewable ? "button" : undefined}
+              tabIndex={viewable ? 0 : undefined}
+              aria-label={viewable ? "Show larger" : undefined}
+              onClick={viewable ? view : undefined}
+              onKeyDown={
+                viewable
+                  ? (e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.preventDefault();
+                      view();
+                    }
+                  : undefined
+              }
+            >
+              <Icon className={styles.icon} size={56} strokeWidth={1} aria-hidden />
+              {small.wanted && (
+                <img className={cx(styles.image, small.loaded && styles.loaded)} src={small.src} alt="" draggable={false} decoding="async" onLoad={loadedSmall} onError={small.onError} />
+              )}
+              {largeSrc && (
+                <img
+                  key={largeSrc}
+                  className={cx(styles.image, largeLoaded === largeSrc && styles.loaded)}
+                  src={largeSrc}
+                  alt=""
+                  draggable={false}
+                  decoding="async"
+                  onLoad={() => setLargeLoaded(largeSrc)}
+                />
+              )}
+              {paging && page > 1 && (
+                <span className={styles.pageBadge}>
+                  {pagingWord(paging)} {page}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+        {codeShown !== null && (
+          <CodeViewer
+            path={codeShown.path}
+            name={codeShown.name}
+            query={codeShown.path === hit.path ? query : ""}
+            line={codeShown.line}
+            found={codeShown.found}
+            from={codeShown.from}
+            onOpen={(line) => actions.openAt({ ...hit, path: codeShown.path, name: codeShown.name }, line)}
+            onClosed={closeCode}
+          />
+        )}
         {viewing !== null && (
           <PreviewViewer
             hit={hit}
@@ -512,7 +594,7 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
             <dt>Type</dt>
             <dd>
               {CATEGORY_LABELS[hit.category]}
-              {extension && ` · ${extension}`}
+              {hit.category === "code" ? ` · ${details?.code?.language ?? codeLanguageOf(hit.name) ?? extension}` : extension && ` · ${extension}`}
             </dd>
             <dt>Size</dt>
             <dd>{formatSize(hit.size, true)}</dd>
@@ -566,12 +648,41 @@ function OneFile({ hit, query, withFiles, weak, actions, onFindSimilar, layout }
           </span>
         </p>
         {wantsDetails && details === undefined && <p className={styles.loading}>Finding where it matches…</p>}
-        {hit.reason === "words" && details && details.snippets.length > 0 && (
+        {hit.reason === "words" && hit.category !== "code" && details && details.snippets.length > 0 && (
           <div className={styles.snippets}>
             {details.snippets.map((snippet, i) => (
               <Snippet key={i} snippet={snippet} paging={paging} current={paged && snippet.page === page} onPage={paged ? setPressedPage : undefined} />
             ))}
           </div>
+        )}
+        {hit.category === "code" && (hit.copies.length > 0 || alsoIn.length > 0) && (
+          <>
+            <h4 className={styles.subheading}>Also in</h4>
+            <div className={styles.snippets}>
+              {hit.copies.map((path) => (
+                <AlsoInRow key={path} path={path} detail="Identical file" onShow={(from) => setCodeShown({ path, name: fileNameOf(path), line: shownStart ?? 1, found: null, from })} />
+              ))}
+              {alsoIn.map((other) => (
+                <AlsoInRow
+                  key={other.path}
+                  path={other.path}
+                  symbol={other.symbol}
+                  detail={`Line ${other.line} · ${Math.round(other.similarity * 100)}% alike`}
+                  onShow={(from) => setCodeShown({ path: other.path, name: fileNameOf(other.path), line: other.line, found: null, from })}
+                />
+              ))}
+            </div>
+          </>
+        )}
+        {hit.category === "code" && details && details.snippets.length > 0 && (
+          <>
+            <h4 className={styles.subheading}>Elsewhere in this file</h4>
+            <div className={styles.snippets}>
+              {details.snippets.map((snippet, i) => (
+                <Snippet key={i} snippet={snippet} paging={null} current={false} lines onPage={showOwnCode} />
+              ))}
+            </div>
+          </>
         )}
         {details?.closest && hit.reason !== "words" && (
           <>
@@ -654,17 +765,24 @@ function Thumb({ hit, more }: { hit: SearchHit; more: number }) {
     <span className={styles.thumb}>
       <Icon className={styles.icon} size={24} strokeWidth={1.25} aria-hidden />
       {wanted && <img className={cx(styles.image, styles.cover, loaded && styles.loaded)} src={src} alt="" draggable={false} decoding="async" onLoad={onLoad} onError={onError} />}
+      {hit.category === "code" && <CodeThumb path={hit.path} modified={hit.modified} line={hit.at} />}
       {more > 0 && <span className={styles.more}>+{more}</span>}
     </span>
   );
 }
 
-function describeKinds(hits: SearchHit[]): string {
-  const counts = new Map<string, number>();
+const KIND_NOUNS: Record<SearchHit["category"], [string, string]> = {
+  image: ["image", "images"],
+  video: ["video", "videos"],
+  audio: ["audio file", "audio files"],
+  document: ["document", "documents"],
+  code: ["code file", "code files"],
+};
+
+export function describeKinds(hits: Pick<SearchHit, "category">[]): string {
+  const counts = new Map<SearchHit["category"], number>();
   for (const hit of hits) counts.set(hit.category, (counts.get(hit.category) ?? 0) + 1);
-  return [...counts]
-    .map(([category, count]) => `${count} ${CATEGORY_LABELS[category as SearchHit["category"]].toLowerCase()}${count === 1 ? "" : "s"}`)
-    .join(", ");
+  return [...counts].map(([category, count]) => `${count} ${KIND_NOUNS[category][count === 1 ? 0 : 1]}`).join(", ");
 }
 
 function SeveralFiles({ hits, actions, onFindSimilar, onSelectOnly }: { hits: SearchHit[]; actions: ResultActions; onFindSimilar: (paths: string[]) => void; onSelectOnly: (path: string) => void }) {

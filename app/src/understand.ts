@@ -15,9 +15,67 @@ export interface Understood {
   text: string;
   fileTypeWords: string[];
   dateWords: string[];
+  language: string | null;
+  project: string | null;
+  tests: true | null;
 }
 
-const NOTHING: Understood = { fileType: null, from: null, to: null, text: "", fileTypeWords: [], dateWords: [] };
+const NOTHING: Understood = { fileType: null, from: null, to: null, text: "", fileTypeWords: [], dateWords: [], language: null, project: null, tests: null };
+
+const LANGUAGE_WORDS: Record<string, string> = {
+  python: "Python", py: "Python", javascript: "JavaScript", js: "JavaScript", node: "JavaScript", typescript: "TypeScript", ts: "TypeScript",
+  rust: "Rust", go: "Go", golang: "Go", java: "Java", kotlin: "Kotlin", c: "C", "c++": "C++", cpp: "C++", "c#": "C#", csharp: "C#",
+  swift: "Swift", "objective-c": "Objective-C", objc: "Objective-C", ruby: "Ruby", php: "PHP", shell: "Shell", bash: "Shell", zsh: "Shell",
+  r: "R", sql: "SQL", powershell: "PowerShell", perl: "Perl", lua: "Lua", scala: "Scala", dart: "Dart", haskell: "Haskell", elixir: "Elixir",
+  erlang: "Erlang", julia: "Julia", zig: "Zig", ocaml: "OCaml", "f#": "F#", fsharp: "F#", groovy: "Groovy", clojure: "Clojure",
+  lisp: "Common Lisp", scheme: "Scheme", elisp: "Emacs Lisp", prolog: "Prolog", elm: "Elm", gleam: "Gleam", rescript: "ReScript",
+  idris: "Idris", ada: "Ada", vb: "Visual Basic", awk: "AWK", vimscript: "Vim script", solidity: "Solidity", glsl: "GLSL", hlsl: "HLSL",
+  assembly: "Assembly", asm: "Assembly", nix: "Nix", terraform: "HCL", hcl: "HCL", starlark: "Starlark", bazel: "Starlark",
+  protobuf: "Protocol Buffers", proto: "Protocol Buffers", thrift: "Thrift", graphql: "GraphQL", rego: "Rego", batch: "Batch", vue: "Vue",
+  svelte: "Svelte", html: "HTML", cmake: "CMake", makefile: "Makefile", ninja: "Ninja", dockerfile: "Dockerfile", meson: "Meson", matlab: "MATLAB",
+};
+
+const CODE_NOUNS = "code|script|scripts|function|functions|file|files|program|programs|class|classes|method|methods|module|modules|project|projects|source";
+let codeProjects: string[] = [];
+export function setCodeProjects(names: string[]) {
+  codeProjects = names;
+}
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function readCode(query: string, ignored: Set<string>): { language: string | null; project: string | null; tests: true | null; spans: [number, number][] } {
+  const lower = query.toLowerCase();
+  const spans: [number, number][] = [];
+  const end = "(?=$|[\\s,.;:!?])";
+  // No lookbehind: macOS 13's WebKit doesn't support it.
+  const start = "(?:^|\\s)";
+  const at = (match: RegExpExecArray) => match.index + (/^\s/.test(match[0]) ? 1 : 0);
+  const names = Object.keys(LANGUAGE_WORDS).sort((a, b) => b.length - a.length).map(escapeRegExp).join("|");
+  let language: string | null = null;
+  const before = new RegExp(`${start}(?:written in|in|using)\\s+(${names})${end}`).exec(lower);
+  const named = before ?? new RegExp(`${start}(${names})\\s+(?:${CODE_NOUNS})${end}`).exec(lower);
+  if (named && !ignored.has(named[1])) {
+    language = LANGUAGE_WORDS[named[1]];
+    const from = at(named);
+    spans.push(before ? [from, named.index + named[0].length] : [lower.indexOf(named[1], from), lower.indexOf(named[1], from) + named[1].length]);
+  }
+  let project: string | null = null;
+  for (const name of [...codeProjects].sort((a, b) => b.length - a.length)) {
+    const said = new RegExp(`${start}(?:in|from)\\s+(${escapeRegExp(name.toLowerCase())})${end}`).exec(lower);
+    if (said && !ignored.has(said[1])) {
+      project = name;
+      spans.push([at(said), said.index + said[0].length]);
+      break;
+    }
+  }
+  let tests: true | null = null;
+  const tested = new RegExp(`${start}(?:in\\s+(?:the\\s+)?tests|only\\s+tests|tests\\s+only|test\\s+files?|unit\\s+tests)${end}`).exec(lower);
+  if (tested && !ignored.has("tests")) {
+    tests = true;
+    spans.push([at(tested), tested.index + tested[0].length]);
+  }
+  return { language, project, tests, spans };
+}
 
 interface Token {
   word: string;
@@ -773,6 +831,7 @@ const TYPE_WORDS = new Map<string, TypeWord>([
   ...typeWords("video", "video videos vid vids mp4 mp4s m4v mov mkv avi webm 3gp mpg mpeg mts m2ts wmv", "movie movies footage vlog vlogs"),
   ...typeWords("audio", "audio mp3 mp3s wav flac m4a m4b aac aiff ogg amr wma", "song songs music podcast podcasts audiobook audiobooks"),
   ...typeWords("document", "document documents doc docs docx pdf pdfs txt rtf xlsx pptx odt ods odp epub epubs", "resume resumes résumé résumés cv essay essays thesis dissertation ebook ebooks e-book e-books manuscript manuscripts spreadsheet spreadsheets"),
+  ...typeWords("code", "code sourcecode codebase", "script scripts function functions"),
 ]);
 
 const TYPE_PHRASES: [string, TypeWord][] = [
@@ -806,6 +865,9 @@ const TYPE_PHRASES: [string, TypeWord][] = [
   ["word files", { fileType: "document", keep: false }],
   ["cover letter", { fileType: "document", keep: true }],
   ["cover letters", { fileType: "document", keep: true }],
+  ["source code", { fileType: "code", keep: false }],
+  ["code file", { fileType: "code", keep: false }],
+  ["code files", { fileType: "code", keep: false }],
 ];
 
 const NOT_A_TYPE = new Set(
@@ -818,7 +880,9 @@ const NOT_A_TYPE = new Set(
     "music festival|music festivals|music teacher|music lesson|music lessons|music school|music store|music room|music stand|music theory|music class|sheet music|music sheet|" +
     "song lyrics|song list|" +
     "movie poster|movie posters|movie ticket|movie tickets|movie night|movie theater|movie theatre|movie review|movie reviews|movie script|movie list|movie still|movie stills|movie quote|movie quotes|" +
-    "document camera|document scanner|documents folder|document folder|pdf editor|pdf reader|pdf viewer|cv joint|doc martens"
+    "document camera|document scanner|documents folder|document folder|pdf editor|pdf reader|pdf viewer|cv joint|doc martens|" +
+    "qr code|qr codes|zip code|zip codes|postal code|postal codes|area code|area codes|dress code|promo code|promo codes|discount code|" +
+    "discount codes|coupon code|coupon codes|bar code|bar codes|morse code|code of conduct|film script|tv script|play script|wedding function"
   ).split("|"),
 );
 const NOT = words("no not without non never");
@@ -931,7 +995,16 @@ export function understand(query: string, now: Date, ignored: readonly string[] 
     }
   }
 
-  const candidates = typeCandidates(tokens, taken, ignoredSet, wordsOf);
+  const code = readCode(query, ignoredSet);
+  for (const [from, to] of code.spans) {
+    tokens.forEach((token, at) => {
+      if (token.start < to && token.end > from) taken[at] = true;
+    });
+  }
+  const saysCode = code.language !== null || code.project !== null || code.tests !== null;
+
+  const allCandidates = typeCandidates(tokens, taken, ignoredSet, wordsOf);
+  const candidates = saysCode ? allCandidates.filter((candidate) => candidate.fileType === "code") : allCandidates;
   const type = chooseType(candidates, tokens);
   for (const same of type ? candidates.filter((candidate) => candidate.fileType === type.fileType && !candidate.keep) : []) {
     for (let at = same.start; at < same.end; at++) taken[at] = true;
@@ -974,12 +1047,15 @@ export function understand(query: string, now: Date, ignored: readonly string[] 
   if (!taken.some(Boolean)) text = query;
 
   return {
-    fileType: type ? type.fileType : null,
+    fileType: saysCode ? "code" : type ? type.fileType : null,
     from: range.from !== null ? period(range.from) : null,
     to: range.to !== null ? period(range.to) : null,
     text: cleanQuery(text),
     fileTypeWords: type ? [wordsOf(type)] : [],
     dateWords: dateSpans.map(wordsOf),
+    language: code.language,
+    project: code.project,
+    tests: code.tests,
   };
 }
 

@@ -22,6 +22,7 @@ struct Example {
     slots: usize,
     reading: bool,
     failed: Option<String>,
+    text: Option<String>,
 }
 
 #[derive(Default)]
@@ -70,6 +71,10 @@ impl Examples {
     }
 
     pub fn add(&self, embedder: &Arc<dyn Embedder>, path: &Path) -> Result<(), String> {
+        self.add_reading(embedder, path, false)
+    }
+
+    pub fn add_reading(&self, embedder: &Arc<dyn Embedder>, path: &Path, read_text: bool) -> Result<(), String> {
         let entry = self.entry(path);
         let now = std::fs::metadata(path)
             .ok()
@@ -103,10 +108,15 @@ impl Examples {
                 slots: 0,
                 reading: true,
                 failed: None,
+                text: None,
             });
         }
 
         let first = embedder.embed_example(path, 0, FIRST_PIECES).map_err(|e| e.to_string());
+        let picture = read_text
+            && path.file_name().is_some_and(|name| {
+                crate::browse::category_of(&name.to_string_lossy()) == Some(crate::browse::Category::Image)
+            });
         let more = {
             let mut state = entry.lock();
             let example = state.as_mut().expect("set above");
@@ -121,11 +131,28 @@ impl Examples {
                     false
                 }
             };
-            example.reading = more;
+            example.reading = more || (picture && first.is_ok());
             entry.changed.notify_all();
             more
         };
         first?;
+        if picture {
+            let (entry, embedder, path) = (entry.clone(), Arc::clone(embedder), path.to_path_buf());
+            let (len, modified) = now.expect("there");
+            std::thread::spawn(move || {
+                crate::power::below_the_page();
+                let text = embedder.read_text(&path);
+                if let Some(example) = entry
+                    .lock()
+                    .as_mut()
+                    .filter(|example| example.len == len && example.modified == modified)
+                {
+                    example.text = text;
+                    example.reading = false;
+                }
+                entry.changed.notify_all();
+            });
+        }
         if more {
             let (entry, embedder, path) = (entry.clone(), Arc::clone(embedder), path.to_path_buf());
             let (len, modified) = now.expect("there");
@@ -160,6 +187,12 @@ impl Examples {
                 .unwrap_or_else(|| format!("{} has nothing to search with.", name_of(path)))),
             None => Err(format!("{} isn't there any more.", name_of(path))),
         }
+    }
+
+    pub fn text(&self, path: &Path) -> Option<String> {
+        let entries = lock(&self.entries);
+        let entry = entries.get(&path_key(path))?;
+        entry.lock().as_ref().and_then(|example| example.text.clone())
     }
 
     pub fn progress(&self, paths: &[PathBuf]) -> Vec<Option<Progress>> {

@@ -1,0 +1,21 @@
+.thumb {
+  position: absolute;
+  inset: 0;
+  display: block;
+  padding: 10px 10px 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+  font-size: 7.5px;
+  line-height: 1.45;
+  white-space: pre;
+  tab-size: 4;
+  text-align: left;
+  pointer-events: none;
+}
+
+.line {
+  display: block;
+}

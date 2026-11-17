@@ -36,9 +36,9 @@ const INDEXABLE: &[(Category, &[&str])] = &[
     (
         Category::Document,
         &[
-            "pdf", "txt", "md", "markdown", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm", "ppsx", "odt", "ods",
-            "odp", "pages", "numbers", "key", "rtf", "epub", "dotx", "dotm", "xltx", "xltm", "potx", "potm", "ott",
-            "ots", "otp",
+            "pdf", "txt", "md", "markdown", "html", "htm", "xhtml", "docx", "docm", "xlsx", "xlsm", "pptx", "pptm",
+            "ppsx", "odt", "ods", "odp", "pages", "numbers", "key", "rtf", "epub", "dotx", "dotm", "xltx", "xltm",
+            "potx", "potm", "ott", "ots", "otp",
         ],
     ),
 ];
@@ -58,15 +58,23 @@ pub enum Category {
     Video,
     Audio,
     Document,
+    Code,
 }
 
-pub const CATEGORIES: [Category; 4] = [Category::Image, Category::Video, Category::Audio, Category::Document];
+pub const CATEGORIES: [Category; 5] = [
+    Category::Image,
+    Category::Video,
+    Category::Audio,
+    Category::Document,
+    Category::Code,
+];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Categories(u8);
 
 impl Categories {
-    pub const ALL: Self = Self(0b1111);
+    pub const ALL: Self = Self(0b1_1111);
+    pub const BEFORE_CODE: Self = Self(0b1111);
 
     fn bit(category: Category) -> u8 {
         match category {
@@ -74,6 +82,7 @@ impl Categories {
             Category::Video => 0b0010,
             Category::Audio => 0b0100,
             Category::Document => 0b1000,
+            Category::Code => 0b1_0000,
         }
     }
 
@@ -561,7 +570,7 @@ pub fn classify(item: &fs::DirEntry) -> Option<(String, Shown)> {
     let shown = if is_dir(item)? && !is_package(&item.path()) {
         Shown::Folder
     } else {
-        Shown::File(category_of(&name).filter(|_| is_what_it_is_named(&item.path()))?)
+        Shown::File(category_of_path(&item.path(), &name).filter(|_| is_what_it_is_named(&item.path()))?)
     };
     Some((name, shown))
 }
@@ -712,7 +721,17 @@ pub fn has_listed_name(path: &Path) -> bool {
         && (!path.is_file() || is_what_it_is_named(path))
 }
 
+pub fn category_of_path(path: &Path, name: &str) -> Option<Category> {
+    if crate::embed::code::is_html_name(name) && crate::code_scope::in_project(path) {
+        return Some(Category::Code);
+    }
+    category_of(name)
+}
+
 pub fn category_of(name: &str) -> Option<Category> {
+    if crate::embed::code::is_code_name(name) {
+        return Some(Category::Code);
+    }
     let extension = Path::new(name).extension()?.to_str()?;
     INDEXABLE
         .iter()

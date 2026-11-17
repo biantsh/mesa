@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
@@ -123,6 +123,7 @@ pub struct SearchHit {
     pub score: f32,
     #[serde(flatten)]
     pub why: crate::store::Why,
+    pub copies: Vec<String>,
 }
 
 impl From<Hit> for SearchHit {
@@ -140,6 +141,11 @@ impl From<Hit> for SearchHit {
             size: hit.size,
             score: hit.score,
             why: hit.why,
+            copies: hit
+                .copies
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect(),
         }
     }
 }
@@ -180,20 +186,39 @@ impl From<Page> for SearchPage {
     }
 }
 
-#[tauri::command(async)]
-pub fn search(
-    query: String,
+#[derive(Deserialize)]
+pub struct SearchFilter {
     category: Option<Category>,
     from: Option<i64>,
     to: Option<i64>,
+    language: Option<String>,
+    project: Option<String>,
+    tests: Option<bool>,
+}
+
+#[tauri::command(async)]
+pub fn search(
+    query: String,
+    filter: SearchFilter,
     files: Option<Vec<String>>,
     window: tauri::WebviewWindow,
     index: State<'_, Index>,
 ) -> Result<SearchPage, String> {
+    let project = match filter.project {
+        Some(name) => Some(index.code_project_folder(&name)?.unwrap_or(-1)),
+        None => None,
+    };
+    let language = filter.language.as_deref().and_then(crate::embed::code::language_named);
+    let code = crate::store::CodeFilter {
+        language,
+        project,
+        tests: filter.tests.unwrap_or(false),
+    };
     let filter = Filter {
-        category,
-        from_ms: from,
-        to_ms: to,
+        category: filter.category,
+        from_ms: filter.from,
+        to_ms: filter.to,
+        code,
     };
     Ok(index
         .search_for(window.label(), &query, &to_paths(files.unwrap_or_default()), filter)?
@@ -241,6 +266,12 @@ pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
     if !browse::is_listed_file(file) {
         return Err("That isn't a file Mesa opens.".into());
     }
+    if browse::category_of(&file.file_name().unwrap_or_default().to_string_lossy()) == Some(browse::Category::Code) {
+        if crate::editor::open_at(file, 1)? {
+            return Ok(());
+        }
+        return crate::editor::open_as_text(file);
+    }
     let kind = file.extension().map_or_else(
         || "this kind of".to_owned(),
         |extension| format!(".{}", extension.to_string_lossy().to_lowercase()),
@@ -257,6 +288,49 @@ pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
             why
         }
     })
+}
+
+#[tauri::command(async)]
+pub fn code_peek(path: String, line: Option<u64>) -> Result<Vec<Vec<crate::highlight::Part>>, String> {
+    let file = Path::new(&path);
+    if !browse::is_listed_file(file) {
+        return Err("That isn't a file Mesa lists.".into());
+    }
+    crate::highlight::peek(file, line)
+}
+
+#[tauri::command(async)]
+pub fn code_projects(index: State<'_, Index>) -> Result<Vec<String>, String> {
+    Ok(index.code_projects()?.into_iter().map(|(name, _)| name).collect())
+}
+
+#[tauri::command(async)]
+pub fn also_in(path: String, line: u64, index: State<'_, Index>) -> Result<Vec<crate::index::AlsoIn>, String> {
+    if !browse::is_listed_file(Path::new(&path)) {
+        return Err("That isn't a file Mesa lists.".into());
+    }
+    index.also_in(Path::new(&path), line)
+}
+
+#[tauri::command(async)]
+pub fn code_file(path: String, query: String) -> Result<crate::highlight::CodeFile, String> {
+    let file = Path::new(&path);
+    if !browse::is_listed_file(file) {
+        return Err("That isn't a file Mesa lists.".into());
+    }
+    crate::highlight::code_file(file, &query)
+}
+
+#[tauri::command(async)]
+pub fn open_code(path: String, line: u32, app: AppHandle) -> Result<(), String> {
+    if !browse::is_listed_file(Path::new(&path)) {
+        return Err("That isn't a file Mesa opens.".into());
+    }
+    let _ = app;
+    if crate::editor::open_at(Path::new(&path), line.max(1))? {
+        return Ok(());
+    }
+    crate::editor::open_as_text(Path::new(&path))
 }
 
 #[cfg(target_os = "macos")]

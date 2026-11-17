@@ -4,6 +4,7 @@ import { fileManager } from "./platform";
 
 export interface ResultActions {
   open: (hit: SearchHit) => void;
+  openAt: (hit: SearchHit, line: number) => void;
   showInFolder: (hit: SearchHit) => void;
   copyFiles: (hits: SearchHit[]) => Promise<void>;
   copyPaths: (hits: SearchHit[]) => Promise<void>;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowUpRight, DatabaseZap, FolderPlus, FolderSearch, Info, Lock, Search, Trash2 } from "lucide-react";
+import { ArrowUpRight, CodeXml, DatabaseZap, FolderSearch, Info, Lock, Search, Trash2 } from "lucide-react";
 import { api, errorText, type Category, type Estimate, type Overview, type Survey } from "../api";
 import { describeTotal, estimateSeconds, formatEstimateRange, joinNames } from "../fileSurvey";
 import { Button } from "../components/Button";
@@ -7,7 +7,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { IndexHeader } from "../components/IndexHeader";
 import { SimpleProgress } from "../components/SimpleProgress";
 import { TypeTiles } from "../components/TypeTiles";
-import { DEFAULT_TYPES, TYPE_ORDER, describeTypes, hasNewTypes, typesToIndex } from "../indexTypes";
+import { DEFAULT_TYPES, SIMPLE_TYPES, describeTypes, hasNewTypes, typesToIndex } from "../indexTypes";
 import { HINT_DELAY_MS, hasShownBackgroundHint, markBackgroundHintShown } from "../backgroundHint";
 import { SWITCH_NAME } from "../indexView";
 import { MAIN_HIDDEN } from "../events";
@@ -21,10 +21,11 @@ import styles from "./SimpleIndexScreen.module.css";
 
 type Mode = "setup" | "running" | "idle";
 const USE_ICON = 16;
+const CODE_ICON = 19;
 const ADVANCED_USES = [
   { Icon: FolderSearch, text: "Browse and see what's indexed", size: USE_ICON },
   { Icon: Lock, text: "Choose which items to exclude", size: 15 },
-  { Icon: FolderPlus, text: "Index single folders or files", size: USE_ICON },
+  { Icon: CodeXml, text: "Index code from your projects", size: CODE_ICON, strokeWidth: (2 * USE_ICON) / CODE_ICON },
 ];
 
 interface Props {
@@ -202,7 +203,7 @@ export function SimpleIndexScreen({
     [survey, counted, estimate, picked],
   );
 
-  const everyType = TYPE_ORDER.every((type) => indexedTypes.includes(type));
+  const everyType = SIMPLE_TYPES.every((type) => indexedTypes.includes(type));
   const checked = mode === "idle" ? typesToIndex(indexedTypes, picked, false) : picked;
   const canStart = mode === "setup" ? picked.length > 0 : hasNewTypes(indexedTypes, picked);
   const named = active ? { viewTransitionName: SWITCH_NAME } : undefined;
@@ -320,10 +321,10 @@ export function SimpleIndexScreen({
                 <h2 className={styles.cardTitle}>Choose folders yourself</h2>
                 <p className={styles.cardText}>Pick exactly what to index and what to leave out.</p>
                 <ul className={styles.uses}>
-                  {ADVANCED_USES.map(({ Icon, text, size }) => (
+                  {ADVANCED_USES.map(({ Icon, text, size, strokeWidth }) => (
                     <li key={text}>
                       <span className={styles.useIcon}>
-                        <Icon size={size} aria-hidden />
+                        <Icon size={size} strokeWidth={strokeWidth} aria-hidden />
                       </span>
                       {text}
                     </li>

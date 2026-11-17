@@ -273,7 +273,9 @@ fn supported_files(
         && root
             .file_name()
             .and_then(|name| browse::category_of(&name.to_string_lossy()))
-            .is_some_and(|category| shared.types().contains(category))
+            .is_some_and(|category| {
+                shared.types().contains(category) && (category != Category::Code || crate::code_scope::allows(root))
+            })
     {
         1
     } else {
@@ -744,6 +746,7 @@ struct Found {
 
 fn each_entry(dir: &Path, types: Categories, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -> Option<bool> {
     let mut complete = true;
+    let mut own_code: Option<bool> = None;
     let photos_library = unindexable::is_photos_library(dir);
     for item in fs::read_dir(dir).ok()? {
         let Ok(item) = item else {
@@ -759,9 +762,16 @@ fn each_entry(dir: &Path, types: Categories, mut visit: impl FnMut(&fs::DirEntry
         if matches!(shown, Shown::File(category) if !types.contains(category)) {
             continue;
         }
+        if matches!(shown, Shown::File(Category::Code)) {
+            let own = *own_code.get_or_insert_with(|| crate::code_scope::allows_folder(dir));
+            if !own || crate::code_scope::is_ignored(&item.path()) {
+                continue;
+            }
+        }
         if matches!(shown, Shown::Folder)
             && (item.file_type().map_or(true, |kind| kind.is_symlink())
-                || (unindexable::could_be_unindexable(&name) && unindexable::is_unindexable(&item.path())))
+                || (unindexable::could_be_unindexable(&name) && unindexable::is_unindexable(&item.path()))
+                || crate::code_scope::is_others_folder(&item.path()))
         {
             continue;
         }
@@ -820,7 +830,10 @@ fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
 
 fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
     let name = path.file_name()?.to_string_lossy().into_owned();
-    let category = browse::category_of(&name).filter(|&category| types.contains(category))?;
+    let category = browse::category_of_path(path, &name).filter(|&category| types.contains(category))?;
+    if crate::code_scope::in_others(path) || (category == Category::Code && !crate::code_scope::allows(path)) {
+        return None;
+    }
     let (modified_ms, size) = facts_of_path(path)?;
     Some(ScannedDir {
         path: path.parent()?.to_owned(),

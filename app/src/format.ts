@@ -25,7 +25,7 @@ export function formatMonth(milliseconds: number): string {
   return month.format(new Date(milliseconds));
 }
 
-export const CATEGORY_LABELS: Record<Category, string> = { image: "Image", video: "Video", audio: "Audio", document: "Document" };
+export const CATEGORY_LABELS: Record<Category, string> = { image: "Image", video: "Video", audio: "Audio", document: "Document", code: "Code" };
 
 export function typeLabel(entry: Entry): string {
   if (entry.kind === "drive") return "Drive";

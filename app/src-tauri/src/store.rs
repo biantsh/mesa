@@ -36,6 +36,9 @@ const MIGRATIONS: &[&str] = &[
     ADD_PAGE_TEXTS,
     REDO_SOUND_VIDEO_AND_DOCUMENTS,
     REDO_VIDEOS_FOR_THEIR_SOUND,
+    REDO_CODE_CUT_AGAIN,
+    ADD_FILE_NAMES,
+    REDO_CODE_BY_OUTLINE,
 ];
 
 const WORDS_ID: u32 = 2;
@@ -120,6 +123,22 @@ END;
 const REDO_TINY_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category = 3 AND size < 1024;";
 const REDO_SOUND_VIDEO_AND_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category IN (1, 2, 3);";
 const REDO_VIDEOS_FOR_THEIR_SOUND: &str = "UPDATE files SET embedded_with = 0 WHERE category = 1;";
+const REDO_CODE_CUT_AGAIN: &str = "UPDATE files SET embedded_with = 0 WHERE category = 4;";
+const REDO_CODE_BY_OUTLINE: &str = "UPDATE files SET embedded_with = 0 WHERE category = 4;";
+const ADD_FILE_NAMES: &str = "
+CREATE VIRTUAL TABLE file_names USING fts5(folded, content = '', contentless_delete = 1, tokenize = 'trigram remove_diacritics 1');
+INSERT INTO file_names (rowid, folded) SELECT id, mesa_fold(name) FROM files;
+CREATE TRIGGER file_names_added AFTER INSERT ON files BEGIN
+    INSERT INTO file_names (rowid, folded) VALUES (new.id, mesa_fold(new.name));
+END;
+CREATE TRIGGER file_names_gone AFTER DELETE ON files BEGIN
+    DELETE FROM file_names WHERE rowid = old.id;
+END;
+CREATE TRIGGER file_names_renamed AFTER UPDATE OF name ON files BEGIN
+    DELETE FROM file_names WHERE rowid = old.id;
+    INSERT INTO file_names (rowid, folded) VALUES (new.id, mesa_fold(new.name));
+END;
+";
 const ADD_PAGE_TEXTS: &str = "
 CREATE TABLE page_texts (
     file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -183,7 +202,39 @@ pub struct Filter {
     pub category: Option<Category>,
     pub from_ms: Option<i64>,
     pub to_ms: Option<i64>,
+    pub code: CodeFilter,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CodeFilter {
+    pub language: Option<&'static str>,
+    pub project: Option<i64>,
+    pub tests: bool,
+}
+
+impl CodeFilter {
+    pub const NONE: Self = Self {
+        language: None,
+        project: None,
+        tests: false,
+    };
+
+    fn is_none(&self) -> bool {
+        *self == Self::NONE
+    }
+}
+
+const TEST_NAMES: &[&str] = &[
+    "test_*",
+    "*_test.*",
+    "*.test.*",
+    "*.spec.*",
+    "*_spec.*",
+    "*Test.*",
+    "*Tests.*",
+    "conftest.py",
+];
+const TEST_FOLDERS: &[&str] = &["tests", "test", "__tests__", "spec", "specs", "testing"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hit {
@@ -195,6 +246,7 @@ pub struct Hit {
     pub size: u64,
     pub score: f32,
     pub why: Why,
+    pub copies: Vec<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize)]
@@ -210,6 +262,7 @@ pub struct Why {
 pub enum WordsMatch {
     Words,
     Phrase,
+    Name,
 }
 
 pub struct ScannedDir {
@@ -961,6 +1014,37 @@ impl Store {
         Ok(found)
     }
 
+    pub fn code_with_phrase(&self, words: &[String], filter: Filter) -> Result<Vec<i64>> {
+        if words.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (_, code) = self.words_matching(
+            &words::whole(&words.join(" ")),
+            Filter {
+                category: Some(Category::Code),
+                ..filter
+            },
+        )?;
+        Ok(code)
+    }
+
+    pub fn code_named(&self, name: &str, filter: Filter) -> Result<Vec<i64>> {
+        let mut values: Vec<Value> = vec![name.to_owned().into()];
+        let passes = filter_condition(
+            Filter {
+                category: Some(Category::Code),
+                ..filter
+            },
+            &mut values,
+        );
+        let sql = format!("SELECT f.id FROM files f WHERE f.name = ? AND {passes}");
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let found = statement
+            .query_map(rusqlite::params_from_iter(values), |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        Ok(found)
+    }
+
     fn words_matching(&self, fts: &str, filter: Filter) -> Result<(Vec<i64>, Vec<i64>)> {
         let mut found = [Vec::new(), Vec::new()];
         for (table, found) in ["picture_words", "document_words"].into_iter().zip(&mut found) {
@@ -1010,6 +1094,7 @@ impl Store {
                 size: size as u64,
                 score,
                 why: Why::default(),
+                copies: Vec::new(),
             });
         }
         Ok(hits)
@@ -1030,6 +1115,131 @@ impl Store {
             .query_row(params![dir, name.to_string_lossy()], |r| r.get::<_, Option<String>>(0))
             .optional()?
             .flatten())
+    }
+
+    pub fn code_folders(&self) -> Result<Vec<PathBuf>> {
+        let mut statement = self
+            .conn
+            .prepare_cached("SELECT DISTINCT dir_id FROM files WHERE category = ?1")?;
+        let dirs: Vec<i64> = statement
+            .query_map([category_code(Category::Code)], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        dirs.into_iter().map(|dir| dir_path(&self.conn, dir)).collect()
+    }
+
+    pub fn folder_id(&self, path: &Path) -> Result<Option<i64>> {
+        find_dir(&self.conn, path)
+    }
+
+    pub fn named(&self, query: &str, filter: Filter) -> Result<Vec<i64>> {
+        let terms = words::terms(query);
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let fts = terms
+            .iter()
+            .map(|term| words::whole(term))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let mut values: Vec<Value> = vec![fts.into()];
+        let passes = filter_condition(filter, &mut values);
+        let sql = format!(
+            "SELECT f.id FROM file_names n JOIN files f ON f.id = n.rowid WHERE file_names MATCH ? AND {passes}"
+        );
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let found = statement
+            .query_map(params_from_iter(values), |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        Ok(found)
+    }
+
+    pub fn named_exactly(&self, name: &str, filter: Filter) -> Result<Vec<i64>> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(Vec::new());
+        }
+        let escaped = name.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let mut values: Vec<Value> = vec![name.to_owned().into(), format!("{escaped}.%").into()];
+        let passes = filter_condition(filter, &mut values);
+        let sql = format!(
+            "SELECT f.id FROM files f WHERE (f.name = ? COLLATE NOCASE OR f.name LIKE ? ESCAPE '\\') AND {passes}"
+        );
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let found = statement
+            .query_map(params_from_iter(values), |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<i64>>>()?;
+        Ok(found)
+    }
+
+    pub fn code_of_size(&self, size: u64, except: i64) -> Result<Vec<(i64, PathBuf)>> {
+        let mut statement = self
+            .conn
+            .prepare_cached("SELECT id, dir_id, name FROM files WHERE category = ?1 AND size = ?2 AND id != ?3")?;
+        let rows: Vec<(i64, i64, String)> = statement
+            .query_map(params![category_code(Category::Code), size as i64, except], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.into_iter()
+            .map(|(id, dir, name)| Ok((id, dir_path(&self.conn, dir)?.join(name))))
+            .collect()
+    }
+
+    pub fn like_code(&mut self, path: &Path, line: u64, least: f32, most: usize) -> Result<Vec<(PathBuf, u64, f32)>> {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return Ok(Vec::new());
+        };
+        let Some(dir) = find_dir(&self.conn, parent)? else {
+            return Ok(Vec::new());
+        };
+        let found: Option<(i64, i64)> = self
+            .conn
+            .prepare_cached("SELECT f.id, e.slot FROM files f JOIN embeddings e ON e.file_id = f.id WHERE f.dir_id = ?1 AND f.name = ?2 AND e.locator = ?3 AND e.config_id = ?4")?
+            .query_row(params![dir, name.to_string_lossy(), line as i64, CONFIG_ID], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        let Some((file, slot)) = found else {
+            return Ok(Vec::new());
+        };
+        let mut this = None;
+        self.vectors
+            .read_each(&[slot as u64], &mut |_, record| this = Some(to_floats(record)))?;
+        let Some(this) = this else { return Ok(Vec::new()) };
+        let mut candidates: Vec<(u64, i64, u64)> = self
+            .conn
+            .prepare_cached("SELECT e.slot, e.file_id, e.locator FROM embeddings e JOIN files f ON f.id = e.file_id WHERE f.category = ?1 AND e.config_id = ?2 AND f.id != ?3")?
+            .query_map(params![category_code(Category::Code), CONFIG_ID, file], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?, r.get::<_, i64>(2)? as u64)))?
+            .collect::<rusqlite::Result<_>>()?;
+        candidates.sort_unstable();
+        let slots: Vec<u64> = candidates.iter().map(|&(slot, ..)| slot).collect();
+        let mut best: HashMap<i64, (u64, f32)> = HashMap::new();
+        let mut next = 0;
+        self.vectors.read_each(&slots, &mut |_, record| {
+            let (_, other, locator) = candidates[next];
+            next += 1;
+            let score = similarity(&this, record);
+            if score >= least {
+                let entry = best.entry(other).or_insert((locator, score));
+                if score > entry.1 {
+                    *entry = (locator, score);
+                }
+            }
+        })?;
+        let mut ranked: Vec<(i64, u64, f32)> = best
+            .into_iter()
+            .map(|(file, (locator, score))| (file, locator, score))
+            .collect();
+        ranked.sort_by(|a, b| b.2.total_cmp(&a.2));
+        ranked.truncate(most);
+        let mut out = Vec::new();
+        for (file, locator, score) in ranked {
+            let (dir, name): (i64, String) =
+                self.conn
+                    .query_row("SELECT dir_id, name FROM files WHERE id = ?1", [file], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?;
+            out.push((dir_path(&self.conn, dir)?.join(name), locator, score));
+        }
+        Ok(out)
     }
 
     pub fn page_texts(&self, path: &Path) -> Result<PageTexts> {
@@ -1055,18 +1265,58 @@ fn push_filter(filter: Filter, sql: &mut String, values: &mut Vec<Value>) {
 }
 
 fn filter_condition(filter: Filter, values: &mut Vec<Value>) -> String {
-    let mut parts = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     if let Some(category) = filter.category {
-        parts.push("f.category = ?");
+        parts.push("f.category = ?".into());
         values.push(category_code(category).into());
     }
     if let Some(from) = filter.from_ms {
-        parts.push("f.modified_ms >= ?");
+        parts.push("f.modified_ms >= ?".into());
         values.push(from.into());
     }
     if let Some(to) = filter.to_ms {
-        parts.push("f.modified_ms < ?");
+        parts.push("f.modified_ms < ?".into());
         values.push(to.into());
+    }
+    let code = filter.code;
+    if !code.is_none() {
+        parts.push("f.category = ?".into());
+        values.push(category_code(Category::Code).into());
+    }
+    if let Some(language) = code.language {
+        let (extensions, whole) = crate::embed::code::names_of(language);
+        let mut either: Vec<&str> = Vec::new();
+        for extension in extensions {
+            either.push("f.name LIKE ? ESCAPE '\\'");
+            values.push(format!("%.{}", extension.replace('_', "\\_").replace('%', "\\%")).into());
+        }
+        for name in whole {
+            either.push("f.name = ?");
+            values.push(name.to_owned().into());
+        }
+        parts.push(if either.is_empty() {
+            "0".into()
+        } else {
+            format!("({})", either.join(" OR "))
+        });
+    }
+    if let Some(project) = code.project {
+        parts.push(format!("f.dir_id IN ({BELOW_FROM_ONE})"));
+        values.push(project.into());
+    }
+    if code.tests {
+        let names = TEST_NAMES
+            .iter()
+            .map(|_| "f.name GLOB ?")
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        values.extend(TEST_NAMES.iter().map(|pattern| Value::from((*pattern).to_owned())));
+        let folders = TEST_FOLDERS.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        values.extend(TEST_FOLDERS.iter().map(|name| Value::from((*name).to_owned())));
+        let is_test = format!(
+            "({names} OR f.dir_id IN (WITH RECURSIVE below(id) AS (SELECT id FROM dirs WHERE name IN ({folders}) UNION ALL SELECT d.id FROM dirs d JOIN below ON d.parent_id = below.id WHERE d.id != d.parent_id) SELECT id FROM below))"
+        );
+        parts.push(is_test);
     }
     if parts.is_empty() {
         "1".to_owned()
@@ -1074,6 +1324,8 @@ fn filter_condition(filter: Filter, values: &mut Vec<Value>) -> String {
         parts.join(" AND ")
     }
 }
+
+const BELOW_FROM_ONE: &str = "WITH RECURSIVE below(id) AS (SELECT ? UNION ALL SELECT d.id FROM dirs d JOIN below ON d.parent_id = below.id WHERE d.id != d.parent_id) SELECT id FROM below";
 
 #[cfg(test)]
 impl Store {
@@ -1152,6 +1404,15 @@ fn vectors_path(dir: &Path) -> PathBuf {
 
 fn open_db(dir: &Path) -> Result<Connection> {
     let conn = Connection::open(dir.join("mesa.db"))?;
+    conn.create_scalar_function(
+        "mesa_fold",
+        1,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8 | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let name: String = context.get(0)?;
+            Ok(words::fold(&name))
+        },
+    )?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
     conn.execute_batch("PRAGMA journal_size_limit = 1048576;")?;
     let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?;
@@ -1230,6 +1491,7 @@ fn category_code(category: Category) -> i64 {
         Category::Video => 1,
         Category::Audio => 2,
         Category::Document => 3,
+        Category::Code => 4,
     }
 }
 
@@ -1239,6 +1501,7 @@ fn category_from_code(code: i64) -> Option<Category> {
         1 => Category::Video,
         2 => Category::Audio,
         3 => Category::Document,
+        4 => Category::Code,
         _ => return None,
     })
 }
@@ -1405,7 +1668,9 @@ fn is_pdf(name: &str) -> bool {
 }
 
 fn has_words(category: i64) -> bool {
-    category == category_code(Category::Image) || category == category_code(Category::Document)
+    category == category_code(Category::Image)
+        || category == category_code(Category::Document)
+        || category == category_code(Category::Code)
 }
 
 fn existing_of(conn: &Connection, dir_id: i64, scan: &ScannedDir) -> Result<HashMap<String, StoredFile>> {
@@ -1504,7 +1769,8 @@ fn write_words(
         WORDS_ID
     };
     let folded = words.map(words::fold).filter(|folded| !folded.is_empty());
-    let Some(folded) = folded.filter(|_| matches!(category, Category::Image | Category::Document)) else {
+    let Some(folded) = folded.filter(|_| matches!(category, Category::Image | Category::Document | Category::Code))
+    else {
         tx.prepare_cached("UPDATE files SET read_with = ?2 WHERE id = ?1")?
             .execute(params![id, made_with])?;
         return Ok(());
@@ -1786,6 +2052,7 @@ mod tests {
         category: None,
         from_ms: None,
         to_ms: None,
+        code: CodeFilter::NONE,
     };
 
     fn top(store: &mut Store, query: &Record, filter: Filter, limit: usize) -> Result<Vec<Hit>> {

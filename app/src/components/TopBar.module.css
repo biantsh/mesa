@@ -46,4 +46,5 @@
   min-height: 34px;
   align-items: center;
   margin-right: calc(var(--vertical) - var(--gap));
+  container: topbar-middle / inline-size;
 }

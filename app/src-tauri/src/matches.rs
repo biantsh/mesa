@@ -9,7 +9,21 @@ use crate::{embed::PageTexts, words};
 pub struct Details {
     pub snippets: Vec<Snippet>,
     pub closest: Option<Snippet>,
+    pub code: Option<CodeView>,
 }
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CodeView {
+    pub language: String,
+    pub project: Option<String>,
+    pub symbol: String,
+    pub start: u32,
+    pub end: u32,
+    pub lines: Vec<Vec<crate::highlight::Part>>,
+}
+
+const MOST_CODE_LINES: usize = 60;
 
 #[derive(Serialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +47,7 @@ pub fn of_picture(text: &str, query: &str) -> Details {
     Details {
         snippets: snippets(text, &found, None, MOST_SNIPPETS),
         closest: None,
+        code: None,
     }
 }
 
@@ -106,7 +121,101 @@ pub fn of_document(path: &Path, query: &str, at: Option<u64>, scanned: &PageText
             closest.page = pages.page_of(&closest.parts);
         }
     }
-    Ok(Details { snippets: all, closest })
+    Ok(Details {
+        snippets: all,
+        closest,
+        code: None,
+    })
+}
+
+pub fn of_code(path: &Path, query: &str, at: Option<u64>) -> Result<Details, String> {
+    let text = crate::embed::code::text_of(path)?;
+    let lang = crate::embed::code::language(path, &text).ok_or("it isn't code Mesa reads")?;
+    let chunks = crate::embed::code::chunks(&text, lang);
+    let terms = words::terms(query);
+    let hits_in = |text: &str| {
+        let found = words::occurrences(text, &terms);
+        (0..terms.len())
+            .filter(|term| found.iter().any(|(of, _)| of == term))
+            .count()
+    };
+    let counts: Vec<usize> = chunks
+        .iter()
+        .map(|chunk| if terms.is_empty() { 0 } else { hits_in(&chunk.text) })
+        .collect();
+    let every = (!terms.is_empty())
+        .then(|| counts.iter().position(|&n| n == terms.len()))
+        .flatten();
+    let closest = at.and_then(|at| chunks.iter().position(|chunk| u64::from(chunk.start) == at));
+    let some = counts
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| **n > 0)
+        .max_by_key(|(_, n)| **n)
+        .map(|(i, _)| i);
+    let Some(chosen) = every.or(closest).or(some).or((!chunks.is_empty()).then_some(0)) else {
+        return Ok(Details::default());
+    };
+    let chunk = &chunks[chosen];
+    let shown: Vec<Range<usize>> = crate::highlight::lines(&text)
+        .into_iter()
+        .skip(chunk.start as usize - 1)
+        .take(((chunk.end - chunk.start + 1) as usize).min(MOST_CODE_LINES))
+        .collect();
+    let kinds = crate::highlight::kinds(&text, lang, shown.last().map_or(0, |line| line.end));
+    let lines = shown
+        .into_iter()
+        .map(|line| crate::highlight::parts(&text, line, &kinds, &terms))
+        .collect();
+    let mut snippets = Vec::new();
+    if !terms.is_empty() {
+        for (n, line) in text.split('\n').enumerate() {
+            let number = n as u32 + 1;
+            if (chunk.start..=chunk.end).contains(&number) {
+                continue;
+            }
+            let found = words::occurrences(line, &terms);
+            if !found.is_empty() {
+                let trimmed = line.trim_start();
+                let shift = line.len() - trimmed.len();
+                let marked: Vec<Range<usize>> = found.iter().map(|(_, r)| r.start - shift..r.end - shift).collect();
+                snippets.push(Snippet {
+                    parts: parts(trimmed, 0..trimmed.len(), &merged(marked)),
+                    page: Some(u64::from(number)),
+                });
+                if snippets.len() == MOST_SNIPPETS {
+                    break;
+                }
+            }
+        }
+    }
+    let project = crate::embed::code::project_root(path)
+        .and_then(|root| root.file_name().map(|n| n.to_string_lossy().into_owned()));
+    let code = CodeView {
+        language: lang.name.to_owned(),
+        project,
+        symbol: chunk.symbol.clone(),
+        start: chunk.start,
+        end: chunk.end,
+        lines,
+    };
+    Ok(Details {
+        snippets,
+        closest: None,
+        code: Some(code),
+    })
+}
+
+fn merged(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    ranges.sort_by_key(|range| range.start);
+    let mut out: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match out.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => out.push(range),
+        }
+    }
+    out
 }
 
 fn is_laid_out(path: &Path) -> bool {

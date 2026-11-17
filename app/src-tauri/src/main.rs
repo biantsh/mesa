@@ -4,9 +4,12 @@ mod browse;
 #[cfg(target_os = "macos")]
 mod cgimage;
 mod clipboard;
+mod clues;
+mod code_scope;
 mod commands;
 mod crawl;
 mod document_preview;
+mod editor;
 mod embed;
 mod epub_read;
 mod estimate;
@@ -14,6 +17,7 @@ mod examples;
 mod folder_access;
 #[cfg(target_os = "linux")]
 mod gnome_keys;
+mod highlight;
 mod hotkey;
 mod index;
 mod indexer;
@@ -280,6 +284,11 @@ fn main() {
             commands::model_status,
             commands::retry_model_setup,
             commands::set_gpu_acceleration,
+            commands::open_code,
+            commands::code_file,
+            commands::also_in,
+            commands::code_projects,
+            commands::code_peek,
             commands::set_always_full_speed,
             commands::set_start_at_sign_in,
             commands::page_painted,

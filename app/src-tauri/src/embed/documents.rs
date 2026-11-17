@@ -67,6 +67,144 @@ pub fn plain(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> 
     )
 }
 
+pub fn html(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
+    let mut bytes = Vec::new();
+    File::open(path)
+        .and_then(|file| file.take(TEXT_BYTES).read_to_end(&mut bytes))
+        .map_err(|e| format!("can't read the file: {e}"))?;
+    send_passages(
+        path,
+        &html_text(&String::from_utf8_lossy(&bytes)),
+        |n| n as u64,
+        MAX_PASSAGES,
+        emit,
+        words,
+    )
+}
+
+fn html_text(html: &str) -> String {
+    const HIDDEN: &[&str] = &["script", "style", "template", "svg", "noscript", "head"];
+    const BLOCKS: &[&str] = &[
+        "p",
+        "div",
+        "br",
+        "li",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "tr",
+        "section",
+        "article",
+        "header",
+        "footer",
+        "ul",
+        "ol",
+        "table",
+        "blockquote",
+        "pre",
+        "title",
+        "dt",
+        "dd",
+        "figcaption",
+        "main",
+        "nav",
+        "aside",
+        "hr",
+    ];
+    let lower = html.to_ascii_lowercase();
+    let mut out = String::with_capacity(html.len() / 2);
+    let mut at = 0;
+    while at < html.len() {
+        let Some(open) = html[at..].find('<').map(|n| at + n) else {
+            out.push_str(&html[at..]);
+            break;
+        };
+        out.push_str(&html[at..open]);
+        if lower[open..].starts_with("<!--") {
+            at = lower[open..].find("-->").map_or(html.len(), |n| open + n + 3);
+            continue;
+        }
+        let Some(close) = html[open..].find('>').map(|n| open + n) else {
+            break;
+        };
+        let tag = lower[open + 1..close].trim_start_matches('/');
+        let name: String = tag.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        at = close + 1;
+        if HIDDEN.contains(&name.as_str()) && !lower[open + 1..].starts_with('/') {
+            if name == "head"
+                && let Some(title) = lower[at..].find("<title").map(|n| at + n)
+                && let Some(end) = lower[title..].find("</title>").map(|n| title + n)
+                && !lower[at..title].contains("</head>")
+            {
+                let text_from = html[title..].find('>').map_or(end, |n| title + n + 1);
+                out.push_str(&html[text_from..end.max(text_from)]);
+                out.push('\n');
+            }
+            at = lower[at..].find(&format!("</{name}")).map_or(html.len(), |n| at + n);
+            at = html[at..].find('>').map_or(html.len(), |n| at + n + 1);
+            continue;
+        }
+        if BLOCKS.contains(&name.as_str()) {
+            out.push('\n');
+        } else if (name == "td" || name == "th") && !lower[open + 1..].starts_with('/') {
+            out.push('\t');
+        }
+    }
+    decode_entities(&out)
+}
+
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let Some(semi) = rest[..rest.len().min(12)].find(';') else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..semi];
+        let named = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some(' '),
+            "mdash" => Some('—'),
+            "ndash" => Some('–'),
+            "hellip" => Some('…'),
+            "rsquo" => Some('’'),
+            "lsquo" => Some('‘'),
+            "ldquo" => Some('“'),
+            "rdquo" => Some('”'),
+            "copy" => Some('©'),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+                .or_else(|| entity.strip_prefix('#').and_then(|n| n.parse().ok()))
+                .and_then(char::from_u32),
+        };
+        match named {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn docx(path: &Path, emit: Emit, words: &mut String) -> Result<(), String> {
     let file = File::open(path).map_err(|e| format!("can't read the file: {e}"))?;
     let mut archive = zip::ZipArchive::new(BufReader::new(file)).map_err(|e| format!("not a Word document: {e}"))?;

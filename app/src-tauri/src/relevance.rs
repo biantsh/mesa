@@ -27,6 +27,7 @@ pub enum Reason {
     Words,
     Meaning,
     FewFiles,
+    Clues,
 }
 
 impl Ranked {

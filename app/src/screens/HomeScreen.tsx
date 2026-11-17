@@ -10,14 +10,14 @@ import { IndexStatus } from "../components/IndexStatus";
 import { SlidingIcon } from "../components/SlidingIcon";
 import { CATEGORY_ICONS, MessageLink, ResultGrid, type ResultMessage } from "../components/ResultGrid";
 import { ResultPanel } from "../components/ResultPanel";
-import { prefetchDetails } from "../matchDetails";
+import { codeLine, prefetchDetails } from "../matchDetails";
 import { cx } from "../cx";
 import { fitQuoted } from "../fitText";
 import { MAX_EXAMPLES, addExamples, countByKind, categoryOfPath, distinctNames, dropHint, dropIcon, leftOut, limitNotice, shortName } from "../examples";
 import logo from "../logo";
 import { resultMenuGroups, type ResultActions } from "../resultMenu";
 import { DEFAULT_PANEL_COLUMNS, PANEL_COLUMNS, panelBeside, panelLayout, panelRoom, panelWidth, previewHeight, resultColumns } from "../resultWindow";
-import { chooseDateEnd, chooseFileType, keepChosen, understandChosen, type Chosen, type Month, type Understood } from "../understand";
+import { chooseDateEnd, chooseFileType, keepChosen, setCodeProjects, understandChosen, type Chosen, type Month, type Understood } from "../understand";
 import { BACKGROUND_PRESS } from "../background";
 import { MAIN_HIDDEN } from "../events";
 import { scrollByKey } from "../scrollKeys";
@@ -28,6 +28,7 @@ import { isForSomethingElse } from "../useSelection";
 import { useForwardedWheel } from "../useForwardedWheel";
 import { useResultSelection } from "../useResultSelection";
 import { useShortcutTip } from "../useShortcutTip";
+import { useIndexedTypes } from "../useIndexedTypes";
 import { useTauriEvent } from "../useTauriEvent";
 import styles from "./HomeScreen.module.css";
 
@@ -77,6 +78,13 @@ interface Found {
 }
 
 const MAX_QUOTED = 80;
+const NOT_INDEXED: Record<Category, string> = {
+  image: "Images aren’t indexed",
+  video: "Videos aren’t indexed",
+  audio: "Audio isn’t indexed",
+  document: "Documents aren’t indexed",
+  code: "Code isn’t indexed",
+};
 
 export interface HomeHandle {
   restoreFocus: () => boolean;
@@ -126,6 +134,11 @@ function placeholder(model: ModelStatus | null, nothingIndexed: boolean, droppin
 interface Open {
   what: "type" | "from" | "to";
   pill: HTMLElement;
+}
+
+function codeDetail(understood: Understood): string {
+  const parts = [understood.language, understood.project, understood.tests ? "tests" : null];
+  return parts.filter(Boolean).join(" · ");
 }
 
 function Token({ icon, ghost, open, label, className, tooltip, onPress, children }: { icon?: ReactNode; ghost?: boolean; open: boolean; label: string; className?: string; tooltip?: string; onPress: (pill: HTMLElement) => void; children: ReactNode }) {
@@ -265,7 +278,7 @@ function FillingRing({ value }: { value: number }) {
   );
 }
 
-function Understanding({ understood, query, examples, examplesProgress, limitNote, fieldFocused, onFocusField, onChooseType, onChooseDate, onRemoveExample, onClearExamples }: { understood: Understood; query: string; examples: string[]; examplesProgress: number | null; limitNote: string | null; fieldFocused: boolean; onFocusField: () => void; onChooseType: (value: Category | null) => void; onChooseDate: (end: "from" | "to", month: Month | null) => void; onRemoveExample: (path: string) => void; onClearExamples: () => void }) {
+function Understanding({ understood, indexedTypes, query, examples, examplesProgress, limitNote, fieldFocused, onFocusField, onChooseType, onChooseDate, onRemoveExample, onClearExamples }: { understood: Understood; indexedTypes: Category[] | null; query: string; examples: string[]; examplesProgress: number | null; limitNote: string | null; fieldFocused: boolean; onFocusField: () => void; onChooseType: (value: Category | null) => void; onChooseDate: (end: "from" | "to", month: Month | null) => void; onRemoveExample: (path: string) => void; onClearExamples: () => void }) {
   const [open, setOpen] = useState<Open | null>(null);
   const close = useCallback(() => setOpen(null), []);
   const press = (what: Open["what"]) => (pill: HTMLElement) => setOpen((now) => (now?.pill === pill ? null : { what, pill }));
@@ -293,6 +306,7 @@ function Understanding({ understood, query, examples, examplesProgress, limitNot
           {understood.fileType && TypeIcon ? (
             <Token icon={<TypeIcon size={12} aria-hidden />} open={open?.what === "type"} label="Change the file type" onPress={press("type")}>
               {CATEGORY_LABELS[understood.fileType]}
+              {understood.fileType === "code" && codeDetail(understood) && ` · ${codeDetail(understood)}`}
             </Token>
           ) : (
             <Token ghost open={open?.what === "type"} label="Change the file type" onPress={press("type")}>
@@ -332,7 +346,7 @@ function Understanding({ understood, query, examples, examplesProgress, limitNot
         </div>
       )}
 
-      {open?.what === "type" && <TypePicker anchor={open.pill} value={understood.fileType} onChoose={onChooseType} onClose={close} />}
+      {open?.what === "type" && <TypePicker anchor={open.pill} value={understood.fileType} indexed={indexedTypes} onChoose={onChooseType} onClose={close} />}
       {(open?.what === "from" || open?.what === "to") && (
         <MonthPicker
           key={open.what}
@@ -443,7 +457,25 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const room = MAX_EXAMPLES - examples.length;
   const focusField = useCallback(() => input.current?.focus({ preventScroll: true }), []);
   const [chosen, setChosen] = useState<Chosen>({});
-  const understood = useMemo(() => understandChosen(query, new Date(), chosen), [query, chosen]);
+  const [projectsRead, setProjectsRead] = useState(0);
+  useEffect(() => {
+    if (!focused) return;
+    let live = true;
+    api.codeProjects().then(
+      (names) => {
+        if (!live) return;
+        setCodeProjects(names);
+        setProjectsRead((n) => n + 1);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [focused]);
+  const indexedTypes = useIndexedTypes(focused).types;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const understood = useMemo(() => understandChosen(query, new Date(), chosen), [query, chosen, projectsRead]);
   const chooseType = useCallback((value: Category | null) => setChosen((now) => chooseFileType(now, query, new Date(), value)), [query]);
   const chooseDate = useCallback((end: "from" | "to", month: Month | null) => setChosen((now) => chooseDateEnd(now, query, new Date(), end, month)), [query]);
   const results = query.trim() !== "" || examples.length > 0 || exampleNotice !== null;
@@ -458,6 +490,9 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const refuse = useCallback(() => setAttention((count) => count + 1), []);
   const text = understood.text.trim();
   const fileType = understood.fileType;
+  const language = fileType === "code" ? understood.language : null;
+  const project = fileType === "code" ? understood.project : null;
+  const tests = fileType === "code" ? understood.tests : null;
   const fromMs = understood.from?.start ?? null;
   const toMs = understood.to?.end ?? null;
   const searchable = model?.state === "ready" || model?.state === "preparing";
@@ -475,7 +510,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     setSearching(true);
     const timer = setTimeout(() => {
       api
-        .search(text, { category: fileType, from: fromMs, to: toMs }, examples)
+        .search(text, { category: fileType, from: fromMs, to: toMs, language, project, tests }, examples)
         .then(
           (page: SearchPage) =>
             current &&
@@ -496,7 +531,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       current = false;
       clearTimeout(timer);
     };
-  }, [results, searchable, text, fileType, fromMs, toMs, examples, filledIn]);
+  }, [results, searchable, text, fileType, fromMs, toMs, language, project, tests, examples, filledIn]);
   const batches = found && "batches" in found ? found.batches : NO_BATCHES;
   const hits = useMemo(() => (batches.length === 0 ? NO_HITS : batches.flat()), [batches]);
   const shortcutTip = useShortcutTip({ onScreen: onScreen && !asWidget, worth: hits.length > 0 && !searching, results: hits.length > 0 });
@@ -542,7 +577,13 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const resultActions = useMemo<ResultActions>(
     () => ({
       open: (hit) => {
-        api.openFile(hit.path).then(
+        (hit.category === "code" ? api.openCode(hit.path, codeLine(hit)) : api.openFile(hit.path)).then(
+          () => onDismiss?.(),
+          (e) => setFailure(`Couldn't open ${hit.name}. ${errorText(e)}`),
+        );
+      },
+      openAt: (hit, line) => {
+        api.openCode(hit.path, line).then(
           () => onDismiss?.(),
           (e) => setFailure(`Couldn't open ${hit.name}. ${errorText(e)}`),
         );
@@ -639,7 +680,13 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   else if (!searchable) message = { text: model?.state === "failed" ? "Search isn’t available." : "Waiting for the search model to load…" };
   else if (found && "error" in found) message = { text: `The search failed: ${found.error}` };
   else if (found && "batches" in found && batches[0]?.length === 0) {
-    if (found.more || batches.length > 1) {
+    if (fileType && indexedTypes && !indexedTypes.includes(fileType)) {
+      const openIndex = <MessageLink onClick={() => openIndexFromProgress()}>{fileType === "code" ? "Index" : "Choose what’s indexed"}</MessageLink>;
+      message = {
+        text: NOT_INDEXED[fileType],
+        hint: fileType === "code" ? <>Turn on project code in the advanced view of the {openIndex}.</> : <>{openIndex} to search them.</>,
+      };
+    } else if (found.more || batches.length > 1) {
       const quoted = found.text.length > MAX_QUOTED ? `${found.text.slice(0, MAX_QUOTED).trimEnd()}…` : found.text;
       message = {
         text: quoted ? `No strong matches for “${quoted}”` : "No strong matches",
@@ -872,6 +919,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         shown={panelShown}
         query={text}
         withFiles={examples.length > 0}
+        files={examples}
         isWeak={isWeak}
         progress={overview?.progress != null}
         away={stowed}
@@ -955,7 +1003,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               if (!blocked && !modelFailed) input.current?.focus();
             }}
           >
-            <Understanding understood={understood} query={query} examples={examples} examplesProgress={examplesProgress} limitNote={limitNote} fieldFocused={focused} onFocusField={focusField} onChooseType={chooseType} onChooseDate={chooseDate} onRemoveExample={removeExample} onClearExamples={clearExamples} />
+            <Understanding understood={understood} indexedTypes={indexedTypes} query={query} examples={examples} examplesProgress={examplesProgress} limitNote={limitNote} fieldFocused={focused} onFocusField={focusField} onChooseType={chooseType} onChooseDate={chooseDate} onRemoveExample={removeExample} onClearExamples={clearExamples} />
           </div>
           <p className={cx(styles.indexNote, incomplete && dragging === null && styles.shown)} aria-hidden={!incomplete || undefined}>
             <CircleDashed size={12} aria-hidden />
