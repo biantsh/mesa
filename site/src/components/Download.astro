@@ -1,0 +1,92 @@
+---
+import Icon from "./Icon.astro";
+import { PLATFORMS } from "../platforms";
+
+function others(id: string) {
+  return PLATFORMS.filter((platform) => platform.id !== id);
+}
+---
+
+<div class="download">
+  {
+    PLATFORMS.map((platform) => (
+      <div class="choice" data-for={platform.id}>
+        <div class="group">
+          {platform.installers.map((kind, i) =>
+            i === 0 ? (
+              <button type="button" class="button primary large">
+                <Icon name="download" size={18} />
+                <span>
+                  Download<span class="for-os"> for {platform.name}</span>
+                </span>
+                <span class="kind">{kind}</span>
+              </button>
+            ) : (
+              <button type="button" class="button primary large">
+                {kind}
+              </button>
+            ),
+          )}
+        </div>
+        <p class="meta">
+          Free and open source<span class="separator" aria-hidden="true"></span>Also for{" "}
+          {others(platform.id).map((other, i, all) => (
+            <>
+              {i > 0 && (i === all.length - 1 ? " and " : ", ")}
+              <a href="#download">{other.name}</a>
+            </>
+          ))}
+        </p>
+      </div>
+    ))
+  }
+</div>
+
+<style>
+  .choice {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+
+  :global(:root[data-os="mac"]) .choice[data-for="mac"],
+  :global(:root[data-os="windows"]) .choice[data-for="windows"],
+  :global(:root[data-os="linux"]) .choice[data-for="linux"],
+  :global(:root:not([data-os])) .choice[data-for="mac"] {
+    display: flex;
+  }
+
+  .kind {
+    font-weight: 500;
+    opacity: 0.75;
+  }
+
+  @media (max-width: 480px) {
+    .group:has(.button + .button) .for-os {
+      display: none;
+    }
+
+    .group:has(.button + .button) .button {
+      padding: 0 14px;
+    }
+  }
+
+  .meta {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 13px;
+  }
+
+  .meta a {
+    font-weight: 500;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 3px;
+    transition: text-decoration-color 150ms ease;
+  }
+
+  .meta a:hover {
+    text-decoration-color: currentColor;
+  }
+</style>

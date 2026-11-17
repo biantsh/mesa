@@ -1,0 +1,53 @@
+---
+import "@fontsource-variable/inter";
+import "../../../app/src/styles/tokens.css";
+import "../styles/site.css";
+import logo from "../../../app/src-tauri/icons/mesa.svg";
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <link rel="icon" type="image/svg+xml" href={logo.src} />
+    <script is:inline>
+      (() => {
+        const dark = window.matchMedia("(prefers-color-scheme: dark)");
+        const apply = () => {
+          if (dark.matches) document.documentElement.dataset.theme = "dark";
+          else delete document.documentElement.dataset.theme;
+        };
+        apply();
+        dark.addEventListener("change", apply);
+      })();
+    </script>
+    <script is:inline>
+      (() => {
+        const asked = new URLSearchParams(location.search).get("os");
+        const hint = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent).toLowerCase();
+        const os = ["mac", "windows", "linux"].includes(asked)
+          ? asked
+          : hint.includes("win")
+            ? "windows"
+            : hint.includes("linux") && !hint.includes("android")
+              ? "linux"
+              : "mac";
+        document.documentElement.dataset.os = os;
+      })();
+    </script>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

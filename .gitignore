@@ -9,3 +9,5 @@ app/src-tauri/runtime
 
 __pycache__/
 .idea
+
+site/.astro
