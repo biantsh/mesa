@@ -4,10 +4,12 @@ import styles from "./LegalCorner.module.css";
 
 const LICENSE = "MIT License";
 
-export function LegalCorner() {
+export function LegalCorner({ onOpenLicenses }: { onOpenLicenses: () => void }) {
   return (
     <span className={styles.legal}>
-      <span>{LICENSE}</span>
+      <button type="button" className={styles.license} onClick={onOpenLicenses}>
+        {LICENSE}
+      </button>
       <span className={styles.divider} aria-hidden />
       <button
         type="button"

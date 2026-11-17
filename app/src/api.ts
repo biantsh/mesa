@@ -32,6 +32,28 @@ export interface Entry {
 
 export type PrivacyPane = "filesAndFolders" | "photos" | "media";
 
+export interface Notices {
+  missing?: boolean;
+  texts: string[];
+  sections: NoticeSection[];
+}
+
+export interface NoticeSection {
+  id: string;
+  title: string;
+  items: NoticeItem[];
+}
+
+export interface NoticeItem {
+  name: string;
+  version?: string;
+  by?: string;
+  license: string;
+  note?: string;
+  url?: string;
+  texts: number[];
+}
+
 export interface Listed extends Entry {
   missing: boolean;
   slot: number;
@@ -311,6 +333,8 @@ export const api = {
   removeFromIndex: (paths: string[]) => invoke<void>("remove_from_index", { paths }),
   reportPageError: (message: string) => invoke<void>("report_page_error", { message }),
   openProjectPage: () => invoke<void>("open_project_page"),
+  notices: () => invoke<Notices>("notices"),
+  openNoticeLink: (url: string) => invoke<void>("open_notice_link", { url }),
   openPrivacySettings: (pane: PrivacyPane) => invoke<void>("open_privacy_settings", { pane }),
   openFile: (path: string) => invoke<void>("open_file", { path }),
   openCode: (path: string, line: number) => invoke<void>("open_code", { path, line }),

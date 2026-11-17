@@ -105,11 +105,9 @@ fn on_path(name: &str) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
+#[cfg(not(windows))]
 fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_default()
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
 #[cfg(target_os = "macos")]

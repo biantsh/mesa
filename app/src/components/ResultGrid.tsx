@@ -17,8 +17,18 @@ import styles from "./ResultGrid.module.css";
 import { fileManager, shortcut } from "../platform";
 
 const CODE_SCALE = 0.82;
-function CodeIcon({ strokeWidth = 2, style, ...props }: LucideProps) {
-  return <CodeXml {...props} strokeWidth={Number(strokeWidth) / CODE_SCALE} style={{ ...style, transform: `scale(${CODE_SCALE})` }} />;
+const CODE_SHRINKS_FROM = 18;
+const CODE_WEIGHT = 1.25;
+function CodeIcon({ size = 24, strokeWidth = 2, style, ...props }: LucideProps) {
+  const scale = Number(size) >= CODE_SHRINKS_FROM ? CODE_SCALE : 1;
+  return (
+    <CodeXml
+      {...props}
+      size={size}
+      strokeWidth={(Number(strokeWidth) * CODE_WEIGHT) / scale}
+      style={scale === 1 ? style : { ...style, transform: `scale(${scale})` }}
+    />
+  );
 }
 
 export const CATEGORY_ICONS: Record<Category, ComponentType<LucideProps>> = {

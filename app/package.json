@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:runtime": "node scripts/build-llama.mjs && node scripts/build-onnxruntime.mjs",
+    "build:runtime": "node scripts/build-llama.mjs && node scripts/build-onnxruntime.mjs && node scripts/build-notices.mjs",
     "icons": "node scripts/build-icons.mjs",
     "tauri": "tauri",
     "test": "vitest run"

@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LicensesDialog } from "./components/LicensesDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
@@ -24,6 +25,7 @@ import { useWidgetRequests } from "./useWidgetRequests";
 import styles from "./App.module.css";
 
 type Screen = "home" | "index";
+type Card = "settings" | "licenses";
 const SETUP_FADE_MS = 300;
 
 function needsSetup(status: ModelStatus | null): boolean {
@@ -36,10 +38,12 @@ const Home = memo(HomeScreen);
 export default function App() {
   useFollowSystemTheme();
   const [screen, setScreen] = useState<Screen>("home");
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [card, setCard] = useState<Card | null>(null);
+  const settingsOpen = card === "settings";
+  const cardOpen = card !== null;
   const [querying, setQuerying] = useState(false);
   const onIndex = screen === "index";
-  const dimmed = (querying && !onIndex) || settingsOpen;
+  const dimmed = (querying && !onIndex) || cardOpen;
   const maximized = useMaximized();
   useFullscreen();
   const { overview, refresh: refreshIndex, watch: watchIndex } = useIndexState();
@@ -62,7 +66,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [setup]);
   const covered = setup !== "off";
-  const behind = covered || settingsOpen;
+  const behind = covered || cardOpen;
   const retryModel = useCallback(() => void api.retryModelSetup().catch(() => {}), []);
 
   const home = useRef<HTMLDivElement>(null);
@@ -77,25 +81,27 @@ export default function App() {
   }, []);
   const beforeSettings = useRef<Element | null>(null);
   const settingsByPointer = useRef(false);
-  const changeSettingsOpen = useCallback((open: boolean) => {
-    if (open) {
+  const changeCard = useCallback((next: Card | null) => {
+    if (next && !beforeSettings.current) {
       beforeSettings.current = document.activeElement;
       settingsByPointer.current = lastWasPointer();
     }
-    setSettingsOpen(open);
+    setCard(next);
   }, []);
-  const openSettings = useCallback(() => changeSettingsOpen(true), [changeSettingsOpen]);
-  const closeSettings = useCallback(() => changeSettingsOpen(false), [changeSettingsOpen]);
+  const changeSettingsOpen = useCallback((open: boolean) => changeCard(open ? "settings" : null), [changeCard]);
+  const openSettings = useCallback(() => changeCard("settings"), [changeCard]);
+  const openLicenses = useCallback(() => changeCard("licenses"), [changeCard]);
+  const closeCard = useCallback(() => changeCard(null), [changeCard]);
   useEffect(() => {
     const back = beforeSettings.current;
-    if (settingsOpen || !back) return;
+    if (cardOpen || !back) return;
     beforeSettings.current = null;
     const at = document.activeElement;
     if (skipGivingBackTo(back, settingsByPointer.current)) return;
     if (back instanceof HTMLElement && back.isConnected && (!at || at === document.body || at.closest("dialog"))) {
       back.focus({ preventScroll: true });
     }
-  }, [settingsOpen]);
+  }, [cardOpen]);
 
   const first = useRef(true);
   useEffect(() => {
@@ -121,7 +127,7 @@ export default function App() {
 
   useTauriEvent(MAIN_HIDDEN, () => {
     setScreen("home");
-    setSettingsOpen(false);
+    setCard(null);
   });
 
   useTauriEvent(MAIN_SHOWN, () => {
@@ -189,10 +195,11 @@ export default function App() {
           {overview && describeIndexTotals(overview.files, overview.bytes)}
         </footer>
         <footer ref={legalLine} className={cx(styles.legalCorner, cornersAway && styles.cornerAway)}>
-          <LegalCorner />
+          <LegalCorner onOpenLicenses={openLicenses} />
         </footer>
         {covered && model && <SetupScreen status={model} leaving={setup === "leaving"} />}
-        <SettingsDialog open={settingsOpen} onClose={closeSettings} />
+        <SettingsDialog open={settingsOpen} onClose={closeCard} />
+        <LicensesDialog open={card === "licenses"} onClose={closeCard} />
       </div>
     </div>
   );

@@ -19,7 +19,7 @@ if (process.platform === 'linux') {
     } catch (e) {
       fail(e.message);
     }
-    for (const script of ['build-llama.mjs', 'build-onnxruntime.mjs']) {
+    for (const script of ['build-llama.mjs', 'build-onnxruntime.mjs', 'build-notices.mjs']) {
       const result = spawnSync(process.execPath, [join(app, 'scripts', script)], { stdio: ['inherit', 2, 2] });
       if (result.status !== 0) process.exit(result.status ?? 1);
     }

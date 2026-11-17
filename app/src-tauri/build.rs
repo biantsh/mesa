@@ -10,6 +10,19 @@ fn main() {
         );
     }
     println!("cargo:rerun-if-changed={folder}");
+    let notices = "runtime/notices.json";
+    let missing = "{\"missing\":true,\"platform\":\"\",\"texts\":[],\"sections\":[]}";
+    if !std::path::Path::new(notices).exists() {
+        let _ = fs::write(notices, missing);
+    }
+    if std::env::var("PROFILE").as_deref() == Ok("release")
+        && fs::read_to_string(notices).is_ok_and(|json| json == missing)
+    {
+        panic!(
+            "The licenses haven't been gathered: run `npm run build:runtime` (or `node scripts/build-notices.mjs`) in app/"
+        );
+    }
+    println!("cargo:rerun-if-changed={notices}");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let folder = "runtime/ocr";
         let _ = fs::create_dir_all(folder);

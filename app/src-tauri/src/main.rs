@@ -24,6 +24,7 @@ mod indexer;
 mod iwork_read;
 mod main_window;
 mod matches;
+mod notices;
 mod page_scale;
 mod power;
 mod preview_queue;
@@ -270,6 +271,8 @@ fn main() {
             commands::open_file,
             commands::copy_files,
             commands::open_project_page,
+            commands::notices,
+            commands::open_notice_link,
             commands::show_in_folder,
             commands::index_everything,
             commands::survey_user_files,

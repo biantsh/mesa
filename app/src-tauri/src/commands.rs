@@ -400,6 +400,19 @@ pub fn open_project_page(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn notices() -> tauri::ipc::Response {
+    tauri::ipc::Response::new(crate::notices::NOTICES.to_owned())
+}
+
+#[tauri::command(async)]
+pub fn open_notice_link(url: String, app: AppHandle) -> Result<(), String> {
+    if !crate::notices::links_to(&url) {
+        return Err(format!("{url} isn't a link of the licenses"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn open_privacy_settings(pane: Pane, app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_url(pane.settings_url(), None::<&str>)
