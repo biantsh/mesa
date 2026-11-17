@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LicensesDialog } from "./components/LicensesDialog";
+import { BACKGROUND_PRESS } from "./background";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
@@ -92,6 +93,11 @@ export default function App() {
   const openSettings = useCallback(() => changeCard("settings"), [changeCard]);
   const openLicenses = useCallback(() => changeCard("licenses"), [changeCard]);
   const closeCard = useCallback(() => changeCard(null), [changeCard]);
+  useEffect(() => {
+    if (!cardOpen) return;
+    window.addEventListener(BACKGROUND_PRESS, closeCard);
+    return () => window.removeEventListener(BACKGROUND_PRESS, closeCard);
+  }, [cardOpen, closeCard]);
   useEffect(() => {
     const back = beforeSettings.current;
     if (cardOpen || !back) return;

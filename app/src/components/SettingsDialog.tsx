@@ -26,7 +26,7 @@ export function SettingsDialog({ open, onClose }: Props) {
   const titleId = useId();
   const gpu = useGpuAcceleration();
   const fullSpeed = useSwitchSetting(readFullSpeed, writeFullSpeed);
-  const signIn = useSwitchSetting(readSignIn, writeSignIn);
+  const signIn = useSwitchSetting(readSignIn, writeSignIn, open);
   const hotkey = useSearchHotkey(open);
   const close = () => {
     if (!hotkey.isRecording()) onClose();
@@ -48,7 +48,7 @@ export function SettingsDialog({ open, onClose }: Props) {
               <ThemeRow />
               <SwitchRow
                 title="Start when you sign in"
-                description="Keep your index up to date in the background."
+                description="Automatically launch the app in the background."
                 {...signIn}
               />
             </Group>

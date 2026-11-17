@@ -1,5 +1,5 @@
 .dialog {
-  --room: calc(100vh - 32px);
+  --room: var(--card-room);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
   width: min(720px, calc(100vw - 32px));
   height: min(720px, var(--room));

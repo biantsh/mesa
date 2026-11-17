@@ -110,17 +110,20 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
     activeIn,
     marqueeRegions,
   } = usePageSelection({ folder: listing?.path ?? "", displayed, enabled: active, indexed, excluded });
-  useEffect(() => {
-    if (!active) return;
-    window.addEventListener(BACKGROUND_PRESS, clear);
-    return () => window.removeEventListener(BACKGROUND_PRESS, clear);
-  }, [active, clear]);
   const {
     root: page,
     box: marqueeBox,
     dragging,
     onPointerDown: onMarqueePointerDown,
   } = useMarquee({ regions: marqueeRegions, onBackground: clear });
+  useEffect(() => {
+    if (!active) return;
+    const onPress = () => {
+      if (!page.current?.closest("[inert]")) clear();
+    };
+    window.addEventListener(BACKGROUND_PRESS, onPress);
+    return () => window.removeEventListener(BACKGROUND_PRESS, onPress);
+  }, [active, clear, page]);
 
   const selectedEntries = useMemo(() => entriesWith(entries, selected), [entries, selected]);
   const explorer = useRef<HTMLElement>(null);

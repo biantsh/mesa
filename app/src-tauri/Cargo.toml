@@ -89,6 +89,7 @@ objc2-av-foundation = { version = "0.3", features = ["objc2-core-media", "objc2-
 objc2-core-media = "0.3"
 objc2-quick-look-thumbnailing = "0.3"
 block2 = "0.6"
+smappservice-rs = "0.1.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

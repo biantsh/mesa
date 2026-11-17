@@ -40,11 +40,6 @@
   color: var(--color-text-faint);
 }
 
-.itemNote {
-  margin-left: 12px;
-  font-size: 11px;
-}
-
 .title {
   padding: 2px 4px 6px;
   color: var(--color-text-faint);

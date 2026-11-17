@@ -23,6 +23,7 @@ pub struct Settings {
     pub search_hotkey: Option<String>,
     pub always_full_speed: bool,
     pub start_at_sign_in: bool,
+    pub sign_in_entry_made: bool,
 }
 
 impl Default for Settings {
@@ -33,6 +34,7 @@ impl Default for Settings {
             search_hotkey: None,
             always_full_speed: false,
             start_at_sign_in: true,
+            sign_in_entry_made: false,
         }
     }
 }

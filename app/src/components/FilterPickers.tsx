@@ -102,6 +102,7 @@ export function TypePicker({ anchor, value, indexed, onChoose, onClose }: TypePi
         role="menuitemradio"
         aria-checked={value === type}
         className={cx(styles.item, off && styles.itemOff)}
+        data-tooltip={off ? "Not indexed" : undefined}
         onClick={() => {
           onClose();
           onChoose(type);
@@ -109,7 +110,6 @@ export function TypePicker({ anchor, value, indexed, onChoose, onClose }: TypePi
       >
         {icon}
         <span className={styles.itemName}>{name}</span>
-        {off && <span className={styles.itemNote}>Not indexed</span>}
         {value === type && <Check size={14} aria-hidden />}
       </button>
     );

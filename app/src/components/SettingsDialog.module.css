@@ -1,5 +1,5 @@
 .dialog {
-  --room: calc(100vh - 32px);
+  --room: var(--card-room);
   width: min(640px, calc(100vw - 32px));
   max-height: var(--room);
 }

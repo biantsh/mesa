@@ -2,6 +2,8 @@ use tauri::AppHandle;
 #[cfg(not(target_os = "linux"))]
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::settings::{Settings, SettingsStore};
+
 pub const BACKGROUND_ARG: &str = "--background";
 pub const SEARCH_ARG: &str = "--search";
 
@@ -22,44 +24,208 @@ pub fn in_background(args: &[String]) -> bool {
     args.iter().any(|arg| arg == BACKGROUND_ARG)
 }
 
-pub fn register(app: &AppHandle) -> Result<(), String> {
+#[cfg(target_os = "macos")]
+pub fn launched_at_sign_in() -> bool {
+    use objc2::{msg_send, rc::Retained};
+    use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
+    const KEY_AE_PROP_DATA: u32 = u32::from_be_bytes(*b"prop");
+    const KEY_AE_LAUNCHED_AS_LOG_IN_ITEM: u32 = u32::from_be_bytes(*b"lgit");
+    let manager = NSAppleEventManager::sharedAppleEventManager();
+    let Some(event) = manager.currentAppleEvent() else {
+        return false;
+    };
+    let data: Option<Retained<NSAppleEventDescriptor>> =
+        unsafe { msg_send![&event, paramDescriptorForKeyword: KEY_AE_PROP_DATA] };
+    data.is_some_and(|data| data.enumCodeValue() == KEY_AE_LAUNCHED_AS_LOG_IN_ITEM)
+}
+
+fn can_change() -> bool {
     if cfg!(debug_assertions) {
-        return Ok(());
+        return false;
     }
-    if cfg!(target_os = "macos") && std::env::current_exe().is_ok_and(|exe| not_installed(&exe)) {
-        return Ok(());
+    !(cfg!(target_os = "macos") && std::env::current_exe().is_ok_and(|exe| not_installed(&exe)))
+}
+
+pub fn system_says(app: &AppHandle) -> Option<bool> {
+    if !can_change() {
+        return None;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        Some(macos::is_on())
     }
     #[cfg(target_os = "linux")]
     {
-        linux::register(&app.package_info().name).map_err(|e| format!("Couldn't make Mesa start when you sign in. {e}"))
+        Some(linux::is_on(&app.package_info().name))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
     {
-        app.autolaunch()
-            .enable()
-            .map_err(|e| format!("Couldn't make Mesa start when you sign in. {e}"))
+        app.autolaunch().is_enabled().ok()
     }
 }
 
-pub fn unregister(app: &AppHandle) -> Result<(), String> {
-    if cfg!(debug_assertions) {
-        return Ok(());
+#[derive(Debug, PartialEq, Eq)]
+enum AtStart {
+    Nothing,
+    Follow(bool),
+    Refresh,
+    LeaveOff,
+}
+
+fn at_start_does(made: bool, kept: bool, system: Option<bool>) -> AtStart {
+    match system {
+        None => AtStart::Nothing,
+        Some(_) if !made => AtStart::Follow(kept),
+        Some(true) => AtStart::Refresh,
+        Some(false) => AtStart::LeaveOff,
+    }
+}
+
+pub fn at_start(app: &AppHandle, settings: &SettingsStore) {
+    let kept = settings.get();
+    let does = at_start_does(kept.sign_in_entry_made, kept.start_at_sign_in, system_says(app));
+    if does == AtStart::Nothing {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    let _ = app.autolaunch().disable();
+    let done = match does {
+        AtStart::Follow(true) => register(app, false),
+        AtStart::Follow(false) => unregister(app),
+        AtStart::Refresh if !cfg!(target_os = "macos") => register(app, false),
+        _ => Ok(()),
+    };
+    if let Err(e) = done {
+        eprintln!("Mesa: {e}");
+        return;
+    }
+    let on = system_says(app).unwrap_or(kept.start_at_sign_in);
+    if let Err(e) = settings.set(Settings {
+        start_at_sign_in: on,
+        sign_in_entry_made: true,
+        ..settings.get()
+    }) {
+        eprintln!("Mesa: couldn't save the settings. {e}");
+    }
+}
+
+pub fn current(app: &AppHandle, settings: &SettingsStore) -> Settings {
+    let kept = settings.get();
+    match system_says(app) {
+        Some(on) if kept.sign_in_entry_made && on != kept.start_at_sign_in => {
+            let now = Settings {
+                start_at_sign_in: on,
+                ..kept
+            };
+            let _ = settings.set(now.clone());
+            now
+        }
+        _ => kept,
+    }
+}
+
+pub fn set(app: &AppHandle, settings: &SettingsStore, on: bool) -> Result<(), String> {
+    let changes = can_change();
+    if changes {
+        if on { register(app, true)? } else { unregister(app)? }
+    }
+    let kept = settings.get();
+    let made = kept.sign_in_entry_made || changes;
+    if let Err(e) = settings.set(Settings {
+        start_at_sign_in: on,
+        sign_in_entry_made: made,
+        ..kept
+    }) {
+        if changes {
+            let _ = if on { unregister(app) } else { register(app, true) };
+        }
+        return Err(format!("Couldn't save the setting. {e}"));
+    }
+    Ok(())
+}
+
+fn register(app: &AppHandle, turn_on: bool) -> Result<(), String> {
+    let failed = |e: String| format!("Couldn't make Mesa start when you sign in. {e}");
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (app, failed);
+        macos::register(turn_on)
     }
     #[cfg(target_os = "linux")]
     {
-        linux::unregister(&app.package_info().name)
-            .map_err(|e| format!("Couldn't stop Mesa starting when you sign in. {e}"))
+        linux::register(&app.package_info().name, turn_on).map_err(|e| failed(e.to_string()))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
     {
-        app.autolaunch()
-            .disable()
-            .map_err(|e| format!("Couldn't stop Mesa starting when you sign in. {e}"))
+        let _ = turn_on;
+        app.autolaunch().enable().map_err(|e| failed(e.to_string()))
     }
 }
 
-pub fn follow_setting(app: &AppHandle, on: bool) -> Result<(), String> {
-    if on { register(app) } else { unregister(app) }
+fn unregister(app: &AppHandle) -> Result<(), String> {
+    let failed = |e: String| format!("Couldn't stop Mesa starting when you sign in. {e}");
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (app, failed);
+        macos::unregister()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::unregister(&app.package_info().name).map_err(|e| failed(e.to_string()))
+    }
+    #[cfg(windows)]
+    {
+        app.autolaunch().disable().map_err(|e| failed(e.to_string()))
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use smappservice_rs::{AppService, ServiceStatus, ServiceType};
+
+    fn service() -> AppService {
+        AppService::new(ServiceType::MainApp)
+    }
+
+    pub fn is_on() -> bool {
+        service().status() == ServiceStatus::Enabled
+    }
+
+    pub fn register(open_settings: bool) -> Result<(), String> {
+        let service = service();
+        let result = service.register();
+        match service.status() {
+            ServiceStatus::Enabled => Ok(()),
+            ServiceStatus::RequiresApproval => {
+                if open_settings {
+                    AppService::open_system_settings_login_items();
+                }
+                Err("Turn Mesa on in System Settings, under Login Items, to have it start when you sign in.".into())
+            }
+            _ => Err(format!(
+                "Couldn't make Mesa start when you sign in. {}",
+                result.err().map_or_else(
+                    || "macOS didn't add it to the Login Items.".to_owned(),
+                    |e| e.to_string()
+                )
+            )),
+        }
+    }
+
+    pub fn unregister() -> Result<(), String> {
+        let service = service();
+        let result = service.unregister();
+        match service.status() {
+            ServiceStatus::Enabled => Err(format!(
+                "Couldn't stop Mesa starting when you sign in. {}",
+                result
+                    .err()
+                    .map_or_else(|| "macOS kept it in the Login Items.".to_owned(), |e| e.to_string())
+            )),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -69,36 +235,44 @@ mod linux {
 
     use super::BACKGROUND_ARG;
 
-    pub fn register(name: &str) -> io::Result<()> {
+    fn file(name: &str) -> io::Result<std::path::PathBuf> {
+        let folder = crate::xdg::base_dir("XDG_CONFIG_HOME", ".config")
+            .ok_or_else(|| io::Error::other("there is no home folder"))?
+            .join("autostart");
+        Ok(folder.join(format!("{name}.desktop")))
+    }
+
+    pub fn register(name: &str, turn_on: bool) -> io::Result<()> {
         let program = crate::xdg::program().ok_or_else(|| io::Error::other("the program's path isn't known"))?;
         let program = program
             .to_str()
             .ok_or_else(|| io::Error::other("the program's path isn't text"))?;
         let entry = entry(name, &[program, BACKGROUND_ARG])
             .ok_or_else(|| io::Error::other("the program's path has a line break in it"))?;
-        let folder = crate::xdg::base_dir("XDG_CONFIG_HOME", ".config")
-            .ok_or_else(|| io::Error::other("there is no home folder"))?
-            .join("autostart");
-        let file = folder.join(format!("{name}.desktop"));
+        let file = file(name)?;
         let there = fs::read_to_string(&file).ok();
         let entry = match &there {
-            Some(there) => keeping_it_off(entry, there),
-            None => entry,
+            Some(there) if !turn_on => keeping_it_off(entry, there),
+            _ => entry,
         };
         if there.is_some_and(|there| there == entry) {
             return Ok(());
         }
-        fs::create_dir_all(&folder)?;
+        let folder = file.parent().expect("the entry is in a folder");
+        fs::create_dir_all(folder)?;
         let partial = folder.join(format!(".{name}.desktop.partial"));
         fs::write(&partial, entry)?;
         fs::rename(&partial, &file)
     }
 
+    pub fn is_on(name: &str) -> bool {
+        file(name)
+            .and_then(fs::read_to_string)
+            .is_ok_and(|there| !turned_off(&there))
+    }
+
     pub fn unregister(name: &str) -> io::Result<()> {
-        let folder = crate::xdg::base_dir("XDG_CONFIG_HOME", ".config")
-            .ok_or_else(|| io::Error::other("there is no home folder"))?
-            .join("autostart");
-        match fs::remove_file(folder.join(format!("{name}.desktop"))) {
+        match fs::remove_file(file(name)?) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
         }
@@ -120,14 +294,17 @@ mod linux {
         ))
     }
 
-    pub fn keeping_it_off(entry: String, there: &str) -> String {
+    pub fn turned_off(there: &str) -> bool {
         let says = |line: &str| there.lines().any(|written| written.trim() == line);
-        let hidden = says("Hidden=true");
-        if !hidden && !says("X-GNOME-Autostart-enabled=false") {
+        says("Hidden=true") || says("X-GNOME-Autostart-enabled=false")
+    }
+
+    pub fn keeping_it_off(entry: String, there: &str) -> String {
+        if !turned_off(there) {
             return entry;
         }
         let mut entry = entry.replace("X-GNOME-Autostart-enabled=true", "X-GNOME-Autostart-enabled=false");
-        if hidden {
+        if there.lines().any(|written| written.trim() == "Hidden=true") {
             entry.push_str("Hidden=true\n");
         }
         entry

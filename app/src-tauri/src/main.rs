@@ -192,6 +192,10 @@ fn main() {
             _ => {}
         })
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            if startup::launched_at_sign_in() {
+                main_window::keep_hidden_at_start(true);
+            }
             #[cfg(target_os = "linux")]
             page_scale::watch();
             main_window::fit_to_page_scale(app);
@@ -221,9 +225,7 @@ fn main() {
             app.manage(shown_folder::ShownFolder::default());
             app.manage(shown_listing::ShownListing::default());
             surface::start(app.handle().clone(), dir.clone());
-            if let Err(e) = startup::follow_setting(app.handle(), settings.get().start_at_sign_in) {
-                eprintln!("Mesa: {e}");
-            }
+            startup::at_start(app.handle(), &settings);
             let search_key = hotkey::Hotkey::new(app.handle(), settings.get().search_hotkey.as_deref());
             app.manage(settings);
             add_tray_icon(app, search_key.name().as_deref())?;

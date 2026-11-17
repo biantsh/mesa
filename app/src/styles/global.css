@@ -211,3 +211,7 @@ dialog {
 :root {
   --corner-bottom: 10px;
 }
+
+:root {
+  --card-room: calc(100vh - 2 * (35px + 12px));
+}

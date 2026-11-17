@@ -637,8 +637,8 @@ pub fn index_estimate(settings: State<'_, SettingsStore>, estimator: State<'_, A
 }
 
 #[tauri::command]
-pub fn get_settings(settings: State<'_, SettingsStore>) -> Settings {
-    settings.get()
+pub fn get_settings(app: AppHandle, settings: State<'_, SettingsStore>) -> Settings {
+    startup::current(&app, &settings)
 }
 
 #[tauri::command]
@@ -722,15 +722,7 @@ pub fn set_always_full_speed(
 
 #[tauri::command(async)]
 pub fn set_start_at_sign_in(enabled: bool, app: AppHandle, settings: State<'_, SettingsStore>) -> Result<(), String> {
-    startup::follow_setting(&app, enabled)?;
-    if let Err(e) = settings.set(Settings {
-        start_at_sign_in: enabled,
-        ..settings.get()
-    }) {
-        let _ = startup::follow_setting(&app, !enabled);
-        return Err(format!("Couldn't save the setting. {e}"));
-    }
-    Ok(())
+    startup::set(&app, &settings, enabled)
 }
 
 fn apply_setting(
