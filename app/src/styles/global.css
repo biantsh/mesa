@@ -71,6 +71,13 @@ button {
   border-width: 2px;
 }
 
+@supports (-moz-appearance: none) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scrollbar) transparent;
+  }
+}
+
 [data-region="files"]::-webkit-scrollbar {
   width: 10px;
 }

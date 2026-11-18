@@ -45,7 +45,13 @@ const { title, description } = Astro.props;
             : hint.includes("linux") && !hint.includes("android")
               ? "linux"
               : "mac";
+        const agent = navigator.userAgent.toLowerCase();
+        const handheld =
+          (navigator.userAgentData && navigator.userAgentData.mobile) ||
+          /android|iphone|ipad|ipod/.test(agent) ||
+          (agent.includes("macintosh") && navigator.maxTouchPoints > 1);
         document.documentElement.dataset.os = os;
+        if (asked === os || !handheld) document.documentElement.dataset.mine = os;
       })();
     </script>
   </head>

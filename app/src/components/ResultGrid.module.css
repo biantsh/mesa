@@ -74,6 +74,12 @@
   margin-top: calc(var(--bar-room) + 12px + 6px - 3px);
 }
 
+@supports (-moz-appearance: none) {
+  .pane {
+    scrollbar-width: none;
+  }
+}
+
 .pane::-webkit-scrollbar-thumb {
   border-left-width: round(3px, var(--device-px, 1px));
   border-right-width: round(3px, var(--device-px, 1px));

@@ -8,6 +8,7 @@ const HEIGHT = 635;
     <iframe src="/demo/" title="Mesa searching" tabindex="-1" aria-hidden="true" width={WIDTH} height={HEIGHT}></iframe>
     <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
   </div>
+  <div class="glass" aria-hidden="true"></div>
 </div>
 
 <script is:inline>
@@ -20,6 +21,65 @@ const HEIGHT = 635;
       new ResizeObserver(scale).observe(frame);
     }
   })();
+</script>
+
+<script>
+  for (const frame of document.querySelectorAll<HTMLElement>("[data-demo]")) {
+    const glass = frame.querySelector<HTMLElement>(".glass");
+    const demo = frame.querySelector("iframe");
+    if (!glass || !demo) continue;
+    const tell = (here: boolean) => demo.contentWindow?.postMessage({ type: "mesa-demo-visitor", here }, location.origin);
+    let here = false;
+    const comeIn = () => {
+      if (here) return;
+      here = true;
+      tell(true);
+    };
+
+    const SCROLLING_MS = 450;
+    const MOVED_PX = 2;
+    let scrolledAt = -Infinity;
+    let travelled = 0;
+    let last: { x: number; y: number } | null = null;
+    const cancel = () => {
+      travelled = 0;
+      last = null;
+    };
+    glass.addEventListener("pointermove", (event) => {
+      if (here || event.pointerType === "touch") return;
+      if (performance.now() - scrolledAt < SCROLLING_MS) return cancel();
+      travelled += last ? Math.hypot(event.screenX - last.x, event.screenY - last.y) : Math.hypot(event.movementX, event.movementY);
+      last = { x: event.screenX, y: event.screenY };
+      if (travelled >= MOVED_PX) comeIn();
+    });
+    window.addEventListener(
+      "wheel",
+      () => {
+        if (here) return;
+        scrolledAt = performance.now();
+        cancel();
+      },
+      { passive: true },
+    );
+    for (const type of ["focus", "blur"]) window.addEventListener(type, cancel);
+    document.addEventListener("visibilitychange", cancel);
+
+    glass.addEventListener("pointerleave", () => {
+      cancel();
+      if (!here) return;
+      here = false;
+      tell(false);
+    });
+    glass.addEventListener("pointerdown", (event) => event.pointerType !== "touch" && comeIn());
+    glass.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+    });
+    glass.addEventListener("drop", (event) => event.preventDefault());
+    window.addEventListener("message", (event) => {
+      if (here && event.source === demo.contentWindow && event.data?.type === "mesa-demo-playing") tell(true);
+    });
+  }
 </script>
 
 <style>
@@ -57,8 +117,15 @@ const HEIGHT = 635;
     background: transparent;
   }
 
+  .glass {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    cursor: default;
+  }
+
   .lights {
-    cursor: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'><circle cx='10' cy='10' r='7.6' fill='none' stroke='%23fff' stroke-width='4.4'/><path d='M4.6 15.4 L15.4 4.6' stroke='%23fff' stroke-width='4.4' stroke-linecap='round'/><circle cx='10' cy='10' r='7.6' fill='none' stroke='%23d6402f' stroke-width='2.2'/><path d='M4.6 15.4 L15.4 4.6' stroke='%23d6402f' stroke-width='2.2' stroke-linecap='round'/></svg>") 10 10, not-allowed;
+    pointer-events: none;
     display: none;
     position: absolute;
     top: 9px;

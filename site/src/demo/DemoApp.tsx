@@ -61,23 +61,29 @@ function release() {
   letGo.splice(0).forEach((go) => go());
 }
 const whileHeld = () => new Promise<void>((go) => letGo.push(go));
-let resuming = false;
 
 async function delay(ms: number, mine: number) {
-  let left = ms;
-  while (left > 0) {
-    if (mine !== run) throw new Stopped();
-    if (held) {
-      await whileHeld();
-      continue;
+  waits++;
+  try {
+    let left = ms;
+    while (left > 0) {
+      if (mine !== run) throw new Stopped();
+      if (held) {
+        await whileHeld();
+        continue;
+      }
+      const step = Math.min(left, 16);
+      await new Promise((done) => setTimeout(done, step));
+      if (!held) left -= step;
     }
-    const step = Math.min(left, 50);
-    await new Promise((done) => setTimeout(done, step));
-    if (!held) left -= step;
+    if (mine !== run) throw new Stopped();
+  } finally {
+    waits--;
   }
-  if (mine !== run) throw new Stopped();
 }
 
+let waits = 0;
+let moves = 0;
 const wait = (ms: number) => delay(ms, run);
 
 async function field(): Promise<HTMLInputElement> {
@@ -143,7 +149,7 @@ const caret = (() => {
     element.style.background = style.caretColor === "auto" ? style.color : style.caretColor;
     const since = performance.now() - typedAt;
     const browsers = reallyInFront() && document.activeElement === input;
-    element.style.opacity = !held && !browsers && (since < 500 || Math.floor((since - 500) / 530) % 2 === 1) ? "1" : "0";
+    element.style.opacity = !browsers && (since < 500 || Math.floor((since - 500) / 530) % 2 === 1) ? "1" : "0";
     frame = requestAnimationFrame(place);
   };
   return {
@@ -194,8 +200,9 @@ const hovers = (() => {
   const copy = (rules: CSSRuleList): string => {
     let text = "";
     for (const rule of Array.from(rules)) {
-      if (rule instanceof CSSStyleRule && rule.selectorText.includes(":hover")) {
-        text += `${rule.selectorText.replaceAll(":hover", "[data-demo-hover]")} { ${rule.style.cssText} }\n`;
+      if (rule instanceof CSSStyleRule && /:(hover|active)/.test(rule.selectorText)) {
+        const selector = rule.selectorText.replaceAll(":hover", "[data-demo-hover]").replaceAll(":active", "[data-demo-active]");
+        text += `${selector} { ${rule.style.cssText} }\n`;
       } else if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
         const inner = copy(rule.cssRules);
         if (inner) text += `@${rule instanceof CSSMediaRule ? "media" : "supports"} ${rule.conditionText} {\n${inner}}\n`;
@@ -327,37 +334,48 @@ const pointer = (() => {
   };
   const random = (from: number, to: number) => from + Math.random() * (to - from);
 
-  const stroke = (toX: number, toY: number, ms: number, bow: number, each?: (x: number, y: number) => void) => {
+  const stroke = (
+    toX: number,
+    toY: number,
+    ms: number,
+    bow: number,
+    each?: (x: number, y: number) => void,
+    aim?: { x: number; y: number; after: number; ms: number },
+  ) => {
     const mine = run;
-    const own = resuming;
     const fromX = x;
     const fromY = y;
-    const length = Math.hypot(toX - fromX, toY - fromY) || 1;
-    const sideX = (-(toY - fromY) / length) * length * bow;
-    const sideY = ((toX - fromX) / length) * length * bow;
+    const firstX = aim?.x ?? toX;
+    const firstY = aim?.y ?? toY;
+    const length = Math.hypot(firstX - fromX, firstY - fromY) || 1;
+    const sideX = (-(firstY - fromY) / length) * length * bow;
+    const sideY = ((firstX - fromX) / length) * length * bow;
+    const total = aim ? Math.max(ms, aim.after + aim.ms) : ms;
     let begun = performance.now();
     let last = begun;
+    moves++;
     return new Promise<void>((done, fail) => {
       const step = (now: number) => {
         if (mine !== run) return fail(new Stopped());
-        if (held || (resuming && !own)) {
+        if (held) {
           begun += now - last;
           last = now;
           return void requestAnimationFrame(step);
         }
         last = now;
-        const t = Math.min(1, Math.max(0, (now - begun) / ms));
-        const k = reach(t);
+        const elapsed = Math.max(0, now - begun);
+        const k = reach(Math.min(1, elapsed / ms));
+        const second = aim ? reach(Math.min(1, Math.max(0, (elapsed - aim.after) / aim.ms))) : 0;
         const arc = 4 * k * (1 - k);
-        x = fromX + (toX - fromX) * k + sideX * arc;
-        y = fromY + (toY - fromY) * k + sideY * arc;
+        x = fromX + (firstX - fromX) * k + sideX * arc + (toX - firstX) * second;
+        y = fromY + (firstY - fromY) * k + sideY * arc + (toY - firstY) * second;
         place();
         each?.(x, y);
-        if (t < 1) requestAnimationFrame(step);
+        if (elapsed < total) requestAnimationFrame(step);
         else done();
       };
       requestAnimationFrame(step);
-    });
+    }).finally(() => moves--);
   };
 
   return {
@@ -386,9 +404,8 @@ const pointer = (() => {
       if (!correct) return stroke(toX, toY, ms, bow, each);
       const short = random(0.03, 0.06);
       const aside = random(-0.015, 0.015) * distance;
-      await stroke(toX - dx * short - (dy / distance) * aside, toY - dy * short + (dx / distance) * aside, ms, bow, each);
-      await wait(random(25, 60));
-      await stroke(toX, toY, random(110, 160), 0, each);
+      const aim = { x: toX - dx * short - (dy / distance) * aside, y: toY - dy * short + (dx / distance) * aside, after: ms * random(0.55, 0.7), ms: random(170, 240) };
+      return stroke(toX, toY, ms, bow, each, aim);
     },
     carry(file: { picture: string; name: string } | null) {
       hold(file !== null);
@@ -412,6 +429,14 @@ const pointer = (() => {
     async moveOnto(target: Element, across = 0.42, down = 0.55, correct = false) {
       const box = target.getBoundingClientRect();
       await this.moveTo(box.left + box.width * across, box.top + box.height * down, correct);
+    },
+    async moveAside(dx: number, dy: number, px: number) {
+      const length = Math.hypot(dx, dy) || 1;
+      const far = px * random(0.8, 1.2);
+      const turn = random(-0.25, 0.25);
+      const ux = dx / length;
+      const uy = dy / length;
+      await this.moveTo(x + (ux * Math.cos(turn) - uy * Math.sin(turn)) * far, y + (ux * Math.sin(turn) + uy * Math.cos(turn)) * far);
     },
     async drag(target: Element, dx: number) {
       const event = (type: string, atX: number, atY: number, buttons: number) =>
@@ -438,8 +463,16 @@ const pointer = (() => {
       up?.();
       hold(false);
     },
-    async press() {
-      await wait(random(90, 200));
+    async press({ settle = [50, 120], hold = [70, 110] }: { settle?: [number, number]; hold?: [number, number] } = {}) {
+      if (settle[1] > 0) await wait(random(...settle));
+      const pressed: Element[] = [];
+      for (let one = away ? null : document.elementFromPoint(x, y); one; one = one.parentElement) pressed.push(one);
+      for (const one of pressed) one.setAttribute("data-demo-active", "");
+      try {
+        await wait(random(...hold));
+      } finally {
+        for (const one of pressed) one.removeAttribute("data-demo-active");
+      }
     },
     away() {
       away = true;
@@ -480,8 +513,9 @@ const pointer = (() => {
   };
 })();
 
-async function searchByItself(pause = 2000) {
+async function searchByItself(pause = 2000, before?: () => Promise<void>) {
   try {
+    await before?.();
     await doing(pause);
   } catch (error) {
     if (!(error instanceof Stopped)) throw error;
@@ -489,10 +523,10 @@ async function searchByItself(pause = 2000) {
 }
 
 const SCENARIOS = {
-  photo: { query: "photo of my dog at the beach in 2024", looking: 1860, then: openResizeAndFindSimilar },
-  slide: { query: "subscription churn", looking: 900, then: openSlidesAndTurn },
-  chart: { query: "", looking: 0, then: dropChartAndOpenCode },
-};
+  photo: { query: "photo of my dog at the beach in 2024", looking: 1200, then: openResizeAndFindSimilar, aside: [-1, 1] },
+  slide: { query: "subscription churn", looking: 900, then: openSlidesAndTurn, aside: [1, 1] },
+  chart: { query: "", looking: 0, then: dropChartAndOpenCode, aside: [-0.3, 1] },
+} satisfies Record<string, { query: string; looking: number; then: (input: HTMLInputElement) => Promise<void>; aside: [number, number] }>;
 type Scenario = keyof typeof SCENARIOS;
 const ORDER = Object.keys(SCENARIOS) as Scenario[];
 let scenario = 0;
@@ -510,16 +544,21 @@ async function doing(pause: number) {
     if (first) await wait(pause);
     await seen();
     if (SCENARIOS[ORDER[scenario]].query) {
-      await pointer.moveOnto(input, 0.3);
-      await pointer.press();
-      focusField(input);
-      await wait(600);
+      if (document.activeElement === input) {
+        await wait(250);
+      } else {
+        await pointer.moveOnto(input, 0.3);
+        await pointer.press();
+        focusField(input);
+        await wait(600);
+      }
     }
     untyped = -1;
     const { query, looking, then } = SCENARIOS[ORDER[scenario]];
     for (let i = 1; i <= query.length; i++) {
       setText(input, query.slice(0, i));
-      await wait(73 + Math.random() * 60);
+      const between = 62 * (0.85 + Math.random() * 0.3);
+      await wait(query[i - 1] === " " ? between + 60 + Math.random() * 40 : between);
     }
     await wait(looking);
     await then(input);
@@ -536,7 +575,7 @@ async function openResizeAndFindSimilar(input: HTMLInputElement) {
   await pointer.press();
   leaveField(input);
   first.click();
-  await wait(2390);
+  await wait(1600);
   const handle = document.querySelector<HTMLElement>('[role="separator"][aria-label="Width of the panel"]');
   if (handle) {
     await pointer.moveOnto(handle, 0.5, 0.42);
@@ -554,16 +593,16 @@ async function openResizeAndFindSimilar(input: HTMLInputElement) {
     similar.click();
     await wait(3500);
   }
-  await clearSearch();
+  await clearSearch(input);
 }
 
 async function openSlidesAndTurn(input: HTMLInputElement) {
-  const first = document.querySelector<HTMLElement>('[data-result="0"]');
-  if (!first) return;
-  await pointer.moveOnto(first, 0.3, 0.68);
+  const deck = [...document.querySelectorAll<HTMLElement>("[data-result]")].find((tile) => tile.textContent?.includes("Business Review"));
+  if (!deck) return;
+  await pointer.moveOnto(deck, 0.3, 0.68);
   await pointer.press();
   leaveField(input);
-  first.click();
+  deck.click();
   await wait(1500);
   const picture = await until(() => document.querySelector<HTMLElement>('[aria-label="Show larger"]'));
   if (picture) {
@@ -575,14 +614,15 @@ async function openSlidesAndTurn(input: HTMLInputElement) {
     const back = document.querySelector<HTMLButtonElement>('[aria-label="Previous slide"]');
     if (next && back) {
       await pointer.moveOnto(next, 0.5, 0.5);
-      for (let i = 0; i < 3; i++) {
+      const looks = [900 + Math.random() * 300, 380 + Math.random() * 160, 1400];
+      for (const look of looks) {
         await pointer.press();
         next.click();
-        await wait(i < 2 ? 900 : 1400);
+        await wait(look);
       }
       await pointer.moveOnto(back, 0.5, 0.5);
       for (let i = 0; i < 3; i++) {
-        await (i === 0 ? pointer.press() : wait(50 + Math.random() * 40));
+        await (i === 0 ? pointer.press() : pointer.press({ settle: [0, 0], hold: [50, 90] }));
         back.click();
         await wait(i < 2 ? 280 : 650);
       }
@@ -590,7 +630,7 @@ async function openSlidesAndTurn(input: HTMLInputElement) {
     await closeViewer();
     await wait(900);
   }
-  await clearSearch();
+  await clearSearch(input, 0, false);
 }
 
 const CHART = { path: "/Users/demo/Desktop/confusion_matrix.png", picture: "/demo/files/charts/confusion-matrix.svg", name: "confusion_matrix.png" };
@@ -620,7 +660,7 @@ async function dropChartAndOpenCode(input: HTMLInputElement) {
   }
   const first = await until(() => document.querySelector<HTMLElement>('[data-result="0"]'));
   if (!first) return;
-  await wait(1300);
+  await wait(650);
   await pointer.moveOnto(first, 0.36, 0.6);
   await pointer.press();
   first.click();
@@ -634,7 +674,17 @@ async function dropChartAndOpenCode(input: HTMLInputElement) {
     await closeViewer();
     await wait(900);
   }
-  await clearSearch();
+  await clearSearch(input, 0);
+  await leaveForHome(input);
+}
+
+async function leaveForHome(input: HTMLInputElement) {
+  await wait(250 + Math.random() * 150);
+  await pointer.moveTo(innerWidth * (0.38 + Math.random() * 0.24), innerHeight * (0.68 + Math.random() * 0.12));
+  await pointer.press();
+  leaveField(input);
+  await settled(input);
+  await wait(1400);
 }
 
 async function until<T>(find: () => T | null | undefined, ms = 3000): Promise<T | null> {
@@ -644,6 +694,17 @@ async function until<T>(find: () => T | null | undefined, ms = 3000): Promise<T 
     await wait(100);
   }
   return find() ?? null;
+}
+
+async function settled(input: HTMLInputElement, ms = 900) {
+  let last = "";
+  for (let waited = 0; waited < ms; waited += 50) {
+    await wait(50);
+    const box = input.getBoundingClientRect();
+    const now = `${box.left} ${box.top} ${box.width}`;
+    if (now === last) return;
+    last = now;
+  }
 }
 
 async function closeViewer() {
@@ -661,238 +722,68 @@ function closeDialogs() {
   for (const open of document.querySelectorAll("dialog[open]")) open.dispatchEvent(new Event("cancel", { cancelable: true }));
 }
 
-async function clearSearch() {
+async function clearSearch(input: HTMLInputElement, pause = 700, aside = true) {
   const clear = document.querySelector<HTMLElement>('[aria-label="Clear search"]');
-  if (clear) {
-    await pointer.moveOnto(clear, 0.5, 0.5);
-    await pointer.press();
-    clear.click();
-  } else {
+  if (!clear) {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    caret.hide();
+    await wait(pause);
+    return;
   }
-  await wait(700);
+  await pointer.moveOnto(clear, 0.5, 0.5);
+  await pointer.press();
+  clear.click();
+  if (document.activeElement === input) caret.show(input);
+  else focusField(input);
+  if (!aside) return;
+  const [dx, dy] = SCENARIOS[ORDER[scenario]].aside;
+  await Promise.all([wait(90 + Math.random() * 80).then(() => pointer.moveAside(dx, dy, 36)), settled(input)]);
+  await wait(pause);
 }
 
 const visitor = (() => {
-  const STOP_CURSOR = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'><circle cx='10' cy='10' r='7.6' fill='none' stroke='%23fff' stroke-width='4.4'/><path d='M4.6 15.4 L15.4 4.6' stroke='%23fff' stroke-width='4.4' stroke-linecap='round'/><circle cx='10' cy='10' r='7.6' fill='none' stroke='%23d6402f' stroke-width='2.2'/><path d='M4.6 15.4 L15.4 4.6' stroke='%23d6402f' stroke-width='2.2' stroke-linecap='round'/></svg>") 10 10, not-allowed`;
-  const BACK_AFTER_MS = 2000;
+  const BACK_AFTER_MS = 450;
   let here = false;
   let back = 0;
   let input: HTMLInputElement | null = null;
-  let refusing: string[] = [];
-  let marked: Element | null = null;
-
-  const moduleClass = (name: string, beside: string): string | null => {
-    const pattern = new RegExp(`\\.(_${name}_[\\w-]+)`);
-    const look = (rules: CSSRuleList): string | null => {
-      for (const rule of Array.from(rules)) {
-        if (rule instanceof CSSStyleRule) {
-          if (rule.selectorText.includes(`.${beside}.`)) {
-            const found = pattern.exec(rule.selectorText);
-            if (found) return found[1];
-          }
-        } else if ("cssRules" in rule) {
-          const inner = look((rule as CSSGroupingRule).cssRules);
-          if (inner) return inner;
-        }
-      }
-      return null;
-    };
-    for (const sheet of Array.from(document.styleSheets)) {
-      try {
-        const found = look(sheet.cssRules);
-        if (found) return found;
-      } catch {
-      }
-    }
-    return null;
-  };
-
-  const row = () => input?.closest<HTMLElement>('[class*="_row_"]') ?? null;
-  const fieldBox = () => input?.closest<HTMLElement>('[class*="_field_"]') ?? input;
-
-  const refusedAt = (target: EventTarget | null): Element | null => {
-    if (!(target instanceof Element)) return null;
-    const box = fieldBox();
-    if (box?.contains(target) && !target.closest('[aria-label="Clear search"]')) return box;
-    const control = target.closest("button, a, [role='button'], [role='menuitem']");
-    if (!control) return null;
-    const label = control.getAttribute("aria-label") ?? "";
-    const words = (control.textContent ?? "").trim();
-    const refused =
-      label === "Settings" ||
-      (control.closest("header") !== null && ["Minimize", "Maximize", "Restore", "Close"].includes(label)) ||
-      ["Index", "Open", "Copy file", "Copy path", "Copy files", "Copy paths", "MIT License"].includes(words) ||
-      words.startsWith("Show in ");
-    return refused ? control : null;
-  };
-
-  const mark = (target: EventTarget | null) => {
-    const refused = refusedAt(target);
-    if (refused !== marked) {
-      marked?.removeAttribute("data-demo-refused");
-      refused?.setAttribute("data-demo-refused", "");
-      marked = refused;
-    }
-    const onField = refused !== null && refused === fieldBox();
-    if (!refusing.length) {
-      const rowClass = /(_row_[\w-]+)/.exec(row()?.className ?? "")?.[1];
-      if (rowClass) refusing = [moduleClass("refusing", rowClass), moduleClass("hot", rowClass)].filter((name): name is string => name !== null);
-    }
-    for (const name of refusing) row()?.classList.toggle(name, onField);
-  };
-
-  let changed = false;
-  let unfocused = false;
-  let keptFocus = false;
-
-  const state = () => {
-    const tile = document.querySelector("[data-result]");
-    let results = tile?.parentElement ?? null;
-    while (results && !/(auto|scroll)/.test(getComputedStyle(results).overflowY)) results = results.parentElement;
-    return JSON.stringify([
-      input?.value,
-      document.querySelector('[class*="_examples_"]')?.textContent ?? "",
-      Array.from(document.querySelectorAll('[class*="_tagsBox_"] button'), (pill) => pill.textContent?.trim()),
-      Array.from(document.querySelectorAll('[data-result][class*="_selected_"]'), (one) => (one as HTMLElement).dataset.result),
-      document.querySelector('[role="separator"][aria-label="Width of the panel"]')?.getAttribute("aria-valuenow"),
-      Math.round(results?.scrollTop ?? 0),
-      document.querySelector("dialog[open], [role='menu']") !== null,
-      document.querySelector<HTMLInputElement>("dialog[open] input")?.value ?? null,
-    ]);
-  };
-  let before = "";
 
   const comeIn = () => {
     clearTimeout(back);
     if (here) return;
-    if (resuming) changed = true;
     here = true;
     held = true;
-    before = state();
     pointer.away();
-    if (pointer.pressing) {
-      pointer.letGo();
-      change();
-    }
   };
 
-  const change = () => {
-    comeIn();
-    changed = true;
+  const goOn = () => {
+    clearTimeout(back);
+    here = false;
+    held = false;
+    pointer.back();
+    release();
   };
 
   const goOut = () => {
-    intent.cancel();
     if (!here) return;
-    mark(null);
     clearTimeout(back);
-    back = window.setTimeout(goOn, BACK_AFTER_MS);
+    back = window.setTimeout(goOn, waits > 0 && moves === 0 ? 0 : BACK_AFTER_MS);
   };
 
-  const intent = (() => {
-    const REST_MS = 480;
-    const AIMED_MS = 240;
-    const REST_SPEED = 0.12;
-    const SCROLLING_MS = 450;
-    const MOVED_PX = 4;
-    let settle = 0;
-    let slowSince: number | null = null;
-    let scrolledAt = -Infinity;
-    let travelled = 0;
-    let last: { x: number; y: number } | null = null;
-    const moves: { t: number; x: number; y: number }[] = [];
-    const answers = (target: EventTarget | null) =>
-      target instanceof Element &&
-      target.closest("button, a, input, [role='button'], [role='separator'], [data-result], [tabindex]:not([tabindex='-1'])") !== null;
-    const cancel = () => {
-      clearTimeout(settle);
-      slowSince = null;
-      travelled = 0;
-      last = null;
-      moves.length = 0;
-    };
-    for (const type of ["focus", "blur"]) window.addEventListener(type, cancel);
-    document.addEventListener("visibilitychange", cancel);
-    return {
-      moved(event: PointerEvent) {
-        if (here) return;
-        const now = performance.now();
-        if (now - scrolledAt < SCROLLING_MS) return cancel();
-        travelled += last ? Math.hypot(event.screenX - last.x, event.screenY - last.y) : Math.hypot(event.movementX, event.movementY);
-        last = { x: event.screenX, y: event.screenY };
-        if (travelled < MOVED_PX) return;
-        moves.push({ t: now, x: event.clientX, y: event.clientY });
-        while (moves.length > 2 && now - moves[0].t > 100) moves.shift();
-        const from = moves[0];
-        const speed = now > from.t ? Math.hypot(event.clientX - from.x, event.clientY - from.y) / (now - from.t) : 0;
-        const wait = answers(event.target) ? AIMED_MS : REST_MS;
-        if (speed > REST_SPEED) slowSince = null;
-        else if ((slowSince ??= now) <= now - wait) return comeIn();
-        clearTimeout(settle);
-        settle = window.setTimeout(comeIn, wait);
-      },
-      scrolled() {
-        scrolledAt = performance.now();
-        cancel();
-      },
-      cancel,
-    };
-  })();
-
-  const goOn = async () => {
-    here = false;
-    held = false;
-    if (!changed && state() === before) {
-      pointer.back();
-      const lost = unfocused && input !== null && document.activeElement !== input;
-      unfocused = false;
-      if (lost && !(await refocus(input!))) return;
-      release();
-      return;
+  const backHome = async () => {
+    if (document.querySelector("dialog[open]")) {
+      await closeViewer();
+      await wait(250);
     }
-    startOver();
+    if (input && document.querySelector('[aria-label="Clear search"]')) await clearSearch(input, 0, SCENARIOS[ORDER[scenario]].query !== "");
+    closeDialogs();
   };
 
-  const startOver = (pause?: number) => {
-    changed = false;
-    unfocused = false;
+  const switchTo = () => {
     run++;
     release();
     if (pointer.pressing) pointer.letGo();
-    caret.hide();
-    const focused = document.activeElement as HTMLElement | null;
-    if (input && (focused === input || keptFocus)) leaveField(input);
-    else if (focused && focused !== document.body) {
-      demoMoving = true;
-      try {
-        focused.blur();
-      } finally {
-        demoMoving = false;
-      }
-    }
-    keptFocus = false;
-    closeDialogs();
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    document.querySelector<HTMLElement>('[aria-label="Clear search"]')?.click();
-    pointer.home();
     pointer.back();
-    void searchByItself(pause);
-  };
-
-  const refocus = async (field: HTMLInputElement) => {
-    resuming = true;
-    try {
-      await pointer.moveOnto(field, 0.3);
-      await pointer.press();
-      focusField(field);
-      return true;
-    } catch (error) {
-      if (error instanceof Stopped) return false;
-      throw error;
-    } finally {
-      resuming = false;
-    }
+    void searchByItself(0, backHome);
   };
 
   return {
@@ -900,100 +791,26 @@ const visitor = (() => {
       clearTimeout(back);
       here = false;
       held = false;
-      mark(null);
-      startOver(600);
+      switchTo();
     },
     goOnNow() {
-      if (!here) return true;
-      if (changed || unfocused || state() !== before) return false;
-      clearTimeout(back);
-      here = false;
-      held = false;
-      mark(null);
-      pointer.back();
-      release();
-      return true;
+      if (here) goOn();
     },
     start(field: HTMLInputElement) {
       input = field;
-      const style = document.head.appendChild(document.createElement("style"));
-      style.textContent = `[data-demo-refused], [data-demo-refused] * { cursor: ${STOP_CURSOR} !important; }`;
-      const theirs = (event: Event) => event.isTrusted;
-      window.addEventListener("pointermove", (event) => theirs(event) && intent.moved(event), { capture: true, passive: true });
-      let pressedAt = -Infinity;
-      for (const type of ["pointerdown", "keydown"]) {
-        window.addEventListener(
-          type,
-          (event) => {
-            if (!theirs(event)) return;
-            comeIn();
-            pressedAt = performance.now();
-          },
-          { capture: true, passive: true },
-        );
-      }
-      window.addEventListener(
-        "wheel",
-        (event) => {
-          if (!theirs(event)) return;
-          let inner: HTMLElement | null = null;
-          for (let one = event.target instanceof Element ? event.target : null; one; one = one.parentElement) {
-            if (one.scrollHeight > one.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(one).overflowY)) {
-              inner = one as HTMLElement;
-              break;
-            }
-          }
-          const further = inner !== null && (event.deltaY > 0 ? inner.scrollTop + inner.clientHeight < inner.scrollHeight - 1 : inner.scrollTop > 0);
-          if (!here && !further) return intent.scrolled();
-          comeIn();
-          if (inner) inner.style.overscrollBehavior = "contain";
-        },
-        { capture: true, passive: true },
-      );
+      window.addEventListener("message", (event) => {
+        if (event.origin !== location.origin || event.source !== window.parent || event.data?.type !== "mesa-demo-visitor") return;
+        if (event.data.here) comeIn();
+        else goOut();
+      });
       window.addEventListener(
         "focusout",
         (event) => {
-          if (!theirs(event) || demoMoving) return;
-          if ((event as FocusEvent).relatedTarget || performance.now() - pressedAt < 400) {
-            if (event.target === input) {
-              comeIn();
-              unfocused = true;
-            }
-            return;
-          }
-          if (event.target === input) keptFocus = true;
+          if (!event.isTrusted || demoMoving) return;
           event.stopImmediatePropagation();
         },
         true,
       );
-      window.addEventListener("focusin", (event) => event.target === input && (keptFocus = false), true);
-      window.addEventListener("pointermove", (event) => theirs(event) && mark(event.target), true);
-      document.addEventListener("mouseout", (event) => theirs(event) && !event.relatedTarget && goOut());
-      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click", "dblclick", "auxclick", "contextmenu"]) {
-        window.addEventListener(
-          type,
-          (event) => {
-            if (!theirs(event) || !refusedAt(event.target)) return;
-            event.preventDefault();
-            event.stopImmediatePropagation();
-          },
-          true,
-        );
-      }
-      window.addEventListener(
-        "keydown",
-        (event) => {
-          if (!theirs(event)) return;
-          if (event.target instanceof HTMLInputElement && event.target !== input) return;
-          const typing = (event.key.length === 1 && !event.ctrlKey && !event.metaKey) || ["Backspace", "Delete"].includes(event.key);
-          const pasting = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
-          if (!typing && !pasting) return;
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        },
-        true,
-      );
-      for (const type of ["dragover", "drop"]) window.addEventListener(type, (event) => event.preventDefault(), true);
     },
   };
 })();
@@ -1024,7 +841,8 @@ async function begin() {
     const same = chosen === scenario;
     scenario = chosen;
     if (still) showStill(input);
-    else if (!((same || untyped === run) && visitor.goOnNow())) visitor.again();
+    else if (same || untyped === run) visitor.goOnNow();
+    else visitor.again();
   });
   if (still) {
     showStill(input);

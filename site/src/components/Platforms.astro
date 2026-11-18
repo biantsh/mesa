@@ -107,34 +107,34 @@ import { PLATFORMS } from "../platforms";
     font-weight: 600;
   }
 
-  :global(:root[data-os="mac"]) .platform[data-id="mac"],
-  :global(:root[data-os="windows"]) .platform[data-id="windows"],
-  :global(:root[data-os="linux"]) .platform[data-id="linux"] {
+  :global(:root[data-mine="mac"]) .platform[data-id="mac"],
+  :global(:root[data-mine="windows"]) .platform[data-id="windows"],
+  :global(:root[data-mine="linux"]) .platform[data-id="linux"] {
     border-color: var(--color-primary);
   }
 
-  :global(:root[data-os="mac"]) [data-id="mac"] .mine,
-  :global(:root[data-os="windows"]) [data-id="windows"] .mine,
-  :global(:root[data-os="linux"]) [data-id="linux"] .mine {
+  :global(:root[data-mine="mac"]) [data-id="mac"] .mine,
+  :global(:root[data-mine="windows"]) [data-id="windows"] .mine,
+  :global(:root[data-mine="linux"]) [data-id="linux"] .mine {
     display: inline-block;
   }
 
-  :global(:root[data-os="mac"]) [data-id="mac"] .installer,
-  :global(:root[data-os="windows"]) [data-id="windows"] .installer,
-  :global(:root[data-os="linux"]) [data-id="linux"] .installer {
+  :global(:root[data-mine="mac"]) [data-id="mac"] .installer,
+  :global(:root[data-mine="windows"]) [data-id="windows"] .installer,
+  :global(:root[data-mine="linux"]) [data-id="linux"] .installer {
     border-color: transparent;
     background: var(--gradient-primary), var(--color-primary);
     color: var(--color-on-primary);
     box-shadow: var(--shadow-primary);
   }
 
-  :global(:root[data-os="linux"]) [data-id="linux"] .installer + .installer {
+  :global(:root[data-mine="linux"]) [data-id="linux"] .installer + .installer {
     box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.32), var(--shadow-primary);
   }
 
-  :global(:root[data-os="mac"]) [data-id="mac"] .installer:hover,
-  :global(:root[data-os="windows"]) [data-id="windows"] .installer:hover,
-  :global(:root[data-os="linux"]) [data-id="linux"] .installer:hover {
+  :global(:root[data-mine="mac"]) [data-id="mac"] .installer:hover,
+  :global(:root[data-mine="windows"]) [data-id="windows"] .installer:hover,
+  :global(:root[data-mine="linux"]) [data-id="linux"] .installer:hover {
     background-color: var(--color-primary-hover);
   }
 </style>

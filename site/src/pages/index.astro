@@ -44,33 +44,28 @@ const description = "Find anything in your files using any combination of clues:
   <main>
     <section class="hero">
       <div class="hero-row">
-        <div class="hero-text">
-          <h1>Find anything in your&nbsp;files</h1>
+        <h1>Find anything in your&nbsp;files</h1>
+        <div class="hero-under">
           <p class="hero-lead">
             Search your documents, pictures, videos, recordings and code by what they say, show or sound like.
           </p>
+          <span class="hero-separator" aria-hidden="true"></span>
+          <Download end />
         </div>
-        <Download end />
       </div>
       <div class="container demo">
         <div class="demo-window">
           <SearchDemo />
           <div class="demo-below">
             <DemoScenarios client:load />
-            <div class="demo-caption">
-              <p><strong>Interactive demo</strong><span class="by-pointer">: hover to take over</span></p>
-              <span class="about" data-about>
-                <button class="about-button" type="button" aria-label="About this demo" aria-describedby="demo-about" aria-expanded="false">
-                  <Icon name="info" size={15} />
-                </button>
-                <span class="about-text" id="demo-about" role="tooltip">
-                  <span><strong>This is Mesa’s real code</strong>, running live in your browser using sample files.</span>
-                  <span>
-                    <strong>Typing is turned off</strong>: searches need a 310&nbsp;MB model, which runs on your computer.
-                  </span>
-                </span>
+            <span class="about" data-about>
+              <button class="about-button" type="button" aria-label="About this demo" aria-describedby="demo-about" aria-expanded="false">
+                <Icon name="info" size={15} />
+              </button>
+              <span class="about-text" id="demo-about" role="tooltip">
+                <span><strong>This is Mesa’s real code</strong>, running live in your browser using sample files.</span>
               </span>
-            </div>
+            </span>
           </div>
         </div>
       </div>
@@ -136,9 +131,22 @@ const description = "Find anything in your files using any combination of clues:
 
 <style>
   .hero {
-    --hero-room: clamp(24px, (100svh - var(--header-height) - 842px) / 2, 56px);
-    padding-top: min(clamp(40px, 4vw, 56px), var(--hero-room));
-    padding-bottom: calc(40px + var(--hero-room));
+    --text-height: 145px;
+    --window-gap: clamp(24px, 2vw, 32px);
+    --switches-gap: 18px;
+    --window-height: min(635px, max(381px, 100svh - 324px));
+    --free: calc(100svh - var(--header-height) - var(--text-height) - var(--window-gap) - var(--window-height) - var(--switches-gap) - 32px);
+    --room-below: clamp(24px, var(--free) / 2, 56px);
+    --room-above: clamp(12px, var(--free) - var(--room-below), 56px);
+    padding-top: min(clamp(40px, 4vw, 56px), var(--room-above));
+    padding-bottom: calc(var(--switches-gap) + 32px + var(--room-below));
+  }
+
+  @media (min-width: 1080px) and (max-height: 1000px) {
+    .hero {
+      --window-gap: 24px;
+      --switches-gap: 12px;
+    }
   }
 
   @media (max-width: 760px) {
@@ -158,61 +166,79 @@ const description = "Find anything in your files using any combination of clues:
   .hero-row {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 20px;
     width: var(--content-width);
     margin-inline: auto;
+    text-align: center;
+  }
+
+  .hero-under {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 32px;
+  }
+
+  .hero-separator {
+    display: none;
   }
 
   @media (min-width: 1080px) {
     .hero-row {
-      flex-direction: row;
-      align-items: flex-end;
-      justify-content: space-between;
-      gap: 40px;
+      gap: 18px;
     }
-  }
 
-  .hero-text {
-    min-width: 0;
+    .hero-under {
+      flex-direction: row;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 28px;
+    }
+
+    .hero-under .hero-lead {
+      max-width: 600px;
+      margin-top: 6px;
+      text-align: left;
+      font-size: 20px;
+      line-height: 30px;
+    }
+
+    .hero-under .hero-separator {
+      display: block;
+      align-self: stretch;
+      width: 1px;
+      background: var(--color-border-strong);
+    }
   }
 
   h1 {
     font-size: clamp(36px, 4.6vw, 52px);
     font-weight: 750;
     letter-spacing: -0.03em;
+    line-height: 1.05;
   }
 
   .hero-lead {
     max-width: 540px;
-    margin: 14px 0 0;
+    margin: 0;
     color: var(--color-text-muted);
     font-size: clamp(16px, 1.7vw, 18px);
   }
 
   .demo {
-    margin-top: clamp(28px, 3vw, 36px);
+    margin-top: var(--window-gap);
   }
 
   .demo-window {
     position: relative;
     max-width: 1080px;
     margin-inline: auto;
-    container-type: inline-size;
   }
 
   @media (min-width: 1080px) {
     .demo-window {
-      max-width: min(1080px, max(648px, (100svh - 320px) * 1080 / 635));
+      max-width: calc(var(--window-height) * 1080 / 635);
     }
-  }
-
-  .demo-caption {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--color-text-muted);
-    font-size: 13px;
-    white-space: nowrap;
   }
 
   .demo-below {
@@ -220,29 +246,41 @@ const description = "Find anything in your files using any combination of clues:
     top: 100%;
     right: 0;
     left: 0;
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px 24px;
-    margin-top: 12px;
+    gap: 12px;
+    margin-top: var(--switches-gap);
+  }
+
+  .demo-below :global([role="radiogroup"]) {
+    grid-column: 2;
+  }
+
+  .demo-below .about {
+    grid-column: 3;
+    justify-self: start;
+  }
+
+  .demo-below :global([role="radiogroup"] > button) {
+    height: 30px;
+    padding: 0 14px;
+    font-size: 14px;
   }
 
   @media (max-width: 760px) {
     .demo-below {
       position: static;
-      flex-direction: column;
-      align-items: flex-start;
-      margin-top: 16px;
     }
   }
 
-  .demo-caption p {
-    margin: 0;
-  }
+  @media (max-width: 1079px) {
+    .hero {
+      --text-height: 217px;
+      --window-gap: 36px;
+      --switches-gap: 20px;
+    }
 
-  .demo-caption strong {
-    color: var(--color-text);
-    font-weight: 500;
   }
 
   .about {
@@ -297,6 +335,20 @@ const description = "Find anything in your files using any combination of clues:
       visibility 0s 150ms;
   }
 
+  .about-text strong {
+    color: var(--color-text);
+    font-weight: 500;
+  }
+
+  @media (min-width: 860px) {
+    .about-text {
+      right: auto;
+      left: 50%;
+      translate: -50% 0;
+      transform-origin: center bottom;
+    }
+  }
+
   .about:has(.about-button:hover) .about-text,
   .about:has(.about-button:focus-visible) .about-text,
   .about[data-open] .about-text {
@@ -306,22 +358,6 @@ const description = "Find anything in your files using any combination of clues:
     transition:
       opacity 150ms ease-out,
       transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
-  }
-
-  .by-pointer {
-    display: none;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    .by-pointer {
-      display: inline;
-    }
-  }
-
-  @container (max-width: 689px) {
-    .by-pointer {
-      display: none;
-    }
   }
 
   #features {
@@ -390,6 +426,18 @@ const description = "Find anything in your files using any combination of clues:
     list-style: none;
   }
 
+  @media (max-width: 520px) {
+    .kinds {
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    }
+  }
+
+  @media (max-width: 679px) {
+    .kinds {
+      margin-top: var(--section-space);
+    }
+  }
+
   @media (min-width: 1200px) {
     .kinds {
       display: flex;
@@ -431,6 +479,10 @@ const description = "Find anything in your files using any combination of clues:
   @media (max-width: 760px) {
     .wide-only {
       display: none;
+    }
+
+    .privacy .lead {
+      font-size: 16px;
     }
   }
 

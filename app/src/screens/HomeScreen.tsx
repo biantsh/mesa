@@ -389,6 +389,12 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   const [failure, setFailure] = useState<string | null>(null);
   const examplesNow = useRef(examples);
   examplesNow.current = examples;
+  const fieldNow = useRef({ focused, query, onFocusChange });
+  fieldNow.current = { focused, query, onFocusChange };
+  const tellOfFiles = useCallback((files: string[]) => {
+    const { focused, query, onFocusChange } = fieldNow.current;
+    onFocusChange?.(focused && query.trim() === "" && files.length === 0);
+  }, []);
   const [limitNote, setLimitNote] = useState<string | null>(null);
   useEffect(() => {
     if (!limitNote) return;
@@ -400,15 +406,17 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     const next = addExamples(now, paths);
     const over = leftOut(now, paths);
     setExamples(next);
+    tellOfFiles(next);
     setExampleNotice(null);
     setLimitNote(over > 0 ? limitNotice(over) : null);
     for (const path of next.filter((path) => !now.includes(path))) {
       api.prepareExample(path).catch((error) => {
         setExamples((now) => now.filter((one) => one !== path));
+        tellOfFiles(examplesNow.current.filter((one) => one !== path));
         setExampleNotice(errorText(error));
       });
     }
-  }, []);
+  }, [tellOfFiles]);
   const [examplesProgress, setExamplesProgress] = useState<number | null>(null);
   const [filledIn, setFilledIn] = useState(0);
   useEffect(() => {
@@ -441,12 +449,14 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
   }, [examples]);
   const removeExample = useCallback((path: string) => {
     setExamples((now) => now.filter((one) => one !== path));
+    tellOfFiles(examplesNow.current.filter((one) => one !== path));
     setLimitNote(null);
-  }, []);
+  }, [tellOfFiles]);
   const clearExamples = useCallback(() => {
     setExamples([]);
+    tellOfFiles([]);
     setLimitNote(null);
-  }, []);
+  }, [tellOfFiles]);
   const dragging = useFileDrop({
     enabled: !blocked && !modelFailed,
     isActive: () => !home.current?.closest("[inert]"),
@@ -718,22 +728,24 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
     setChosen((now) => keepChosen(now, text));
     onFocusChange?.(focused && text.trim() === "" && examples.length === 0);
   };
-  const leave = useCallback(() => {
+  const leave = useCallback((keepFocus = false) => {
     away.current = false;
     setQuery("");
     setExamples([]);
     setExampleNotice(null);
     setChosen({});
-    if (asWidget && !blocked) {
+    if ((asWidget || keepFocus) && !blocked) {
+      input.current?.focus({ preventScroll: true });
       onFocusChange?.(true);
       setFocused(true);
-      input.current?.focus({ preventScroll: true });
       return;
     }
     onFocusChange?.(false);
     setFocused(false);
     input.current?.blur();
   }, [onFocusChange, asWidget, blocked]);
+  // Handled here rather than on click: once the cross disappears, WebKit sends the click on to the field and Chromium doesn't.
+  const clear = useCallback(() => leave(true), [leave]);
   useEffect(() => {
     const onPress = () => {
       if (!home.current?.closest("[inert]")) clearSelection();
@@ -986,7 +998,7 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
               autoComplete="off"
             />
             {filled && (
-              <button type="button" className={cx(styles.clear, dragging && styles.away)} aria-label="Clear search" data-tooltip="Clear (Esc)" onClick={leave}>
+              <button type="button" className={cx(styles.clear, dragging && styles.away)} aria-label="Clear search" data-tooltip="Clear (Esc)" onClick={clear}>
                 <X size={18} aria-hidden />
               </button>
             )}
