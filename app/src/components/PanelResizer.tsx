@@ -101,6 +101,7 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
     if (e.button !== 0 || !element) return;
     e.preventDefault();
     e.currentTarget.focus({ preventScroll: true });
+    e.currentTarget.dataset.pressed = "";
     e.currentTarget.setPointerCapture(e.pointerId);
     const from = widthOf(taken);
     drag.current = { x: e.clientX, from, width: from, aim: taken, screen: element, release: holdStill(element), frame: 0 };
@@ -125,6 +126,7 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    delete e.currentTarget.dataset.pressed;
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     const next = Math.max(least, Math.min(most, taken + (e.key === "ArrowLeft" ? 1 : -1)));
@@ -150,6 +152,7 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
       onPointerCancel={finish}
       onLostPointerCapture={finish}
       onKeyDown={onKeyDown}
+      onBlur={(e) => delete e.currentTarget.dataset.pressed}
       onPointerEnter={placeLine}
       onFocus={placeLine}
       onDoubleClick={() => {

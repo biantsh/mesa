@@ -2,12 +2,18 @@
 import Icon from "./Icon.astro";
 import { PLATFORMS } from "../platforms";
 
+interface Props {
+  end?: boolean;
+}
+
+const { end = false } = Astro.props;
+
 function others(id: string) {
   return PLATFORMS.filter((platform) => platform.id !== id);
 }
 ---
 
-<div class="download">
+<div class:list={["download", { end }]}>
   {
     PLATFORMS.map((platform) => (
       <div class="choice" data-for={platform.id}>
@@ -57,6 +63,18 @@ function others(id: string) {
     display: flex;
   }
 
+  .end .choice {
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  @media (min-width: 1080px) {
+    .end .choice {
+      align-items: flex-end;
+      text-align: right;
+    }
+  }
+
   .kind {
     font-weight: 500;
     opacity: 0.75;
@@ -70,6 +88,14 @@ function others(id: string) {
     .group:has(.button + .button) .button {
       padding: 0 14px;
     }
+  }
+
+  .end .group:has(.button + .button) .for-os {
+    display: none;
+  }
+
+  .end .group:has(.button + .button) .button {
+    padding: 0 16px;
   }
 
   .meta {

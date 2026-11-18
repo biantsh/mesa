@@ -624,7 +624,7 @@ interface ResultProps {
 
 const Result = memo(function Result({ hit, at, index, entering, selected, onSelect, onOpen, onContextMenu, onPrefetch }: ResultProps) {
   const Icon = CATEGORY_ICONS[hit.category];
-  const { wanted, src, loaded, onLoad, onError } = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
+  const { wanted, src, loaded, slow, onLoad, onError } = usePreview({ path: hit.path, modified: hit.modified, kind: "file", readable: true, category: hit.category });
   return (
     <button
       type="button"
@@ -635,7 +635,7 @@ const Result = memo(function Result({ hit, at, index, entering, selected, onSele
       onPointerEnter={onPrefetch && (() => onPrefetch(hit, false))}
       onPointerDown={onPrefetch && (() => onPrefetch(hit, true))}
     >
-      <span className={styles.preview}>
+      <span className={cx(styles.preview, wanted && !slow && styles.quick, slow && styles.slow)}>
         <Icon className={styles.icon} size={56} strokeWidth={1} aria-hidden />
         {hit.category === "code" && <CodeThumb path={hit.path} modified={hit.modified} line={hit.at} />}
         {wanted && (

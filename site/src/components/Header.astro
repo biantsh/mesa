@@ -1,6 +1,7 @@
 ---
 import logo from "../../../app/src-tauri/icons/mesa.svg";
-import { GITHUB } from "../links";
+import github from "../assets/github.svg?raw";
+import { CHANGELOG, GITHUB } from "../links";
 ---
 
 <header class="header">
@@ -10,8 +11,8 @@ import { GITHUB } from "../links";
       <span>Mesa</span>
     </a>
     <nav aria-label="Main">
-      <a href={GITHUB}>GitHub</a>
-      <a class="cta" href="#download">Download</a>
+      <a href={CHANGELOG}>Changelog</a>
+      <a class="github" href={GITHUB}><span class="mark" aria-hidden="true" set:html={github} />GitHub</a>
     </nav>
   </div>
 </header>
@@ -22,9 +23,7 @@ import { GITHUB } from "../links";
     top: 0;
     z-index: 10;
     border-bottom: 1px solid transparent;
-    background: color-mix(in srgb, var(--color-bg) 82%, transparent);
-    backdrop-filter: blur(14px) saturate(1.4);
-    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    background: var(--color-bg);
   }
 
   .inner {
@@ -64,17 +63,18 @@ import { GITHUB } from "../links";
     color: var(--color-text);
   }
 
-  nav .cta {
-    padding: 7px 14px;
-    border-radius: var(--radius-sm);
-    background: var(--color-primary);
-    color: var(--color-on-primary);
-    font-weight: 600;
+  .github {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
-  nav .cta:hover {
-    background: var(--color-primary-hover);
-    color: var(--color-on-primary);
+  .mark {
+    display: flex;
   }
 
+  .mark :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
 </style>

@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore, type SyntheticEvent } from "react";
+import { useEffect, useState, useSyncExternalStore, type SyntheticEvent } from "react";
 import { flushSync } from "react-dom";
 import { previewUrl, type Entry, type PreviewBox } from "./api";
 
@@ -26,10 +26,18 @@ export function usePreview(entry: Previewable, box?: PreviewBox) {
     if (!telling) telling = requestAnimationFrame(tell);
   };
   const wanted = wantsPreview(entry) && state !== "failed";
+  const waiting = wanted && state === "loading";
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setTimeout(() => setSlow(true), QUICK_PREVIEW_MS);
+    return () => clearTimeout(timer);
+  }, [waiting]);
   return {
     wanted,
     src: previewUrl(entry.path, box, scale),
     loaded: wanted && state === "loaded",
+    slow: wanted && slow,
     onLoad: (e?: SyntheticEvent<HTMLImageElement>) => {
       if (!box && e) rememberShape(entry, e.currentTarget);
       settle("loaded");
@@ -38,6 +46,7 @@ export function usePreview(entry: Previewable, box?: PreviewBox) {
   };
 }
 
+const QUICK_PREVIEW_MS = 100;
 const told: (() => void)[] = [];
 let telling = 0;
 

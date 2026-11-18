@@ -220,6 +220,7 @@ export function PanelSplitter() {
     stopSliding();
     e.preventDefault();
     e.currentTarget.focus({ preventScroll: true });
+    e.currentTarget.dataset.pressed = "";
     e.currentTarget.setPointerCapture(e.pointerId);
     const side = column()!;
     const files = filesBeside(side);
@@ -253,6 +254,7 @@ export function PanelSplitter() {
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    delete e.currentTarget.dataset.pressed;
     const side = column();
     if (!side || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
     e.preventDefault();
@@ -334,6 +336,7 @@ export function PanelSplitter() {
       onPointerCancel={finish}
       onLostPointerCapture={finish}
       onKeyDown={onKeyDown}
+      onBlur={(e) => delete e.currentTarget.dataset.pressed}
       onDoubleClick={reset}
     />
   );

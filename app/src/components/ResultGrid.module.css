@@ -444,6 +444,13 @@
   border-radius: inherit;
   background: var(--color-preview-bg);
   opacity: 0;
+}
+
+.quick .icon {
+  visibility: hidden;
+}
+
+.slow .thumb {
   transition: opacity 200ms ease;
 }
 

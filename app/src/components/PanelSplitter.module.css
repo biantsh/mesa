@@ -45,7 +45,7 @@
   transition-delay: 150ms;
 }
 
-.splitter:focus-visible::after,
+.splitter:focus-visible:not([data-pressed])::after,
 .dragging::after {
   opacity: 1;
   transition-delay: 0s;

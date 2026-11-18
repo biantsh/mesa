@@ -4,6 +4,7 @@ import Header from "../components/Header.astro";
 import Download from "../components/Download.astro";
 import Platforms from "../components/Platforms.astro";
 import SearchDemo from "../components/SearchDemo.astro";
+import DemoScenarios from "../components/DemoScenarios";
 import Icon, { type IconName } from "../components/Icon.astro";
 import { releaseLine } from "../release";
 import { LICENSE, LICENSE_NAME } from "../links";
@@ -42,15 +43,36 @@ const description = "Find anything in your files using any combination of clues:
 
   <main>
     <section class="hero">
-      <div class="container hero-inner">
-        <h1>Find anything in your&nbsp;files</h1>
-        <p class="hero-lead">
-          Search your documents, pictures, videos, recordings and code by what they say, show or sound like.
-        </p>
-        <Download />
+      <div class="hero-row">
+        <div class="hero-text">
+          <h1>Find anything in your&nbsp;files</h1>
+          <p class="hero-lead">
+            Search your documents, pictures, videos, recordings and code by what they say, show or sound like.
+          </p>
+        </div>
+        <Download end />
       </div>
       <div class="container demo">
-        <SearchDemo />
+        <div class="demo-window">
+          <SearchDemo />
+          <div class="demo-below">
+            <DemoScenarios client:load />
+            <div class="demo-caption">
+              <p><strong>Interactive demo</strong><span class="by-pointer">: hover to take over</span></p>
+              <span class="about" data-about>
+                <button class="about-button" type="button" aria-label="About this demo" aria-describedby="demo-about" aria-expanded="false">
+                  <Icon name="info" size={15} />
+                </button>
+                <span class="about-text" id="demo-about" role="tooltip">
+                  <span><strong>This is Mesa’s real code</strong>, running live in your browser using sample files.</span>
+                  <span>
+                    <strong>Typing is turned off</strong>: searches need a 310&nbsp;MB model, which runs on your computer.
+                  </span>
+                </span>
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -114,8 +136,15 @@ const description = "Find anything in your files using any combination of clues:
 
 <style>
   .hero {
-    padding-top: clamp(56px, 9vw, 104px);
-    padding-bottom: max(var(--section-space), 88px);
+    --hero-room: clamp(24px, (100svh - var(--header-height) - 842px) / 2, 56px);
+    padding-top: min(clamp(40px, 4vw, 56px), var(--hero-room));
+    padding-bottom: calc(40px + var(--hero-room));
+  }
+
+  @media (max-width: 760px) {
+    .hero {
+      padding-bottom: var(--section-space);
+    }
   }
 
   .hero,
@@ -126,28 +155,173 @@ const description = "Find anything in your files using any combination of clues:
     min-height: calc(100svh - var(--header-height));
   }
 
-  .hero-inner {
+  .hero-row {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    text-align: center;
+    gap: 24px;
+    width: var(--content-width);
+    margin-inline: auto;
+  }
+
+  @media (min-width: 1080px) {
+    .hero-row {
+      flex-direction: row;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 40px;
+    }
+  }
+
+  .hero-text {
+    min-width: 0;
   }
 
   h1 {
-    font-size: clamp(40px, 7vw, 72px);
+    font-size: clamp(36px, 4.6vw, 52px);
     font-weight: 750;
-    letter-spacing: -0.035em;
+    letter-spacing: -0.03em;
   }
 
   .hero-lead {
-    max-width: 600px;
-    margin: 20px 0 32px;
+    max-width: 540px;
+    margin: 14px 0 0;
     color: var(--color-text-muted);
-    font-size: clamp(17px, 2vw, 20px);
+    font-size: clamp(16px, 1.7vw, 18px);
   }
 
   .demo {
-    margin-top: clamp(48px, 7vw, 72px);
+    margin-top: clamp(28px, 3vw, 36px);
+  }
+
+  .demo-window {
+    position: relative;
+    max-width: 1080px;
+    margin-inline: auto;
+    container-type: inline-size;
+  }
+
+  @media (min-width: 1080px) {
+    .demo-window {
+      max-width: min(1080px, max(648px, (100svh - 320px) * 1080 / 635));
+    }
+  }
+
+  .demo-caption {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-muted);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .demo-below {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 24px;
+    margin-top: 12px;
+  }
+
+  @media (max-width: 760px) {
+    .demo-below {
+      position: static;
+      flex-direction: column;
+      align-items: flex-start;
+      margin-top: 16px;
+    }
+  }
+
+  .demo-caption p {
+    margin: 0;
+  }
+
+  .demo-caption strong {
+    color: var(--color-text);
+    font-weight: 500;
+  }
+
+  .about {
+    position: relative;
+    display: flex;
+  }
+
+  .about-button {
+    display: flex;
+    padding: 2px;
+    margin: -2px;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: var(--color-text-muted);
+    cursor: help;
+    transition: color 150ms ease;
+  }
+
+  .about-button:hover,
+  .about-button:focus-visible,
+  [data-open] > .about-button {
+    color: var(--color-text);
+  }
+
+  .about-text {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 10px);
+    z-index: 5;
+    display: grid;
+    gap: 8px;
+    width: 312px;
+    max-width: calc(100vw - 32px);
+    padding: 10px 12px;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-raised);
+    color: var(--color-text-muted);
+    box-shadow: var(--shadow-menu);
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: normal;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px) scale(0.97);
+    transform-origin: calc(100% - 7px) bottom;
+    transition:
+      opacity 80ms ease-in,
+      transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      visibility 0s 150ms;
+  }
+
+  .about:has(.about-button:hover) .about-text,
+  .about:has(.about-button:focus-visible) .about-text,
+  .about[data-open] .about-text {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition:
+      opacity 150ms ease-out,
+      transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .by-pointer {
+    display: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .by-pointer {
+      display: inline;
+    }
+  }
+
+  @container (max-width: 689px) {
+    .by-pointer {
+      display: none;
+    }
   }
 
   #features {
@@ -155,7 +329,7 @@ const description = "Find anything in your files using any combination of clues:
   }
 
   #download {
-    padding-bottom: calc(var(--section-space) * 0.6);
+    padding-bottom: calc(var(--section-space) * 0.5 + 26px);
   }
 
   .features {
@@ -179,10 +353,6 @@ const description = "Find anything in your files using any combination of clues:
     display: grid;
     grid-template-columns: auto 1fr;
     align-items: center;
-  }
-
-  .feature,
-  .kind {
     align-content: start;
   }
 
@@ -299,3 +469,18 @@ const description = "Find anything in your files using any combination of clues:
     text-decoration-color: currentColor;
   }
 </style>
+
+<script>
+  for (const about of document.querySelectorAll<HTMLElement>("[data-about]")) {
+    const button = about.querySelector("button")!;
+    let touched = false;
+    const set = (open: boolean) => {
+      about.toggleAttribute("data-open", open);
+      button.setAttribute("aria-expanded", String(open));
+    };
+    button.addEventListener("pointerdown", (event) => (touched = event.pointerType !== "mouse"));
+    button.addEventListener("click", () => touched && set(!about.hasAttribute("data-open")));
+    document.addEventListener("pointerdown", (event) => !about.contains(event.target as Node) && set(false));
+    document.addEventListener("keydown", (event) => event.key === "Escape" && set(false));
+  }
+</script>

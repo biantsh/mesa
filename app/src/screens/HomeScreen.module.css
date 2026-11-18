@@ -409,6 +409,8 @@
 
 .row.dropping .field,
 .row.refusing .field,
+.row.dropping .field:hover,
+.row.refusing .field:hover,
 .wide .row.dropping .tagsBox,
 .wide .row.refusing .tagsBox {
   --slab-edge: color-mix(in srgb, var(--drop-color) var(--drop-strength), var(--color-border-strong));
