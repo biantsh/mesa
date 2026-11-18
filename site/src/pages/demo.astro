@@ -1,5 +1,10 @@
 ---
+import "@fontsource-variable/inter";
+import "../../../app/src/styles/tokens.css";
+import "../../../app/src/styles/global.css";
 import DemoApp from "../demo/DemoApp";
+import DemoShell from "../demo/DemoShell";
+import logo from "../demo/logo";
 ---
 
 <html lang="en">
@@ -8,10 +13,49 @@ import DemoApp from "../demo/DemoApp";
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
     <title>Mesa</title>
+    <link rel="preload" href={logo} as="image" type="image/svg+xml" />
+    <script is:inline>
+      (() => {
+        const root = document.documentElement;
+        let site = null;
+        try {
+          if (window.parent !== window) site = window.parent.document.documentElement;
+        } catch {}
+        const dark = site ? site.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+        root.dataset.theme = dark ? "dark" : "light";
+        const name = navigator.platform || navigator.userAgent;
+        const os = (site && site.dataset.os) || (/Mac/i.test(name) ? "mac" : /Linux/i.test(name) ? "linux" : "windows");
+        if (os !== "windows") root.dataset.platform = os;
+      })();
+    </script>
+    <style is:inline>
+      :root {
+        color-scheme: light;
+        background: transparent;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+      }
+      #demo-shell {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000;
+      }
+      #demo-shell footer {
+        will-change: opacity;
+      }
+      :root[data-platform="mac"] #demo-shell > [data-shell="other"],
+      :root:not([data-platform="mac"]) #demo-shell > [data-shell="mac"] {
+        display: none;
+      }
+    </style>
   </head>
   <body>
     <div id="root">
       <DemoApp client:only="react" />
+    </div>
+    <div id="demo-shell" aria-hidden="true" inert>
+      <DemoShell />
     </div>
   </body>
 </html>

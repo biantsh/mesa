@@ -10,11 +10,16 @@ const HEIGHT = 635;
   </div>
 </div>
 
-<script>
-  for (const frame of document.querySelectorAll<HTMLElement>("[data-demo]")) {
-    const width = Number(getComputedStyle(frame).getPropertyValue("--demo-width"));
-    new ResizeObserver(() => frame.style.setProperty("--scale", String(Math.min(1, frame.clientWidth / width)))).observe(frame);
-  }
+<script is:inline>
+  (() => {
+    for (const frame of document.querySelectorAll("[data-demo]:not([data-scaled])")) {
+      frame.dataset.scaled = "";
+      const width = Number(getComputedStyle(frame).getPropertyValue("--demo-width"));
+      const scale = () => frame.style.setProperty("--scale", String(Math.min(1, frame.clientWidth / width)));
+      scale();
+      new ResizeObserver(scale).observe(frame);
+    }
+  })();
 </script>
 
 <style>
@@ -29,6 +34,7 @@ const HEIGHT = 635;
     border-radius: 14px;
     box-shadow: var(--shadow-dialog);
     overflow: hidden;
+    background: var(--color-bg);
   }
 
   .scaled {

@@ -30,7 +30,7 @@ export default defineConfig({
         "@tauri-apps/api/app": here("./src/demo/tauri/app.ts"),
         "@tauri-apps/plugin-dialog": here("./src/demo/tauri/dialog.ts"),
       },
-      dedupe: ["react", "react-dom"],
+      dedupe: ["react", "react-dom", "lucide-react"],
     },
   },
 });

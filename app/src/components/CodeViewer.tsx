@@ -76,12 +76,20 @@ export function CodeViewer({ path, name, query, line, found, from, onOpen, onClo
     return { digits, columns };
   }, [file]);
 
+  const foundStart = found?.start ?? null;
+  const foundEnd = found?.end ?? null;
   useLayoutEffect(() => {
     const room = scroller.current;
     if (!file || !room) return;
-    room.scrollTop = Math.max(0, ROOM + (line - 1) * LINE - room.clientHeight / 5);
+    const piece = foundStart !== null && foundEnd !== null && line === foundStart ? (foundEnd - foundStart + 1) * LINE : null;
+    room.scrollTop = Math.max(
+      0,
+      piece !== null && piece + 2 * LINE <= room.clientHeight
+        ? ROOM + (line - 1) * LINE - (room.clientHeight - piece) / 2
+        : ROOM + (line - 1) * LINE - room.clientHeight / 5,
+    );
     follow();
-  }, [file, line]);
+  }, [file, line, foundStart, foundEnd]);
 
   const [slow, setSlow] = useState(false);
   useEffect(() => {

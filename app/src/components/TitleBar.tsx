@@ -46,17 +46,18 @@ function useBarPress() {
   };
 }
 
-export function TitleBar({ maximized }: { maximized: boolean }) {
-  const version = useAppVersion();
+export function TitleBar({ maximized, mac = isMac, version: given }: { maximized: boolean; mac?: boolean; version?: string }) {
+  const asked = useAppVersion();
+  const version = given ?? asked;
   const pressed = useBarPress();
   return (
-    <header className={cx(styles.bar, isMac && styles.mac)} {...pressed}>
+    <header className={cx(styles.bar, mac && styles.mac)} {...pressed}>
       <img className={styles.logo} src={logo} alt="" draggable={false} />
       <span className={styles.title}>
         <span className={styles.name}>Mesa</span>
         {version && <span className={styles.version}>v{version}</span>}
       </span>
-      {!isMac && <div className={styles.controls} onMouseDown={(e) => e.preventDefault()}>
+      {!mac && <div className={styles.controls} onMouseDown={(e) => e.preventDefault()}>
         <button type="button" className={styles.control} aria-label="Minimize" data-tooltip="Minimize" onClick={windowControls.minimize}>
           <Minus size={15} aria-hidden />
         </button>

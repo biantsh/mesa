@@ -3,6 +3,7 @@ import "@fontsource-variable/inter";
 import "../../../app/src/styles/tokens.css";
 import "../styles/site.css";
 import logo from "../../../app/src-tauri/icons/mesa.svg";
+import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
 
 interface Props {
   title: string;
@@ -21,6 +22,7 @@ const { title, description } = Astro.props;
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <link rel="icon" type="image/svg+xml" href={logo.src} />
+    <link rel="preload" href={interLatin} as="font" type="font/woff2" crossorigin />
     <script is:inline>
       (() => {
         const dark = window.matchMedia("(prefers-color-scheme: dark)");

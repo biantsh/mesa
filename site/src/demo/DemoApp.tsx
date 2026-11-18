@@ -1,4 +1,6 @@
 import "./os";
+import "./paged";
+import { dragFiles } from "./tauri/webview";
 import { useEffect, useState } from "react";
 import App from "../../../app/src/App";
 import { isMac, markPlatform } from "../../../app/src/platform";
@@ -10,6 +12,7 @@ import { setTipsAreOnceForTests } from "../../../app/src/tipsOnce";
 import "@fontsource-variable/inter";
 import "../../../app/src/styles/tokens.css";
 import "../../../app/src/styles/global.css";
+import appStyles from "../../../app/src/App.module.css";
 
 setTipsAreOnceForTests(true);
 const KEPT: [string, string][] = [
@@ -79,7 +82,7 @@ const wait = (ms: number) => delay(ms, run);
 
 async function field(): Promise<HTMLInputElement> {
   for (;;) {
-    const input = document.querySelector<HTMLInputElement>("input[type='text'], input:not([type])");
+    const input = [...document.querySelectorAll<HTMLInputElement>("input[type='text'], input:not([type])")].find((each) => !each.closest("dialog"));
     if (input) return input;
     await wait(100);
   }
@@ -222,9 +225,24 @@ const pointer = (() => {
   const windows = !isMac && !/Linux/i.test(navigator.platform);
   const element = document.createElement("div");
   element.setAttribute("aria-hidden", "true");
+  element.popover = "manual";
   element.style.cssText =
-    "position: fixed; top: 0; left: 0; pointer-events: none; z-index: 2147483647; " +
+    "position: fixed; inset: 0 auto auto 0; margin: 0; padding: 0; border: 0; background: none; overflow: visible; " +
+    "pointer-events: none; z-index: 2147483647; " +
     "transition: opacity 160ms ease; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));";
+  let over: Element | null = null;
+  const raise = () => {
+    const cards = document.querySelectorAll("dialog[open]");
+    const last = cards.length ? cards[cards.length - 1] : null;
+    if (last === over || !element.isConnected) return;
+    over = last;
+    if (!last) return;
+    try {
+      element.hidePopover();
+      element.showPopover();
+    } catch {
+    }
+  };
   const fill = windows ? "#fff" : "#000";
   const edge = windows ? "#000" : "#fff";
   const svg = (width: number, height: number, box: string, body: string) =>
@@ -291,7 +309,12 @@ const pointer = (() => {
     }
   };
   let shape: keyof typeof POINT = "arrow";
-  element.innerHTML = SHAPES.arrow;
+  const shapeBox = element.appendChild(document.createElement("div"));
+  shapeBox.innerHTML = SHAPES.arrow;
+  const carried = element.appendChild(document.createElement("div"));
+  carried.style.cssText =
+    "position: absolute; display: none; flex-direction: column; align-items: center; gap: 4px; opacity: 0.82; " +
+    "font: 500 11px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif; color: #fff; white-space: nowrap;";
   let x = 0;
   let y = 0;
   let hold: (holding: boolean) => void = () => {};
@@ -340,6 +363,10 @@ const pointer = (() => {
   return {
     start() {
       document.body.appendChild(element);
+      try {
+        element.showPopover();
+      } catch {
+      }
       hold = this.follow();
       this.home();
     },
@@ -348,7 +375,7 @@ const pointer = (() => {
       y = innerHeight * 0.8;
       place();
     },
-    async moveTo(toX: number, toY: number, correct = false) {
+    async moveTo(toX: number, toY: number, correct = false, each?: (x: number, y: number) => void) {
       if (!away) element.style.opacity = "1";
       const dx = toX - x;
       const dy = toY - y;
@@ -356,12 +383,31 @@ const pointer = (() => {
       if (distance < 2) return;
       const ms = (150 + 80 * Math.log2(1 + distance / 14)) * random(0.92, 1.08);
       const bow = random(0.025, 0.05) * (Math.random() < 0.5 ? -1 : 1);
-      if (!correct) return stroke(toX, toY, ms, bow);
+      if (!correct) return stroke(toX, toY, ms, bow, each);
       const short = random(0.03, 0.06);
       const aside = random(-0.015, 0.015) * distance;
-      await stroke(toX - dx * short - (dy / distance) * aside, toY - dy * short + (dx / distance) * aside, ms, bow);
+      await stroke(toX - dx * short - (dy / distance) * aside, toY - dy * short + (dx / distance) * aside, ms, bow, each);
       await wait(random(25, 60));
-      await stroke(toX, toY, random(110, 160), 0);
+      await stroke(toX, toY, random(110, 160), 0, each);
+    },
+    carry(file: { picture: string; name: string } | null) {
+      hold(file !== null);
+      if (file === null) {
+        carried.style.display = "none";
+        carried.replaceChildren();
+        return;
+      }
+      const picture = document.createElement("img");
+      picture.src = file.picture;
+      picture.alt = "";
+      picture.style.cssText = "display: block; width: 104px; border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);";
+      const name = document.createElement("span");
+      name.textContent = file.name;
+      name.style.cssText = "padding: 1px 6px; border-radius: 4px; background: rgba(32, 32, 32, 0.85);";
+      carried.replaceChildren(picture, name);
+      carried.style.left = `${POINT[shape][0] + 14}px`;
+      carried.style.top = `${POINT[shape][1] + 18}px`;
+      carried.style.display = "flex";
     },
     async moveOnto(target: Element, across = 0.42, down = 0.55, correct = false) {
       const box = target.getBoundingClientRect();
@@ -410,6 +456,7 @@ const pointer = (() => {
       let hovered: Element[] = [];
       const look = () => {
         hovers.keep();
+        raise();
         const top = away ? null : document.elementFromPoint(x, y);
         const now: Element[] = [];
         for (let one: Element | null = top; one; one = one.parentElement) now.push(one);
@@ -420,7 +467,7 @@ const pointer = (() => {
           const next = shapeAt(top);
           if (next !== shape) {
             shape = next;
-            element.innerHTML = SHAPES[next];
+            shapeBox.innerHTML = SHAPES[next];
             place();
           }
         }
@@ -442,13 +489,14 @@ async function searchByItself(pause = 2000) {
 }
 
 const SCENARIOS = {
-  photo: { query: "photo of my dog at the beach in 2024", then: openResizeAndFindSimilar },
-  slide: { query: "photo of my dog at the beach in 2024", then: openResizeAndFindSimilar },
-  chart: { query: "photo of my dog at the beach in 2024", then: openResizeAndFindSimilar },
+  photo: { query: "photo of my dog at the beach in 2024", looking: 1860, then: openResizeAndFindSimilar },
+  slide: { query: "subscription churn", looking: 900, then: openSlidesAndTurn },
+  chart: { query: "", looking: 0, then: dropChartAndOpenCode },
 };
 type Scenario = keyof typeof SCENARIOS;
 const ORDER = Object.keys(SCENARIOS) as Scenario[];
 let scenario = 0;
+let untyped = -1;
 function playing() {
   if (framed) window.parent.postMessage({ type: "mesa-demo-playing", scenario: ORDER[scenario] }, location.origin);
 }
@@ -457,19 +505,23 @@ async function doing(pause: number) {
   const input = await field();
   for (let first = true; ; first = false) {
     playing();
+    untyped = run;
     await seen();
     if (first) await wait(pause);
     await seen();
-    const { query, then } = SCENARIOS[ORDER[scenario]];
-    await pointer.moveOnto(input, 0.3);
-    await pointer.press();
-    focusField(input);
-    await wait(600);
+    if (SCENARIOS[ORDER[scenario]].query) {
+      await pointer.moveOnto(input, 0.3);
+      await pointer.press();
+      focusField(input);
+      await wait(600);
+    }
+    untyped = -1;
+    const { query, looking, then } = SCENARIOS[ORDER[scenario]];
     for (let i = 1; i <= query.length; i++) {
       setText(input, query.slice(0, i));
       await wait(73 + Math.random() * 60);
     }
-    await wait(1860);
+    await wait(looking);
     await then(input);
     scenario = (scenario + 1) % ORDER.length;
   }
@@ -502,6 +554,114 @@ async function openResizeAndFindSimilar(input: HTMLInputElement) {
     similar.click();
     await wait(3500);
   }
+  await clearSearch();
+}
+
+async function openSlidesAndTurn(input: HTMLInputElement) {
+  const first = document.querySelector<HTMLElement>('[data-result="0"]');
+  if (!first) return;
+  await pointer.moveOnto(first, 0.3, 0.68);
+  await pointer.press();
+  leaveField(input);
+  first.click();
+  await wait(1500);
+  const picture = await until(() => document.querySelector<HTMLElement>('[aria-label="Show larger"]'));
+  if (picture) {
+    await pointer.moveOnto(picture, 0.5, 0.5);
+    await pointer.press();
+    picture.click();
+    await wait(1400);
+    const next = await until(() => document.querySelector<HTMLButtonElement>('[aria-label="Next slide"]'));
+    const back = document.querySelector<HTMLButtonElement>('[aria-label="Previous slide"]');
+    if (next && back) {
+      await pointer.moveOnto(next, 0.5, 0.5);
+      for (let i = 0; i < 3; i++) {
+        await pointer.press();
+        next.click();
+        await wait(i < 2 ? 900 : 1400);
+      }
+      await pointer.moveOnto(back, 0.5, 0.5);
+      for (let i = 0; i < 3; i++) {
+        await (i === 0 ? pointer.press() : wait(50 + Math.random() * 40));
+        back.click();
+        await wait(i < 2 ? 280 : 650);
+      }
+    }
+    await closeViewer();
+    await wait(900);
+  }
+  await clearSearch();
+}
+
+const CHART = { path: "/Users/demo/Desktop/confusion_matrix.png", picture: "/demo/files/charts/confusion-matrix.svg", name: "confusion_matrix.png" };
+
+async function dropChartAndOpenCode(input: HTMLInputElement) {
+  await pointer.moveTo(innerWidth + 40, innerHeight * 0.62);
+  await wait(450);
+  pointer.carry(CHART);
+  let inside = false;
+  let dropped = false;
+  try {
+    const box = input.getBoundingClientRect();
+    const onField = { x: box.left + box.width * 0.42, y: box.top + box.height * 0.55 };
+    await pointer.moveTo(onField.x, onField.y, false, (x, y) => {
+      if (inside) dragFiles.over({ x, y });
+      else if (x < innerWidth) {
+        inside = true;
+        dragFiles.enter([CHART.path], { x, y });
+      }
+    });
+    await wait(420);
+    dragFiles.drop([CHART.path], onField);
+    dropped = true;
+  } finally {
+    pointer.carry(null);
+    if (inside && !dropped) dragFiles.leave();
+  }
+  const first = await until(() => document.querySelector<HTMLElement>('[data-result="0"]'));
+  if (!first) return;
+  await wait(1300);
+  await pointer.moveOnto(first, 0.36, 0.6);
+  await pointer.press();
+  first.click();
+  await wait(1800);
+  const whole = await until(() => document.querySelector<HTMLElement>('[aria-label="Show the whole file"]'));
+  if (whole) {
+    await pointer.moveOnto(whole, 0.5, 0.35);
+    await pointer.press();
+    whole.click();
+    await wait(2600);
+    await closeViewer();
+    await wait(900);
+  }
+  await clearSearch();
+}
+
+async function until<T>(find: () => T | null | undefined, ms = 3000): Promise<T | null> {
+  for (let waited = 0; waited < ms; waited += 100) {
+    const found = find();
+    if (found) return found;
+    await wait(100);
+  }
+  return find() ?? null;
+}
+
+async function closeViewer() {
+  const close = await until(() => document.querySelector("dialog[open]")?.querySelector<HTMLElement>('[aria-label="Close"]'));
+  if (close) {
+    await pointer.moveOnto(close, 0.5, 0.5);
+    await pointer.press();
+    close.click();
+  } else {
+    closeDialogs();
+  }
+}
+
+function closeDialogs() {
+  for (const open of document.querySelectorAll("dialog[open]")) open.dispatchEvent(new Event("cancel", { cancelable: true }));
+}
+
+async function clearSearch() {
   const clear = document.querySelector<HTMLElement>('[aria-label="Clear search"]');
   if (clear) {
     await pointer.moveOnto(clear, 0.5, 0.5);
@@ -515,7 +675,7 @@ async function openResizeAndFindSimilar(input: HTMLInputElement) {
 
 const visitor = (() => {
   const STOP_CURSOR = `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'><circle cx='10' cy='10' r='7.6' fill='none' stroke='%23fff' stroke-width='4.4'/><path d='M4.6 15.4 L15.4 4.6' stroke='%23fff' stroke-width='4.4' stroke-linecap='round'/><circle cx='10' cy='10' r='7.6' fill='none' stroke='%23d6402f' stroke-width='2.2'/><path d='M4.6 15.4 L15.4 4.6' stroke='%23d6402f' stroke-width='2.2' stroke-linecap='round'/></svg>") 10 10, not-allowed`;
-  const BACK_AFTER_MS = 3000;
+  const BACK_AFTER_MS = 2000;
   let here = false;
   let back = 0;
   let input: HTMLInputElement | null = null;
@@ -598,6 +758,7 @@ const visitor = (() => {
       document.querySelector('[role="separator"][aria-label="Width of the panel"]')?.getAttribute("aria-valuenow"),
       Math.round(results?.scrollTop ?? 0),
       document.querySelector("dialog[open], [role='menu']") !== null,
+      document.querySelector<HTMLInputElement>("dialog[open] input")?.value ?? null,
     ]);
   };
   let before = "";
@@ -622,11 +783,62 @@ const visitor = (() => {
   };
 
   const goOut = () => {
+    intent.cancel();
     if (!here) return;
     mark(null);
     clearTimeout(back);
     back = window.setTimeout(goOn, BACK_AFTER_MS);
   };
+
+  const intent = (() => {
+    const REST_MS = 480;
+    const AIMED_MS = 240;
+    const REST_SPEED = 0.12;
+    const SCROLLING_MS = 450;
+    const MOVED_PX = 4;
+    let settle = 0;
+    let slowSince: number | null = null;
+    let scrolledAt = -Infinity;
+    let travelled = 0;
+    let last: { x: number; y: number } | null = null;
+    const moves: { t: number; x: number; y: number }[] = [];
+    const answers = (target: EventTarget | null) =>
+      target instanceof Element &&
+      target.closest("button, a, input, [role='button'], [role='separator'], [data-result], [tabindex]:not([tabindex='-1'])") !== null;
+    const cancel = () => {
+      clearTimeout(settle);
+      slowSince = null;
+      travelled = 0;
+      last = null;
+      moves.length = 0;
+    };
+    for (const type of ["focus", "blur"]) window.addEventListener(type, cancel);
+    document.addEventListener("visibilitychange", cancel);
+    return {
+      moved(event: PointerEvent) {
+        if (here) return;
+        const now = performance.now();
+        if (now - scrolledAt < SCROLLING_MS) return cancel();
+        travelled += last ? Math.hypot(event.screenX - last.x, event.screenY - last.y) : Math.hypot(event.movementX, event.movementY);
+        last = { x: event.screenX, y: event.screenY };
+        if (travelled < MOVED_PX) return;
+        moves.push({ t: now, x: event.clientX, y: event.clientY });
+        while (moves.length > 2 && now - moves[0].t > 100) moves.shift();
+        const from = moves[0];
+        const speed = now > from.t ? Math.hypot(event.clientX - from.x, event.clientY - from.y) / (now - from.t) : 0;
+        const wait = answers(event.target) ? AIMED_MS : REST_MS;
+        if (speed > REST_SPEED) slowSince = null;
+        else if ((slowSince ??= now) <= now - wait) return comeIn();
+        clearTimeout(settle);
+        settle = window.setTimeout(comeIn, wait);
+      },
+      scrolled() {
+        scrolledAt = performance.now();
+        cancel();
+      },
+      cancel,
+    };
+  })();
 
   const goOn = async () => {
     here = false;
@@ -660,6 +872,7 @@ const visitor = (() => {
       }
     }
     keptFocus = false;
+    closeDialogs();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     document.querySelector<HTMLElement>('[aria-label="Clear search"]')?.click();
     pointer.home();
@@ -690,12 +903,23 @@ const visitor = (() => {
       mark(null);
       startOver(600);
     },
+    goOnNow() {
+      if (!here) return true;
+      if (changed || unfocused || state() !== before) return false;
+      clearTimeout(back);
+      here = false;
+      held = false;
+      mark(null);
+      pointer.back();
+      release();
+      return true;
+    },
     start(field: HTMLInputElement) {
       input = field;
       const style = document.head.appendChild(document.createElement("style"));
       style.textContent = `[data-demo-refused], [data-demo-refused] * { cursor: ${STOP_CURSOR} !important; }`;
       const theirs = (event: Event) => event.isTrusted;
-      window.addEventListener("pointermove", (event) => theirs(event) && comeIn(), { capture: true, passive: true });
+      window.addEventListener("pointermove", (event) => theirs(event) && intent.moved(event), { capture: true, passive: true });
       let pressedAt = -Infinity;
       for (const type of ["pointerdown", "keydown"]) {
         window.addEventListener(
@@ -712,13 +936,17 @@ const visitor = (() => {
         "wheel",
         (event) => {
           if (!theirs(event)) return;
-          comeIn();
+          let inner: HTMLElement | null = null;
           for (let one = event.target instanceof Element ? event.target : null; one; one = one.parentElement) {
             if (one.scrollHeight > one.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(one).overflowY)) {
-              (one as HTMLElement).style.overscrollBehavior = "contain";
+              inner = one as HTMLElement;
               break;
             }
           }
+          const further = inner !== null && (event.deltaY > 0 ? inner.scrollTop + inner.clientHeight < inner.scrollHeight - 1 : inner.scrollTop > 0);
+          if (!here && !further) return intent.scrolled();
+          comeIn();
+          if (inner) inner.style.overscrollBehavior = "contain";
         },
         { capture: true, passive: true },
       );
@@ -756,6 +984,7 @@ const visitor = (() => {
         "keydown",
         (event) => {
           if (!theirs(event)) return;
+          if (event.target instanceof HTMLInputElement && event.target !== input) return;
           const typing = (event.key.length === 1 && !event.ctrlKey && !event.metaKey) || ["Backspace", "Delete"].includes(event.key);
           const pasting = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v";
           if (!typing && !pasting) return;
@@ -769,6 +998,21 @@ const visitor = (() => {
   };
 })();
 
+function showStill(input: HTMLInputElement) {
+  closeDialogs();
+  document.querySelector<HTMLElement>('[aria-label="Clear search"]')?.click();
+  const { query } = SCENARIOS[ORDER[scenario]];
+  if (query) {
+    focusField(input);
+    setText(input, query);
+    return;
+  }
+  const box = input.getBoundingClientRect();
+  const onField = { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+  dragFiles.enter([CHART.path], onField);
+  dragFiles.drop([CHART.path], onField);
+}
+
 async function begin() {
   const input = await field();
   visitor.start(input);
@@ -777,13 +1021,13 @@ async function begin() {
     if (event.origin !== location.origin || event.source !== window.parent || event.data?.type !== "mesa-demo-scenario") return;
     const chosen = ORDER.indexOf(event.data.scenario);
     if (chosen < 0) return;
+    const same = chosen === scenario;
     scenario = chosen;
-    if (still) setText(input, SCENARIOS[ORDER[scenario]].query);
-    else visitor.again();
+    if (still) showStill(input);
+    else if (!((same || untyped === run) && visitor.goOnNow())) visitor.again();
   });
   if (still) {
-    focusField(input);
-    setText(input, SCENARIOS[ORDER[scenario]].query);
+    showStill(input);
     return;
   }
   watchOnScreen();
@@ -791,11 +1035,28 @@ async function begin() {
   void searchByItself();
 }
 
+function handOver() {
+  const shell = document.getElementById("demo-shell");
+  const app = document.getElementById("root");
+  if (!shell || !app) return;
+  const said = (within: Element) =>
+    JSON.stringify(["header", `.${appStyles.totals}`, `.${appStyles.legalCorner}`].map((part) => within.querySelector(part)?.textContent));
+  const frame = said(shell.firstElementChild!);
+  const since = performance.now();
+  const look = () => {
+    if (said(app) === frame || performance.now() - since > 1000) shell.remove();
+    else requestAnimationFrame(look);
+  };
+  requestAnimationFrame(look);
+}
+
 export default function DemoApp() {
   const [isReady, setReady] = useState(false);
   useEffect(() => void ready().then(() => setReady(true)), []);
   useEffect(() => {
-    if (isReady) void begin();
+    if (!isReady) return;
+    handOver();
+    void begin();
   }, [isReady]);
   return isReady ? <App /> : null;
 }

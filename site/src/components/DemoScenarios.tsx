@@ -24,7 +24,6 @@ export default function DemoScenarios() {
   }, []);
 
   const choose = (chosen: Scenario) => {
-    if (chosen === scenario) return;
     setScenario(chosen);
     demo()?.contentWindow?.postMessage({ type: "mesa-demo-scenario", scenario: chosen }, location.origin);
   };
