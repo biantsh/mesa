@@ -1,9 +1,6 @@
 import type { Category } from "./api";
 
 export const TYPE_ORDER: Category[] = ["document", "image", "video", "audio", "code"];
-
-export const SIMPLE_TYPES: Category[] = TYPE_ORDER.filter((type) => type !== "code");
-
 export const DEFAULT_TYPES: Category[] = ["document", "image"];
 
 export const TYPE_NAMES: Record<Category, string> = {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ArrowUpRight, CodeXml, DatabaseZap, FolderSearch, Info, Lock, Search, Trash2 } from "lucide-react";
+import { DatabaseZap, Info, Search, Trash2 } from "lucide-react";
 import { api, errorText, type Category, type Estimate, type Overview, type Survey } from "../api";
 import { describeTotal, estimateSeconds, formatEstimateRange, joinNames } from "../fileSurvey";
 import { Button } from "../components/Button";
@@ -7,7 +7,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { IndexHeader } from "../components/IndexHeader";
 import { SimpleProgress } from "../components/SimpleProgress";
 import { TypeTiles } from "../components/TypeTiles";
-import { DEFAULT_TYPES, SIMPLE_TYPES, describeTypes, hasNewTypes, typesToIndex } from "../indexTypes";
+import { DEFAULT_TYPES, TYPE_ORDER, describeTypes, hasNewTypes, typesToIndex } from "../indexTypes";
 import { HINT_DELAY_MS, hasShownBackgroundHint, markBackgroundHintShown } from "../backgroundHint";
 import { SWITCH_NAME } from "../indexView";
 import { MAIN_HIDDEN } from "../events";
@@ -20,13 +20,6 @@ import { useLatest } from "../useLatest";
 import styles from "./SimpleIndexScreen.module.css";
 
 type Mode = "setup" | "running" | "idle";
-const USE_ICON = 16;
-const CODE_ICON = 19;
-const ADVANCED_USES = [
-  { Icon: FolderSearch, text: "Browse and see what's indexed", size: USE_ICON },
-  { Icon: Lock, text: "Choose which items to exclude", size: 15 },
-  { Icon: CodeXml, text: "Index code from your projects", size: CODE_ICON, strokeWidth: (2 * USE_ICON) / CODE_ICON },
-];
 
 interface Props {
   onBack: () => void;
@@ -72,15 +65,6 @@ export function SimpleIndexScreen({
     if (active && shown === "setup" && mode === "running") changeWithTransition(() => setShown(mode), { onlyMorph: true });
     else setShown(mode);
   }, [settled, mode, shown, active]);
-  const [animated, setAnimated] = useState(false);
-  useEffect(() => {
-    if (!settled) return;
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => setAnimated(true));
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [settled]);
-
   const [hint, setHint] = useState(false);
   useEffect(() => {
     if (view !== "running") {
@@ -203,7 +187,7 @@ export function SimpleIndexScreen({
     [survey, counted, estimate, picked],
   );
 
-  const everyType = SIMPLE_TYPES.every((type) => indexedTypes.includes(type));
+  const everyType = TYPE_ORDER.every((type) => indexedTypes.includes(type));
   const checked = mode === "idle" ? typesToIndex(indexedTypes, picked, false) : picked;
   const canStart = mode === "setup" ? picked.length > 0 : hasNewTypes(indexedTypes, picked);
   const named = active ? { viewTransitionName: SWITCH_NAME } : undefined;
@@ -217,17 +201,12 @@ export function SimpleIndexScreen({
       <div className={styles.scroll}>
         <div className={styles.content}>
           <section className={styles.explainer}>
-            <p className={styles.lead}>Files need to be indexed before they can be found via search.</p>
-            <p>This process can take a while, so only index the files you care about searching.</p>
+            <p className={styles.lead}>Files can only be searched for after they are indexed.</p>
+            <p>This can take a while, so choose only what you want to search.</p>
           </section>
 
           <div className={styles.stage}>
           <div className={styles.cardsAndNote}>
-          <div
-            className={styles.choices}
-            data-running={view === "running" ? "" : undefined}
-            data-animated={animated && active ? "" : undefined}
-          >
             <section className={styles.card} aria-busy={!ready}>
               {ready && view === "running" && progress && (
                 <>
@@ -248,7 +227,6 @@ export function SimpleIndexScreen({
                     )}
                   </div>
                   <div className={styles.foot}>
-                    <p className={styles.note}>Indexing: {describeTypes(indexedTypes)}</p>
                     <div className={styles.footActions}>
                       {!progress.updating && (
                         <Button variant="dangerOutline" onClick={() => setStopAsked(true)} disabled={stopping}>
@@ -257,7 +235,6 @@ export function SimpleIndexScreen({
                       )}
                       <Button variant="secondary" onClick={onAdvanced} style={named}>
                         See details in advanced view
-                        <ArrowUpRight size={16} aria-hidden />
                       </Button>
                     </div>
                   </div>
@@ -267,25 +244,31 @@ export function SimpleIndexScreen({
               {ready && view === "setup" && (
                 <>
                   <h2 className={styles.cardTitle}>Index my files</h2>
-                  <p className={styles.cardText}>Everything in your user folder, of the types:</p>
+                  <p className={styles.cardText}>Everything in your user folder, of these types:</p>
                   <TypeTiles checked={checked} locked={[]} disabled={starting} onToggle={toggle} />
                   <div className={styles.actions}>
                     {counted && counted.notAsked.length > 0 && <AccessNote onAllow={() => void count(true)} />}
+                    {total && <TotalSwap total={total} />}
                     <Button variant="primary" onClick={start} disabled={!canStart || starting}>
                       <DatabaseZap size={16} aria-hidden />
                       {starting ? "Starting…" : "Index my files"}
                     </Button>
-                    {total && <TotalSwap total={total} />}
                   </div>
                 </>
               )}
 
               {ready && view === "idle" && (
                 <>
-                  <h2 className={styles.cardTitle}>Your files are indexed</h2>
-                  <p className={styles.cardText}>{everyType ? "Every type is indexed." : "Add more types:"}</p>
+                  <h2 className={styles.cardTitle}>Your index</h2>
+                  <p className={styles.cardText}>
+                    {everyType ? "Every type of file is indexed." : `${indexedSentence(indexedTypes)} Tick more types to add them.`}
+                  </p>
                   <TypeTiles checked={checked} locked={indexedTypes} disabled={starting} onToggle={toggle} />
                   <div className={cx(styles.actions, styles.buttonPair)}>
+                    <Button variant="dangerOutline" onClick={() => setRemoveAsked(true)} disabled={starting || removing}>
+                      <Trash2 size={16} aria-hidden />
+                      {removing ? "Removing…" : "Remove index"}
+                    </Button>
                     <Button
                       variant="primary"
                       onClick={start}
@@ -293,11 +276,7 @@ export function SimpleIndexScreen({
                       data-tooltip={everyType ? "All files are already indexed." : undefined}
                     >
                       <DatabaseZap size={16} aria-hidden />
-                      {starting ? "Starting…" : "Index these too"}
-                    </Button>
-                    <Button variant="dangerOutline" onClick={() => setRemoveAsked(true)} disabled={starting || removing}>
-                      <Trash2 size={16} aria-hidden />
-                      {removing ? "Removing…" : "Remove index"}
+                      {starting ? "Starting…" : "Add to index"}
                     </Button>
                   </div>
                 </>
@@ -310,35 +289,14 @@ export function SimpleIndexScreen({
               )}
             </section>
 
-            <div className={styles.or} aria-hidden>
-              <span className={styles.rule} />
-              <span className={styles.orWord}>or</span>
-              <span className={styles.rule} />
-            </div>
-
-            <div className={styles.other} inert={view === "running"}>
-              <section className={styles.otherCard}>
-                <h2 className={styles.cardTitle}>Choose folders yourself</h2>
-                <p className={styles.cardText}>Pick exactly what to index and what to leave out.</p>
-                <ul className={styles.uses}>
-                  {ADVANCED_USES.map(({ Icon, text, size, strokeWidth }) => (
-                    <li key={text}>
-                      <span className={styles.useIcon}>
-                        <Icon size={size} strokeWidth={strokeWidth} aria-hidden />
-                      </span>
-                      {text}
-                    </li>
-                  ))}
-                </ul>
-                <div className={styles.actions}>
-                  <Button variant="secondary" onClick={onAdvanced} style={view === "running" ? undefined : named}>
-                    Advanced view
-                    <ArrowUpRight size={16} aria-hidden />
-                  </Button>
-                </div>
-              </section>
-            </div>
-          </div>
+            {ready && (
+              <div className={cx(styles.advanced, view === "running" && styles.advancedAway)} inert={view === "running"}>
+                <p>Use the advanced view to choose folders or exclude items.</p>
+                <Button variant="secondary" onClick={onAdvanced} style={view === "running" ? undefined : named}>
+                  Advanced view
+                </Button>
+              </div>
+            )}
           {ready && view === "setup" && counted && counted.noAccess.length > 0 && (
             <p className={styles.deniedNote}>
               Mesa isn&rsquo;t allowed to look in {counted.noAccess.length === 1 ? "this folder" : "these folders"}:{" "}
@@ -380,6 +338,12 @@ export function SimpleIndexScreen({
       </ConfirmDialog>
     </div>
   );
+}
+
+function indexedSentence(types: Category[]): string {
+  const words = describeTypes(types);
+  const singular = types.length === 1 && (types[0] === "audio" || types[0] === "code");
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)} ${singular ? "is" : "are"} indexed.`;
 }
 
 function isCounted(survey: Survey | "counting" | "failed" | null): survey is Survey {

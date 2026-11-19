@@ -1,4 +1,4 @@
-import { ArrowDownLeft, DatabaseZap } from "lucide-react";
+import { DatabaseZap } from "lucide-react";
 import type { Category, Progress } from "../api";
 import { NO_TYPES_TIP } from "../indexTypes";
 import { SELECTING_FROM } from "../selection";
@@ -74,7 +74,6 @@ export function TopBar({
           onClick={onSimpleView}
           style={{ viewTransitionName: active ? SWITCH_NAME : undefined }}
         >
-          <ArrowDownLeft size={15} aria-hidden />
           Simple view
         </Button>
         <MorphButton

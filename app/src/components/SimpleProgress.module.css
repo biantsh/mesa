@@ -21,6 +21,10 @@
   min-width: 0;
 }
 
+.what > :first-child {
+  flex: none;
+}
+
 .where {
   min-width: 0;
   overflow: hidden;

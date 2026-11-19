@@ -30,8 +30,8 @@
   flex-direction: column;
   min-height: 100%;
   width: 100%;
-  max-width: 980px;
-  margin: 0 auto;
+  --title-x: calc(16px + 32px + 6px);
+  --card-x: max(24px, (100cqw - 640px) / 2);
   padding: calc(12px + var(--lift)) 24px 0;
 }
 
@@ -50,6 +50,7 @@
   flex-direction: column;
   gap: 6px;
   max-width: 62ch;
+  margin-left: calc((var(--title-x) + var(--card-x)) / 2 - 24px);
 }
 
 .explainer p {
@@ -65,116 +66,40 @@
   line-height: 1.35;
 }
 
-.choices {
-  display: grid;
-  --or-width: 64px;
-  --reveal-delay: 260ms;
-  grid-template-columns: 1fr var(--or-width) 1fr;
-  align-items: stretch;
-  container: choices / inline-size;
-}
-
-.choices[data-animated] {
-  transition: grid-template-columns 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-.choices[data-running] {
-  grid-template-columns: 1fr 0px 0fr;
-}
-
-.card,
-.otherCard {
+.card {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-width: 0;
+  min-height: 302px;
   padding: 20px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
 }
 
-.card {
-  min-width: 0;
-}
-
-.card,
-.otherCard {
-  min-height: 330px;
-}
-
-.other {
-  min-width: 0;
-  overflow: hidden;
+.advanced {
   display: flex;
-}
-
-.otherCard {
-  flex: none;
-  min-width: calc((100cqw - var(--or-width)) / 2);
-}
-
-.or {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-  overflow: hidden;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
 }
 
-.choices[data-animated] .otherCard > *,
-.choices[data-animated] .or {
-  transition: opacity 240ms ease var(--reveal-delay);
+.advanced p {
+  margin: 0;
+  color: var(--color-text-muted);
+  line-height: 1.5;
 }
 
-.choices[data-running] .otherCard > *,
-.choices[data-running] .or {
-  opacity: 0;
+.advanced > button {
+  flex: none;
+  white-space: nowrap;
 }
 
-.choices[data-animated] .otherCard {
-  transition: opacity 240ms ease;
-}
-
-.choices[data-running] .otherCard {
-  opacity: 0;
-}
-
-.choices[data-animated][data-running] .otherCard {
-  transition: opacity 140ms ease;
-}
-
-.choices[data-animated][data-running] .otherCard > *,
-.choices[data-animated][data-running] .or {
-  transition: opacity 120ms ease;
-}
-
-.or > .rule:first-child {
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16px);
-  mask-image: linear-gradient(to bottom, transparent, #000 16px);
-}
-
-.or > .rule:last-child {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
-}
-
-.rule {
-  flex: 1;
-  width: 1px;
-  background: var(--color-border);
-}
-
-.orWord {
-  color: var(--color-text-faint);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.choices[data-running] .other,
-.choices[data-running] .or {
-  pointer-events: none;
+.advancedAway {
+  visibility: hidden;
 }
 
 .cardTitle {
@@ -189,36 +114,11 @@
   line-height: 1.5;
 }
 
-.uses {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  color: var(--color-text-muted);
-}
-
-.uses li {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.useIcon {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  background: var(--color-hover-bg);
-}
-
 .actions {
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 14px;
   margin-top: auto;
 }
@@ -284,12 +184,13 @@
 }
 
 .accessNote {
-  --access-gap: 18px;
+  --access-gap: 16px;
   position: absolute;
   left: 0;
   right: 0;
   bottom: 100%;
   margin: 0 0 var(--access-gap);
+  text-align: center;
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 1.5;
@@ -297,6 +198,9 @@
 
 .cardsAndNote {
   position: relative;
+  width: 100%;
+  max-width: 640px;
+  margin-inline: auto;
   margin-top: calc(-1 * var(--lift));
 }
 
@@ -320,7 +224,7 @@
 .foot {
   margin-top: auto;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: flex-end;
   gap: 12px;
 }
@@ -360,8 +264,8 @@
   align-items: center;
   gap: 5px;
   vertical-align: baseline;
-  padding: 2px 3px;
-  margin: -2px -3px -2px -2px;
+  padding: 0 3px;
+  margin: 0 -3px 0 -2px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -389,16 +293,6 @@
   }
 }
 
-.note {
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text-faint);
-  font-size: 13px;
-}
-
 
 .error {
   margin: 0;
@@ -406,55 +300,23 @@
   font-size: 13px;
 }
 
-@container page (max-width: 760px) {
-  .choices,
-  .choices[data-running] {
-    grid-template-columns: 1fr;
-    transition: none;
+@container page (max-width: 700px) {
+  .card {
+    min-height: 322px;
   }
+}
 
-  .or {
-    flex-direction: row;
-    padding-block: 12px;
-  }
-
-  .rule {
-    width: auto;
-    height: 1px;
-  }
-
-  .or > .rule:first-child {
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 16px);
-    mask-image: linear-gradient(to right, transparent, #000 16px);
-  }
-
-  .or > .rule:last-child {
-    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
-    mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
-  }
-
-  .otherCard {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .choices[data-running] .other,
-  .choices[data-running] .or {
-    display: none;
+@container page (max-width: 560px) {
+  .advanced {
+    flex-direction: column;
+    gap: 10px;
+    text-align: center;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .hint {
     animation: none;
-  }
-
-  .choices[data-animated],
-  .choices[data-animated] .otherCard,
-  .choices[data-animated][data-running] .otherCard,
-  .choices[data-animated] .otherCard > *,
-  .choices[data-animated] .or {
-    transition: none;
   }
 }
 

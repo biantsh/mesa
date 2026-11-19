@@ -1,7 +1,7 @@
 import { Check } from "lucide-react";
 import type { Category } from "../api";
 import { cx } from "../cx";
-import { SIMPLE_TYPES, TYPE_NAMES } from "../indexTypes";
+import { TYPE_NAMES, TYPE_ORDER } from "../indexTypes";
 import { CATEGORY_ICONS } from "./ResultGrid";
 import styles from "./TypeTiles.module.css";
 
@@ -15,7 +15,7 @@ interface Props {
 export function TypeTiles({ checked, locked, disabled = false, onToggle }: Props) {
   return (
     <div className={styles.tiles} role="group" aria-label="Kinds of file to index">
-      {SIMPLE_TYPES.map((type) => {
+      {TYPE_ORDER.map((type) => {
         const Icon = CATEGORY_ICONS[type];
         const on = checked.includes(type);
         const fixed = locked.includes(type);
