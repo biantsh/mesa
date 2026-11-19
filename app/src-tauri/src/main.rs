@@ -44,6 +44,7 @@ mod thumbnail;
 #[cfg(windows)]
 mod toast;
 mod unindexable;
+mod update;
 mod vectors;
 mod watch;
 #[cfg(target_os = "linux")]
@@ -92,6 +93,7 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
             }
             "open" => main_window::show(app),
             "search" => widget::show(app),
+            update::MENU_ID => update::open_dialog(app),
             "quit" => {
                 app.state::<index::Index>().shut_down();
                 app.exit(0);
@@ -119,6 +121,7 @@ fn add_tray_icon(app: &tauri::App, search_key: Option<&str>) -> tauri::Result<()
         tray = tray.icon(icon.clone());
     }
     tray.build(app)?;
+    app.state::<update::Updates>().attach_menu(menu);
     Ok(())
 }
 
@@ -177,6 +180,7 @@ fn main() {
             Some(vec![startup::BACKGROUND_ARG]),
         ))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| match (window.label(), event) {
             (widget::LABEL, WindowEvent::CloseRequested { api, .. }) => {
@@ -203,6 +207,9 @@ fn main() {
                 Some(dir) => std::path::PathBuf::from(dir),
                 None => app.path().app_data_dir()?,
             };
+            if update::just_updated(&dir) {
+                main_window::keep_hidden_at_start(false);
+            }
             let previews_dir = match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
                 Some(_) => dir.join("previews"),
                 None => app.path().app_cache_dir()?.join("previews"),
@@ -228,6 +235,7 @@ fn main() {
             startup::at_start(app.handle(), &settings);
             let search_key = hotkey::Hotkey::new(app.handle(), settings.get().search_hotkey.as_deref());
             app.manage(settings);
+            app.manage(update::Updates::open(app.handle(), &dir));
             add_tray_icon(app, search_key.name().as_deref())?;
             app.manage(search_key);
             if startup::wants_search(&startup::arguments()) {
@@ -238,6 +246,7 @@ fn main() {
             widget::float_over_everything(app.handle());
             system_menu::install(app.handle());
             main_window::show_if_the_page_does_not(app);
+            update::start(app.handle());
             Ok(())
         })
         .manage(managed_previews)
@@ -308,6 +317,10 @@ fn main() {
             commands::show_main,
             commands::set_widget_box,
             commands::widget_fills_screen,
+            commands::update_status,
+            commands::check_for_updates,
+            commands::install_update,
+            commands::set_check_for_updates,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,0 +1,79 @@
+.shifting {
+  position: relative;
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease,
+    color 200ms ease,
+    opacity 200ms ease;
+}
+
+.sizer {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.text {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+  white-space: nowrap;
+}
+
+.measured {
+  transition: width 240ms ease;
+}
+
+.layer {
+  grid-area: 1 / 1;
+  justify-self: end;
+}
+
+.coming {
+  animation: come 260ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+.leaving {
+  animation: go 200ms cubic-bezier(0.3, 0, 1, 1) forwards;
+}
+
+@keyframes come {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+}
+
+@keyframes go {
+  to {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .measured {
+    transition: none;
+  }
+
+  .coming {
+    animation-name: come-faded;
+  }
+
+  .leaving {
+    animation-name: go-faded;
+  }
+
+  @keyframes come-faded {
+    from {
+      opacity: 0;
+    }
+  }
+
+  @keyframes go-faded {
+    to {
+      opacity: 0;
+    }
+  }
+}

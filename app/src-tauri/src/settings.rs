@@ -24,6 +24,7 @@ pub struct Settings {
     pub always_full_speed: bool,
     pub start_at_sign_in: bool,
     pub sign_in_entry_made: bool,
+    pub check_for_updates: bool,
 }
 
 impl Default for Settings {
@@ -35,6 +36,7 @@ impl Default for Settings {
             always_full_speed: false,
             start_at_sign_in: true,
             sign_in_entry_made: false,
+            check_for_updates: true,
         }
     }
 }

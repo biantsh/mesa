@@ -636,7 +636,7 @@ pub fn index_estimate(settings: State<'_, SettingsStore>, estimator: State<'_, A
     estimator.estimate(settings.get().device())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_settings(app: AppHandle, settings: State<'_, SettingsStore>) -> Settings {
     startup::current(&app, &settings)
 }
@@ -723,6 +723,31 @@ pub fn set_always_full_speed(
 #[tauri::command(async)]
 pub fn set_start_at_sign_in(enabled: bool, app: AppHandle, settings: State<'_, SettingsStore>) -> Result<(), String> {
     startup::set(&app, &settings, enabled)
+}
+
+#[tauri::command]
+pub fn update_status(updates: State<'_, crate::update::Updates>) -> crate::update::Status {
+    updates.status()
+}
+
+#[tauri::command]
+pub fn check_for_updates(app: AppHandle) {
+    crate::update::check_soon(&app);
+}
+
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    crate::update::install(&app).await
+}
+
+#[tauri::command]
+pub fn set_check_for_updates(enabled: bool, settings: State<'_, SettingsStore>) -> Result<(), String> {
+    settings
+        .set(Settings {
+            check_for_updates: enabled,
+            ..settings.get()
+        })
+        .map_err(|e| format!("Couldn't save the setting. {e}"))
 }
 
 fn apply_setting(

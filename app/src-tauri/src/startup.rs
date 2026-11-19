@@ -334,7 +334,7 @@ mod linux {
     }
 }
 
-fn not_installed(exe: &std::path::Path) -> bool {
+pub fn not_installed(exe: &std::path::Path) -> bool {
     exe.starts_with("/Volumes") || exe.components().any(|part| part.as_os_str() == "AppTranslocation")
 }
 

@@ -10,10 +10,11 @@ const FROM_WIDGET_MS = 450;
 interface Window {
   setScreen: (screen: "home" | "index") => void;
   setSettingsOpen: (open: boolean) => void;
+  openUpdate: () => void;
   focusSearch: () => void;
 }
 
-export function useWidgetRequests({ setScreen, setSettingsOpen, focusSearch }: Window): boolean {
+export function useWidgetRequests({ setScreen, setSettingsOpen, openUpdate, focusSearch }: Window): boolean {
   const [fromWidget, setFromWidget] = useState(false);
   const timer = useRef(0);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -27,6 +28,8 @@ export function useWidgetRequests({ setScreen, setSettingsOpen, focusSearch }: W
       } else if (screen === "settings") {
         setScreen("home");
         setSettingsOpen(true);
+      } else if (screen === "update") {
+        openUpdate();
       }
     });
     window.clearTimeout(timer.current);

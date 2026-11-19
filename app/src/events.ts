@@ -6,3 +6,4 @@ export const FULL_SCREEN = "full-screen";
 export const FOLDER_CHANGED = "folder-changed";
 export const WIDGET_SHOWN = "widget-shown";
 export const WIDGET_HIDDEN = "widget-hidden";
+export const UPDATE_STATUS = "update-status";

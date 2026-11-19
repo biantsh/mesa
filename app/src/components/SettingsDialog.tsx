@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cx } from "../cx";
 import { modifierLabels, keyLabel } from "../hotkey";
@@ -9,6 +9,9 @@ import { useSearchHotkey } from "../useSearchHotkey";
 import { useTheme, type ThemeChoice } from "../theme";
 import { api, type Settings } from "../api";
 import { useSwitchSetting } from "../useSwitchSetting";
+import { hasUpdate, type useUpdateStatus } from "../useUpdateStatus";
+import { Reveal } from "./Reveal";
+import { ShiftingButton } from "./ShiftingButton";
 import { Segmented, type Segment } from "./Segmented";
 import { IconButton } from "./IconButton";
 import { Keycaps } from "./Keycaps";
@@ -20,13 +23,16 @@ import styles from "./SettingsDialog.module.css";
 interface Props {
   open: boolean;
   onClose: () => void;
+  update: ReturnType<typeof useUpdateStatus>;
+  onOpenUpdate: () => void;
 }
 
-export function SettingsDialog({ open, onClose }: Props) {
+export function SettingsDialog({ open, onClose, update, onOpenUpdate }: Props) {
   const titleId = useId();
   const gpu = useGpuAcceleration();
   const fullSpeed = useSwitchSetting(readFullSpeed, writeFullSpeed);
   const signIn = useSwitchSetting(readSignIn, writeSignIn, open);
+  const updateChecks = useSwitchSetting(readUpdateChecks, writeUpdateChecks);
   const hotkey = useSearchHotkey(open);
   const close = () => {
     if (!hotkey.isRecording()) onClose();
@@ -51,6 +57,16 @@ export function SettingsDialog({ open, onClose }: Props) {
                 description="Automatically launch the app in the background."
                 {...signIn}
               />
+            </Group>
+            <Group title="Updates">
+              <VersionRow {...update} onOpenUpdate={onOpenUpdate} />
+              {update.status?.available && (
+                <SwitchRow
+                  title="Auto-check for updates"
+                  description="Check for updates once per day."
+                  {...updateChecks}
+                />
+              )}
             </Group>
             <Group title="Shortcuts">
               <HotkeyRow {...hotkey} />
@@ -127,6 +143,8 @@ const readFullSpeed = (settings: Settings) => settings.alwaysFullSpeed;
 const writeFullSpeed = (enabled: boolean) => api.setAlwaysFullSpeed(enabled);
 const readSignIn = (settings: Settings) => settings.startAtSignIn;
 const writeSignIn = (enabled: boolean) => api.setStartAtSignIn(enabled);
+const readUpdateChecks = (settings: Settings) => settings.checkForUpdates;
+const writeUpdateChecks = (enabled: boolean) => api.setCheckForUpdates(enabled);
 
 function SwitchRow({ title, description, enabled, pending, error, change }: { title: string; description: string } & ReturnType<typeof useSwitchSetting>) {
   return (
@@ -245,6 +263,72 @@ function GpuRow({ enabled, gpu, sharedGpu, pending, error, change }: ReturnType<
       />
       <SettingError error={error} />
     </>
+  );
+}
+
+function VersionRow({ status, check, onOpenUpdate }: ReturnType<typeof useUpdateStatus> & { onOpenUpdate: () => void }) {
+  const checking = useHeldOn(status?.state === "checking", CHECKING_AT_LEAST_MS);
+  const found = hasUpdate(status) && !checking;
+  const note = !status ? "\u00a0" : found ? `Mesa ${status.current} (${status.version} available)` : `Mesa ${status.current}`;
+  const failure = status?.available && !found && !checking ? status.error : null;
+  const [lastFailure, setLastFailure] = useState(failure);
+  if (failure && failure !== lastFailure) setLastFailure(failure);
+  return (
+    <Row
+      title="App version"
+      note={<ChangingText text={note} />}
+      control={() =>
+        status?.available && (
+          <span className={styles.controls}>
+            <Reveal show={failure !== null} from="right">
+              <span className={styles.failure} role="alert">
+                {lastFailure}
+              </span>
+            </Reveal>
+            <ShiftingButton
+              variant={found ? "primary" : "neutral"}
+              className={styles.rowButton}
+              label={checking ? "Checking…" : found ? "Update…" : "Check now"}
+              onClick={found ? onOpenUpdate : check}
+              disabled={checking}
+            />
+          </span>
+        )
+      }
+    />
+  );
+}
+
+const CHECKING_AT_LEAST_MS = 600;
+
+function useHeldOn(on: boolean, ms: number): boolean {
+  const [held, setHeld] = useState(false);
+  const since = useRef(0);
+  useEffect(() => {
+    if (on) {
+      since.current = performance.now();
+      setHeld(true);
+      return;
+    }
+    const left = ms - (performance.now() - since.current);
+    if (left <= 0) {
+      setHeld(false);
+      return;
+    }
+    const timer = setTimeout(() => setHeld(false), left);
+    return () => clearTimeout(timer);
+  }, [on, ms]);
+  return on || held;
+}
+
+function ChangingText({ text }: { text: string }) {
+  const [first] = useState(text);
+  const [changed, setChanged] = useState(false);
+  if (text !== first && !changed) setChanged(true);
+  return (
+    <span key={text} className={changed ? styles.arrive : undefined}>
+      {text}
+    </span>
   );
 }
 

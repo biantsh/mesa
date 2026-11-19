@@ -188,6 +188,19 @@ export interface Settings {
   gpuAcceleration: boolean;
   alwaysFullSpeed: boolean;
   startAtSignIn: boolean;
+  checkForUpdates: boolean;
+}
+
+export interface UpdateStatus {
+  current: string;
+  available: boolean;
+  state: "idle" | "checking" | "available" | "downloading" | "installing";
+  version: string | null;
+  notes: string | null;
+  done: number;
+  total: number | null;
+  error: string | null;
+  asksPassword: boolean;
 }
 
 export interface HotkeyParts {
@@ -357,6 +370,10 @@ export const api = {
   surveyUserFiles: (includeProtected: boolean) => invoke<Survey>("survey_user_files", { includeProtected }),
   indexEstimate: () => invoke<Estimate>("index_estimate"),
   getSettings: () => invoke<Settings>("get_settings"),
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  checkForUpdates: () => invoke<void>("check_for_updates"),
+  installUpdate: () => invoke<void>("install_update"),
+  setCheckForUpdates: (enabled: boolean) => invoke<void>("set_check_for_updates", { enabled }),
   getSearchHotkey: () => invoke<HotkeyStatus>("get_search_hotkey"),
   setSearchHotkey: (shortcut: string | null) => invoke<HotkeyStatus>("set_search_hotkey", { shortcut }),
   beginHotkeyRecording: () => invoke<void>("begin_hotkey_recording"),

@@ -4,6 +4,7 @@ import { BACKGROUND_PRESS } from "./background";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SetupScreen } from "./components/SetupScreen";
 import { TitleBar } from "./components/TitleBar";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { cx } from "./cx";
 import { MAIN_HIDDEN, MAIN_SHOWN } from "./events";
 import { isMac } from "./platform";
@@ -13,6 +14,7 @@ import { IndexPage } from "./screens/IndexPage";
 import { api, type ModelStatus } from "./api";
 import { describeIndexTotals } from "./format";
 import { LegalCorner } from "./components/LegalCorner";
+import { Reveal } from "./components/Reveal";
 import { startup } from "./ready";
 import { useCornersAway } from "./useCornersAway";
 import { useFrozenWhile } from "./useFrozenWhile";
@@ -22,11 +24,12 @@ import { useTauriEvent } from "./useTauriEvent";
 import { useFollowSystemTheme } from "./theme";
 import { useBlockContextMenu } from "./window";
 import { useModelStatus } from "./useModelStatus";
+import { hasUpdate, useUpdateStatus } from "./useUpdateStatus";
 import { useWidgetRequests } from "./useWidgetRequests";
 import styles from "./App.module.css";
 
 type Screen = "home" | "index";
-type Card = "settings" | "licenses";
+type Card = "settings" | "licenses" | "update";
 const SETUP_FADE_MS = 300;
 
 function needsSetup(status: ModelStatus | null): boolean {
@@ -69,6 +72,8 @@ export default function App() {
   const covered = setup !== "off";
   const behind = covered || cardOpen;
   const retryModel = useCallback(() => void api.retryModelSetup().catch(() => {}), []);
+  const update = useUpdateStatus();
+  const updating = update.status?.state === "downloading" || update.status?.state === "installing";
 
   const home = useRef<HTMLDivElement>(null);
   const homeScreen = useRef<HomeHandle>(null);
@@ -92,12 +97,13 @@ export default function App() {
   const changeSettingsOpen = useCallback((open: boolean) => changeCard(open ? "settings" : null), [changeCard]);
   const openSettings = useCallback(() => changeCard("settings"), [changeCard]);
   const openLicenses = useCallback(() => changeCard("licenses"), [changeCard]);
+  const openUpdate = useCallback(() => changeCard("update"), [changeCard]);
   const closeCard = useCallback(() => changeCard(null), [changeCard]);
   useEffect(() => {
-    if (!cardOpen) return;
+    if (!cardOpen || (card === "update" && updating)) return;
     window.addEventListener(BACKGROUND_PRESS, closeCard);
     return () => window.removeEventListener(BACKGROUND_PRESS, closeCard);
-  }, [cardOpen, closeCard]);
+  }, [cardOpen, card, updating, closeCard]);
   useEffect(() => {
     const back = beforeSettings.current;
     if (cardOpen || !back) return;
@@ -128,6 +134,7 @@ export default function App() {
   const fromWidget = useWidgetRequests({
     setScreen,
     setSettingsOpen: changeSettingsOpen,
+    openUpdate,
     focusSearch: () => homeScreen.current?.focusField(),
   });
 
@@ -199,12 +206,21 @@ export default function App() {
         </div>
         <footer ref={totalsLine} className={cx(styles.totals, cornersAway && styles.cornerAway)}>
           {overview && describeIndexTotals(overview.files, overview.bytes)}
+          <Reveal show={hasUpdate(update.status)}>
+            <span className={styles.updateHint}>
+              <span className={styles.divider} aria-hidden />
+              <button type="button" className={styles.updateLink} onClick={openUpdate}>
+                Update available
+              </button>
+            </span>
+          </Reveal>
         </footer>
         <footer ref={legalLine} className={cx(styles.legalCorner, cornersAway && styles.cornerAway)}>
           <LegalCorner onOpenLicenses={openLicenses} />
         </footer>
         {covered && model && <SetupScreen status={model} leaving={setup === "leaving"} />}
-        <SettingsDialog open={settingsOpen} onClose={closeCard} />
+        <SettingsDialog open={settingsOpen} onClose={closeCard} update={update} onOpenUpdate={openUpdate} />
+        <UpdateDialog open={card === "update"} status={update.status} onInstall={update.install} onClose={closeCard} />
         <LicensesDialog open={card === "licenses"} onClose={closeCard} />
       </div>
     </div>
