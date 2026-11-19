@@ -73,7 +73,7 @@ if (capture('git', ['-C', source, 'rev-parse', 'HEAD']) !== COMMIT) {
 
 const parallel = String(buildJobs(cpus().length));
 run('python3', [join(source, 'tools', 'ci_build', 'build.py'), '--build_dir', build, '--cmake_path', cmake,
-  '--parallel', parallel, '--update', '--build', ...flags]);
+  '--parallel', parallel, '--update', '--build', ...flags, ...(process.getuid?.() === 0 ? ['--allow_running_as_root'] : [])]);
 
 const built = join(build, 'Release', 'libonnxruntime.so.1');
 if (!existsSync(built)) fail(`${built} wasn't built (see the output above)`);

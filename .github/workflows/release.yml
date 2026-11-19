@@ -44,6 +44,103 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  windows:
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.363.1
+          cache: true
+
+      - name: Restore llama.cpp
+        id: runtime
+        uses: actions/cache/restore@v6
+        with:
+          path: app/src-tauri/runtime/llama
+          key: runtime-windows-${{ hashFiles('app/scripts/build-llama.mjs') }}
+      - run: npm ci
+        working-directory: app
+      - run: npm run build:runtime
+        working-directory: app
+      - if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: app/src-tauri/runtime/llama
+          key: ${{ steps.runtime.outputs.cache-primary-key }}
+
+      - name: Build
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          rm -rf src-tauri/target/llama-build src-tauri/target/release/bundle
+          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/ci.conf.json"
+          npx tauri build --config "$RUNNER_TEMP/ci.conf.json"
+
+      - name: Collect
+        run: |
+          mkdir out
+          cp app/src-tauri/target/release/bundle/nsis/*-setup.exe{,.sig} out/
+          ls -l out
+
+      - name: Upload for signing
+        id: unsigned
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-unsigned
+          path: out/*-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign with SignPath
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+      - name: Sign the update again
+        if: env.SIGNPATH_API_TOKEN != ''
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for signed in signed/*-setup.exe; do
+            name=$(basename "$signed")
+            cp "$signed" "out/$name"
+            rm "out/$name.sig"
+            (cd app && npx tauri signer sign --app-version "$VERSION" "../out/$name")
+            test -f "out/$name.sig"
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mesa-windows
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
   macos:
     needs: version
     runs-on: macos-15
@@ -160,108 +257,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  windows:
-    needs: version
-    runs-on: windows-2025
-    timeout-minutes: 120
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
-      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app/src-tauri
-      - uses: jakoch/install-vulkan-sdk-action@v1
-        with:
-          vulkan_version: 1.4.363.1
-          cache: true
-
-      - name: Restore llama.cpp
-        id: runtime
-        uses: actions/cache/restore@v6
-        with:
-          path: app/src-tauri/runtime/llama
-          key: runtime-windows-${{ hashFiles('app/scripts/build-llama.mjs') }}
-      - run: npm ci
-        working-directory: app
-      - run: npm run build:runtime
-        working-directory: app
-      - if: steps.runtime.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: app/src-tauri/runtime/llama
-          key: ${{ steps.runtime.outputs.cache-primary-key }}
-
-      - name: Build
-        working-directory: app
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          rm -rf src-tauri/target/llama-build src-tauri/target/release/bundle
-          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/ci.conf.json"
-          npx tauri build --config "$RUNNER_TEMP/ci.conf.json"
-
-      - name: Collect
-        run: |
-          mkdir out
-          cp app/src-tauri/target/release/bundle/nsis/*-setup.exe{,.sig} out/
-          ls -l out
-
-      - name: Upload for signing
-        id: unsigned
-        if: env.SIGNPATH_API_TOKEN != ''
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-unsigned
-          path: out/*-setup.exe
-          if-no-files-found: error
-          retention-days: 1
-      - name: Sign with SignPath
-        if: env.SIGNPATH_API_TOKEN != ''
-        uses: signpath/github-action-submit-signing-request@v2
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
-          wait-for-completion: true
-          wait-for-completion-timeout-in-seconds: 3600
-          output-artifact-directory: signed
-      - name: Sign the update again
-        if: env.SIGNPATH_API_TOKEN != ''
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          for signed in signed/*-setup.exe; do
-            name=$(basename "$signed")
-            cp "$signed" "out/$name"
-            rm "out/$name.sig"
-            (cd app && npx tauri signer sign "../out/$name")
-            test -f "out/$name.sig"
-          done
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: mesa-windows
-          path: out/
-          if-no-files-found: error
-          retention-days: 7
-
   linux:
     needs: version
     runs-on: ubuntu-24.04
     container: ubuntu:22.04
-    timeout-minutes: 150
+    timeout-minutes: 240
     env:
       VERSION: ${{ needs.version.outputs.version }}
       APPIMAGE_EXTRACT_AND_RUN: 1
