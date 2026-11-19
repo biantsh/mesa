@@ -72,8 +72,13 @@ if (capture('git', ['-C', source, 'rev-parse', 'HEAD']) !== COMMIT) {
 }
 
 const parallel = String(buildJobs(cpus().length));
+const ctest = join(dirname(cmake), 'ctest');
+const local = [
+  ...(existsSync(ctest) ? ['--ctest_path', ctest] : []),
+  ...(process.getuid?.() === 0 ? ['--allow_running_as_root'] : []),
+];
 run('python3', [join(source, 'tools', 'ci_build', 'build.py'), '--build_dir', build, '--cmake_path', cmake,
-  '--parallel', parallel, '--update', '--build', ...flags, ...(process.getuid?.() === 0 ? ['--allow_running_as_root'] : [])]);
+  '--parallel', parallel, '--update', '--build', ...flags, ...local]);
 
 const built = join(build, 'Release', 'libonnxruntime.so.1');
 if (!existsSync(built)) fail(`${built} wasn't built (see the output above)`);
