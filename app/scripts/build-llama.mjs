@@ -58,7 +58,7 @@ const flags = [
     ? ['-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON', '-DCMAKE_INSTALL_RPATH=$ORIGIN']
     : []),
 ];
-const LAYOUT = process.platform === 'linux' ? 5 : 3;
+const LAYOUT = process.platform === 'linux' ? 5 : process.platform === 'darwin' ? 4 : 3;
 const signer = process.platform === 'darwin' ? process.env.APPLE_SIGNING_IDENTITY ?? '' : '';
 const stamp = `${TAG} ${COMMIT} ${backend} ${createHash('sha256').update(flags.join(' ')).digest('hex').slice(0, 12)} layout${LAYOUT}${signer ? ` signed:${createHash('sha256').update(signer).digest('hex').slice(0, 8)}` : ''}`;
 const stampFile = join(out, 'BUILD');
@@ -97,11 +97,16 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 const bin = [join(build, 'bin'), join(build, 'bin', 'Release')].find((dir) => existsSync(dir));
 if (!bin) fail(`nothing was built in ${build}\\bin`);
-const isSoname = (f) => !/\.so\.\d+\.\d+\.\d+$/.test(f) && !(/\.so$/.test(f) && lstatSync(join(bin, f)).isSymbolicLink());
+const isLink = (f) => lstatSync(join(bin, f)).isSymbolicLink();
+const loaded = process.platform === 'linux'
+  ? (f) => !/\.so\.\d+\.\d+\.\d+$/.test(f) && !(/\.so$/.test(f) && isLink(f))
+  : process.platform === 'darwin'
+    ? (f) => !/\.\d+\.\d+\.\d+\.dylib$/.test(f) && !(/^[^.]+\.dylib$/.test(f) && isLink(f))
+    : () => true;
 const files = readdirSync(bin).filter(
   (f) => (f === (isWindows ? 'llama-server.exe' : 'llama-server')
     || (/\.(dll|so|dylib)(\.|$)/.test(f) && !/^(lib)?llama-(?!server).*-impl\./.test(f)))
-    && (process.platform !== 'linux' || isSoname(f)),
+    && loaded(f),
 );
 if (!files.includes(isWindows ? 'llama-server.exe' : 'llama-server')) fail(`llama-server wasn't built (see the output above)`);
 files.forEach((f) => copyFileSync(join(bin, f), join(out, f)));
