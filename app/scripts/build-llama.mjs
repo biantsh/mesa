@@ -82,7 +82,7 @@ if (capture('git', ['-C', source, 'rev-parse', 'HEAD']) !== COMMIT) {
   run('git', ['-c', 'advice.detachedHead=false', '-c', 'core.autocrlf=false', 'clone', '--quiet', '--depth', '1',
     '--branch', TAG, 'https://github.com/ggml-org/llama.cpp', partial]);
   const head = capture('git', ['-C', partial, 'rev-parse', 'HEAD']);
-  if (head !== COMMIT) fail(`${TAG} of llama.cpp is at ${head}, not ${COMMIT}: the tag was moved (see this script's header)`);
+  if (head !== COMMIT) fail(`${TAG} of llama.cpp is at ${head}, not ${COMMIT}: the tag was moved`);
   rmSync(source, { recursive: true, force: true });
   renameSync(partial, source);
 }

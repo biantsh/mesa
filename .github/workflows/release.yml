@@ -1,0 +1,361 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: version
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [[ -z $TAURI_SIGNING_PRIVATE_KEY ]]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret isn't set, so the updates can't be signed."
+            exit 1
+          fi
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            version=$(node .github/scripts/release.mjs check "$GITHUB_REF_NAME")
+          else
+            version=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Import the signing certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+          identity=$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')
+          if [[ -z $identity ]]; then
+            echo "::error::APPLE_CERTIFICATE has no Developer ID Application certificate in it."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+      - name: Set up notarization
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [[ -n $API_KEY ]]; then
+            echo "$API_KEY" > "$RUNNER_TEMP/notarization.p8"
+            {
+              echo "APPLE_API_KEY=$API_KEY_ID"
+              echo "APPLE_API_ISSUER=$API_ISSUER"
+              echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/notarization.p8"
+            } >> "$GITHUB_ENV"
+          elif [[ -n $ID ]]; then
+            {
+              echo "APPLE_ID=$ID"
+              echo "APPLE_PASSWORD=$PASSWORD"
+              echo "APPLE_TEAM_ID=$TEAM_ID"
+            } >> "$GITHUB_ENV"
+          else
+            echo "::error::APPLE_CERTIFICATE is set, but neither APPLE_API_KEY nor APPLE_ID is, so the app can't be notarized."
+            exit 1
+          fi
+
+      - name: Restore llama.cpp
+        id: runtime
+        uses: actions/cache/restore@v6
+        with:
+          path: app/src-tauri/runtime/llama
+          key: runtime-macos-${{ env.APPLE_SIGNING_IDENTITY && 'signed' || 'adhoc' }}-${{ hashFiles('app/scripts/build-llama.mjs') }}
+      - run: npm ci
+        working-directory: app
+      - run: npm run build:runtime
+        working-directory: app
+      - if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: app/src-tauri/runtime/llama
+          key: ${{ steps.runtime.outputs.cache-primary-key }}
+
+      - name: Build
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          rm -rf src-tauri/target/llama-build src-tauri/target/release/bundle
+          node -e '
+            const config = { bundle: { createUpdaterArtifacts: true } };
+            if (process.env.APPLE_SIGNING_IDENTITY) config.bundle.macOS = { signingIdentity: process.env.APPLE_SIGNING_IDENTITY };
+            require("fs").writeFileSync(process.argv[1], JSON.stringify(config));
+          ' "$RUNNER_TEMP/ci.conf.json"
+          npx tauri build --config "$RUNNER_TEMP/ci.conf.json"
+
+      - name: Collect
+        run: |
+          bundle=app/src-tauri/target/release/bundle
+          mkdir out
+          cp "$bundle"/dmg/*.dmg out/
+          cp "$bundle/macos/Mesa.app.tar.gz" "out/Mesa_${VERSION}_aarch64.app.tar.gz"
+          cp "$bundle/macos/Mesa.app.tar.gz.sig" "out/Mesa_${VERSION}_aarch64.app.tar.gz.sig"
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mesa-macos
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    needs: version
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.363.1
+          cache: true
+
+      - name: Restore llama.cpp
+        id: runtime
+        uses: actions/cache/restore@v6
+        with:
+          path: app/src-tauri/runtime/llama
+          key: runtime-windows-${{ hashFiles('app/scripts/build-llama.mjs') }}
+      - run: npm ci
+        working-directory: app
+      - run: npm run build:runtime
+        working-directory: app
+      - if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: app/src-tauri/runtime/llama
+          key: ${{ steps.runtime.outputs.cache-primary-key }}
+
+      - name: Build
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          rm -rf src-tauri/target/llama-build src-tauri/target/release/bundle
+          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/ci.conf.json"
+          npx tauri build --config "$RUNNER_TEMP/ci.conf.json"
+
+      - name: Collect
+        run: |
+          mkdir out
+          cp app/src-tauri/target/release/bundle/nsis/*-setup.exe{,.sig} out/
+          ls -l out
+
+      - name: Upload for signing
+        id: unsigned
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-unsigned
+          path: out/*-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign with SignPath
+        if: env.SIGNPATH_API_TOKEN != ''
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+      - name: Sign the update again
+        if: env.SIGNPATH_API_TOKEN != ''
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          for signed in signed/*-setup.exe; do
+            name=$(basename "$signed")
+            cp "$signed" "out/$name"
+            rm "out/$name.sig"
+            (cd app && npx tauri signer sign "../out/$name")
+            test -f "out/$name.sig"
+          done
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mesa-windows
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    timeout-minutes: 150
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      APPIMAGE_EXTRACT_AND_RUN: 1
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install the build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git python3 build-essential pkg-config file xz-utils binutils patchelf \
+            libwebkit2gtk-4.1-dev librsvg2-dev libssl-dev libayatana-appindicator3-dev libheif-dev libvulkan-dev libgomp1 \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Restore llama.cpp and ONNX Runtime
+        id: runtime
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            app/src-tauri/runtime/llama
+            app/src-tauri/runtime/onnxruntime
+          key: runtime-linux-${{ hashFiles('app/scripts/build-llama.mjs', 'app/scripts/build-onnxruntime.mjs', 'app/scripts/linux-tools.mjs') }}
+      - run: npm ci
+        working-directory: app
+      - run: npm run build:runtime
+        working-directory: app
+      - if: steps.runtime.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            app/src-tauri/runtime/llama
+            app/src-tauri/runtime/onnxruntime
+          key: ${{ steps.runtime.outputs.cache-primary-key }}
+
+      - name: Build
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          rm -rf src-tauri/target/llama-build src-tauri/target/onnxruntime-build src-tauri/target/release/bundle
+          echo '{"bundle":{"createUpdaterArtifacts":true}}' > "$RUNNER_TEMP/ci.conf.json"
+          npx tauri build --config "$RUNNER_TEMP/ci.conf.json"
+
+      - name: Collect
+        run: |
+          bundle=app/src-tauri/target/release/bundle
+          mkdir out
+          cp "$bundle"/deb/*.deb{,.sig} "$bundle"/rpm/*.rpm{,.sig} "$bundle"/appimage/*.AppImage{,.sig} out/
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mesa-linux
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: [version, macos, windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mesa-*
+          path: dist
+          merge-multiple: true
+      - run: node .github/scripts/release.mjs manifest "$GITHUB_REF_NAME" dist
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm dist/*.sig
+          ls -l dist
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            flags=(--draft --verify-tag --title "Mesa ${GITHUB_REF_NAME#v}" --notes-file notes.md)
+            if [[ $GITHUB_REF_NAME == *-* ]]; then flags+=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" "${flags[@]}"
+          fi
