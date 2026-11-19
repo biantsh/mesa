@@ -8,6 +8,11 @@ import { buildJobs, cmake as findCmake } from './linux-tools.mjs';
 
 const TAG = 'v1.31.0';
 const COMMIT = '402979ac1bef89dcd55add41eaa7277c407599eb';
+const SOURCES = [
+  'https://github.com/microsoft/onnxruntime',
+  'https://github.com/ossia/onnxruntime',
+  'https://github.com/Krozark/onnxruntime',
+];
 const CMAKE_MINIMUM = [3, 28];
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -51,11 +56,17 @@ console.log(`build-onnxruntime: building ONNX Runtime ${TAG} with WebGPU (about 
 mkdirSync(work, { recursive: true });
 if (capture('git', ['-C', source, 'rev-parse', 'HEAD']) !== COMMIT) {
   const partial = `${source}.partial`;
-  rmSync(partial, { recursive: true, force: true });
-  run('git', ['-c', 'advice.detachedHead=false', 'clone', '--quiet', '--depth', '1', '--branch', TAG,
-    'https://github.com/microsoft/onnxruntime', partial]);
-  const head = capture('git', ['-C', partial, 'rev-parse', 'HEAD']);
-  if (head !== COMMIT) fail(`${TAG} of ONNX Runtime is at ${head}, not ${COMMIT}: the tag was moved (see this script's header)`);
+  const problems = [];
+  for (const url of SOURCES) {
+    rmSync(partial, { recursive: true, force: true });
+    const clone = spawnSync('git', ['-c', 'advice.detachedHead=false', 'clone', '--quiet', '--depth', '1', '--branch', TAG, url, partial],
+      { stdio: ['ignore', 'inherit', 'inherit'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    const head = clone.status === 0 ? capture('git', ['-C', partial, 'rev-parse', 'HEAD']) : '';
+    if (head === COMMIT) break;
+    problems.push(head ? `${url} has ${TAG} at ${head}, not ${COMMIT}` : `${url} couldn't be cloned`);
+    console.log(`build-onnxruntime: ${problems.at(-1)}`);
+  }
+  if (problems.length === SOURCES.length) fail(`no copy of ONNX Runtime ${TAG} could be used:\n  ${problems.join('\n  ')}`);
   rmSync(source, { recursive: true, force: true });
   renameSync(partial, source);
 }
