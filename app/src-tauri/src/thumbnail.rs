@@ -845,7 +845,7 @@ mod freedesktop {
         if crate::embed::RAW_EXTENSIONS.contains(&extension.as_str()) {
             return fit(from_rgb(crate::embed::raw_photo(file).ok()?)?, size);
         }
-        if crate::browse::category_of(path) == Some(crate::browse::Category::Video) {
+        if crate::browse::category_of(&file.to_string_lossy()) == Some(crate::browse::Category::Video) {
             return fit(from_rgb(crate::embed::gstreamer::preview_frame(file)?)?, size);
         }
         if !PICTURES.contains(&extension.as_str()) {

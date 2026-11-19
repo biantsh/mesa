@@ -94,6 +94,7 @@ fn asks_password(app: &AppHandle) -> bool {
                 .env()
                 .appimage
                 .as_deref()
+                .map(Path::new)
                 .and_then(Path::parent)
                 .is_some_and(|folder| !writable(folder)),
         }
