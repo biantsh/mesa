@@ -4340,6 +4340,7 @@ dependencies = [
  "base64 0.22.1",
  "block2",
  "crossbeam-channel",
+ "dirs 7.0.0",
  "docxide-pdf",
  "encoding_rs",
  "fast_image_resize",

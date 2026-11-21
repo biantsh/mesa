@@ -21,6 +21,7 @@ mod highlight;
 mod hotkey;
 mod index;
 mod indexer;
+mod instance;
 mod iwork_read;
 mod main_window;
 mod matches;
@@ -146,6 +147,21 @@ fn main() {
     if embed::watchdog::run_if_asked() {
         return;
     }
+    let context = tauri::generate_context!();
+    let data_dir = startup::data_dir(&context.config().identifier);
+    let claim = match data_dir.as_deref() {
+        None => Some(instance::Claim::default()),
+        Some(dir) => match instance::claim(dir) {
+            instance::Launch::First(claim) => Some(claim),
+            #[cfg(target_os = "macos")]
+            instance::Launch::Later => {
+                instance::hand_over(dir, &startup::arguments());
+                return;
+            }
+            #[cfg(not(target_os = "macos"))]
+            instance::Launch::Later => None,
+        },
+    };
     main_window::keep_hidden_at_start(startup::starts_without_window());
     let previews = thumbnail::PreviewServer::start();
     std::thread::spawn(|| {
@@ -155,17 +171,11 @@ fn main() {
     let kept_previews = previews.clone();
     let managed_previews = previews.clone();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // On Wayland, a custom shortcut runs `mesa-app --search` to toggle the widget.
-            if startup::wants_search(&args) && cfg!(target_os = "linux") {
-                widget::toggle(app);
-            } else if startup::wants_search(&args) {
-                widget::show(app);
-            } else if !startup::in_background(&args) {
-                main_window::show(app);
-            }
-        }))
+    let builder = tauri::Builder::default();
+    #[cfg(not(target_os = "macos"))]
+    let builder =
+        builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| startup::another_launch(app, &args)));
+    builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -201,10 +211,10 @@ fn main() {
             #[cfg(target_os = "linux")]
             page_scale::watch();
             main_window::fit_to_page_scale(app);
-            let dir = match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
-                Some(dir) => std::path::PathBuf::from(dir),
-                None => app.path().app_data_dir()?,
+            let Some(claim) = claim else {
+                std::process::exit(0);
             };
+            let dir = data_dir.ok_or("Couldn't find the folder for Mesa's data.")?;
             if update::just_updated(&dir) {
                 main_window::keep_hidden_at_start(false);
             }
@@ -245,6 +255,7 @@ fn main() {
             system_menu::install(app.handle());
             main_window::show_if_the_page_does_not(app);
             update::start(app.handle());
+            app.resources_table().add(claim.ready(app.handle(), &dir));
             Ok(())
         })
         .manage(managed_previews)
@@ -320,7 +331,7 @@ fn main() {
             commands::install_update,
             commands::set_check_for_updates,
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application")
         .run(|app, event| match event {
             #[cfg(target_os = "macos")]

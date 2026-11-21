@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use tauri::AppHandle;
 #[cfg(not(target_os = "linux"))]
 use tauri_plugin_autostart::ManagerExt;
@@ -6,6 +8,23 @@ use crate::settings::{Settings, SettingsStore};
 
 pub const BACKGROUND_ARG: &str = "--background";
 pub const SEARCH_ARG: &str = "--search";
+
+pub fn data_dir(identifier: &str) -> Option<PathBuf> {
+    match std::env::var_os("MESA_DATA_DIR").filter(|dir| !dir.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None => dirs::data_dir().map(|dir| dir.join(identifier)),
+    }
+}
+
+pub fn another_launch(app: &AppHandle, args: &[String]) {
+    if wants_search(args) && cfg!(target_os = "linux") {
+        crate::widget::toggle(app);
+    } else if wants_search(args) {
+        crate::widget::show(app);
+    } else if !in_background(args) {
+        crate::main_window::show(app);
+    }
+}
 
 pub fn arguments() -> Vec<String> {
     std::env::args().collect()
