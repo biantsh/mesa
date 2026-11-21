@@ -172,7 +172,7 @@ pub fn set(app: &AppHandle, settings: &SettingsStore, on: bool) -> Result<(), St
 }
 
 fn register(app: &AppHandle, turn_on: bool) -> Result<(), String> {
-    let failed = |e: String| format!("Couldn't make Mesa launch at startup. {e}");
+    let failed = |e: String| format!("Couldn't make Mesa launch on startup. {e}");
     #[cfg(target_os = "macos")]
     {
         let _ = (app, failed);
@@ -190,7 +190,7 @@ fn register(app: &AppHandle, turn_on: bool) -> Result<(), String> {
 }
 
 fn unregister(app: &AppHandle) -> Result<(), String> {
-    let failed = |e: String| format!("Couldn't stop Mesa launching at startup. {e}");
+    let failed = |e: String| format!("Couldn't stop Mesa launching on startup. {e}");
     #[cfg(target_os = "macos")]
     {
         let _ = (app, failed);
@@ -241,10 +241,10 @@ mod macos {
                 if open_settings {
                     AppService::open_system_settings_login_items();
                 }
-                Err("Turn Mesa on in System Settings, under Login Items > Allow in the Background, to have it launch at startup.".into())
+                Err("Turn Mesa on in System Settings, under Login Items > Allow in the Background, to have it launch on startup.".into())
             }
             _ => Err(format!(
-                "Couldn't make Mesa launch at startup. {}",
+                "Couldn't make Mesa launch on startup. {}",
                 result.err().map_or_else(
                     || "macOS didn't add it to the Login Items.".to_owned(),
                     |e| e.to_string()
@@ -258,7 +258,7 @@ mod macos {
         let result = service.unregister();
         match service.status() {
             ServiceStatus::Enabled => Err(format!(
-                "Couldn't stop Mesa launching at startup. {}",
+                "Couldn't stop Mesa launching on startup. {}",
                 result
                     .err()
                     .map_or_else(|| "macOS kept it in the Login Items.".to_owned(), |e| e.to_string())

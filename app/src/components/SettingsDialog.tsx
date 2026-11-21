@@ -56,7 +56,7 @@ export function SettingsDialog({ open, onClose, update, onOpenUpdate }: Props) {
                 <UnavailableSignInRow />
               ) : (
                 <SwitchRow
-                  title="Launch at startup"
+                  title="Launch on startup"
                   description="Automatically launch the app in the background."
                   {...signIn}
                 />
@@ -172,7 +172,7 @@ function SwitchRow({ title, description, enabled, pending, error, change }: { ti
 function UnavailableSignInRow() {
   return (
     <Row
-      title="Launch at startup"
+      title="Launch on startup"
       note="Currently not available on macOS."
       disabled
       control={(ids) => <Switch checked={false} disabled onChange={() => {}} {...ids} />}
