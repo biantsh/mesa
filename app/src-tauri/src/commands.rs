@@ -803,8 +803,11 @@ pub fn end_hotkey_recording(app: AppHandle, hotkey: State<'_, Hotkey>) {
 }
 
 #[tauri::command]
-pub fn page_painted(window: tauri::WebviewWindow) {
+pub fn page_painted(window: tauri::WebviewWindow, background: Option<[u8; 3]>) {
     if window.label() == "main" {
+        if let Some([r, g, b]) = background {
+            let _ = window.set_background_color(Some(tauri::window::Color(r, g, b, 255)));
+        }
         crate::main_window::show_at_start(&window);
     }
 }

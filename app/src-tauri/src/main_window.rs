@@ -89,23 +89,26 @@ pub fn set_up_dock(app: &mut tauri::App) {
     let _ = app;
 }
 
-fn bring_up(window: &WebviewWindow) {
+fn bring_up(window: &WebviewWindow, first: bool) {
     let was_closed = RESET_ON_SHOW.swap(false, Ordering::SeqCst);
     if was_closed {
         reset(window);
     }
+    let unpainted = was_closed || first;
     dock_icon(window.app_handle(), true);
     #[cfg(target_os = "macos")]
-    if was_closed {
+    if unpainted {
         hide_until_painted(window);
     }
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
     #[cfg(target_os = "macos")]
-    if was_closed {
+    if unpainted {
         let _ = window.emit_to(window.label(), SHOWN_EVENT, ());
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = unpainted;
 }
 
 #[cfg(target_os = "macos")]
@@ -142,7 +145,7 @@ fn set_alpha(window: &WebviewWindow, alpha: f64) {
 
 pub fn show_at_start(window: &WebviewWindow) {
     if !KEEP_HIDDEN.load(Ordering::SeqCst) && !SHOWN_ONCE.swap(true, Ordering::SeqCst) {
-        bring_up(window);
+        bring_up(window, true);
     }
 }
 
@@ -153,7 +156,7 @@ pub fn show(app: &AppHandle) {
     KEEP_HIDDEN.store(false, Ordering::SeqCst);
     SHOWN_ONCE.store(true, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(LABEL) {
-        bring_up(&window);
+        bring_up(&window, false);
     }
 }
 

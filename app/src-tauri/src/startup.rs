@@ -7,6 +7,8 @@ use tauri_plugin_autostart::ManagerExt;
 use crate::settings::{Settings, SettingsStore};
 
 pub const BACKGROUND_ARG: &str = "--background";
+// Temporary: macOS kills an ad-hoc signed app's sign-in entry after every update, so starting at sign-in stays off on macOS until Mesa is signed with a Developer ID.
+const AVAILABLE: bool = !cfg!(target_os = "macos");
 pub const SEARCH_ARG: &str = "--search";
 
 pub fn data_dir(identifier: &str) -> Option<PathBuf> {
@@ -96,9 +98,13 @@ fn at_start_does(made: bool, kept: bool, system: Option<bool>) -> AtStart {
 }
 
 pub fn at_start(app: &AppHandle, settings: &SettingsStore) {
-    #[cfg(target_os = "macos")]
-    if can_change() {
-        macos::move_from_main_app();
+    if !AVAILABLE {
+        #[cfg(target_os = "macos")]
+        if can_change() {
+            let _ = app.autolaunch().disable();
+            macos::remove_entries();
+        }
+        return;
     }
     let kept = settings.get();
     let does = at_start_does(kept.sign_in_entry_made, kept.start_at_sign_in, system_says(app));
@@ -143,6 +149,9 @@ pub fn current(app: &AppHandle, settings: &SettingsStore) -> Settings {
 }
 
 pub fn set(app: &AppHandle, settings: &SettingsStore, on: bool) -> Result<(), String> {
+    if !AVAILABLE {
+        return Err("Currently not available on macOS.".into());
+    }
     let changes = can_change();
     if changes {
         if on { register(app, true)? } else { unregister(app)? }
@@ -163,7 +172,7 @@ pub fn set(app: &AppHandle, settings: &SettingsStore, on: bool) -> Result<(), St
 }
 
 fn register(app: &AppHandle, turn_on: bool) -> Result<(), String> {
-    let failed = |e: String| format!("Couldn't make Mesa start when you sign in. {e}");
+    let failed = |e: String| format!("Couldn't make Mesa launch at startup. {e}");
     #[cfg(target_os = "macos")]
     {
         let _ = (app, failed);
@@ -181,7 +190,7 @@ fn register(app: &AppHandle, turn_on: bool) -> Result<(), String> {
 }
 
 fn unregister(app: &AppHandle) -> Result<(), String> {
-    let failed = |e: String| format!("Couldn't stop Mesa starting when you sign in. {e}");
+    let failed = |e: String| format!("Couldn't stop Mesa launching at startup. {e}");
     #[cfg(target_os = "macos")]
     {
         let _ = (app, failed);
@@ -207,10 +216,15 @@ mod macos {
         AppService::new(ServiceType::Agent { plist_name: AGENT_PLIST })
     }
 
-    pub fn move_from_main_app() {
+    pub fn remove_entries() {
         let old = AppService::new(ServiceType::MainApp);
-        if old.status() == ServiceStatus::Enabled && old.unregister().is_ok() && !is_on() {
-            let _ = register(false);
+        if old.status() == ServiceStatus::Enabled {
+            let _ = old.unregister();
+        }
+        if is_on()
+            && let Err(e) = unregister()
+        {
+            eprintln!("Mesa: {e}");
         }
     }
 
@@ -227,10 +241,10 @@ mod macos {
                 if open_settings {
                     AppService::open_system_settings_login_items();
                 }
-                Err("Turn Mesa on in System Settings, under Login Items > Allow in the Background, to have it start when you sign in.".into())
+                Err("Turn Mesa on in System Settings, under Login Items > Allow in the Background, to have it launch at startup.".into())
             }
             _ => Err(format!(
-                "Couldn't make Mesa start when you sign in. {}",
+                "Couldn't make Mesa launch at startup. {}",
                 result.err().map_or_else(
                     || "macOS didn't add it to the Login Items.".to_owned(),
                     |e| e.to_string()
@@ -244,7 +258,7 @@ mod macos {
         let result = service.unregister();
         match service.status() {
             ServiceStatus::Enabled => Err(format!(
-                "Couldn't stop Mesa starting when you sign in. {}",
+                "Couldn't stop Mesa launching at startup. {}",
                 result
                     .err()
                     .map_or_else(|| "macOS kept it in the Login Items.".to_owned(), |e| e.to_string())

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
 import { api } from "./api";
+import { platform } from "./platform";
 
 export function currentWindow(): Window | null {
   try {
@@ -40,11 +41,19 @@ export const windowControls = {
 };
 
 export function showWhenPainted() {
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => {
-      if (currentWindow()) void api.pagePainted().catch(() => {});
-    }),
-  );
+  if (!currentWindow()) return;
+  if (platform !== "windows") {
+    void api.pagePainted(pageBackground()).catch(() => {});
+    return;
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => void api.pagePainted(null).catch(() => {})));
+}
+
+function pageBackground(): [number, number, number] | null {
+  const hex = /^#([0-9a-f]{6})$/i.exec(getComputedStyle(document.documentElement).getPropertyValue("--color-bg").trim());
+  if (!hex) return null;
+  const value = parseInt(hex[1], 16);
+  return [value >> 16, (value >> 8) & 255, value & 255];
 }
 
 export function useBlockContextMenu() {

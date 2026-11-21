@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cx } from "../cx";
 import { modifierLabels, keyLabel } from "../hotkey";
-import { isWebKit, platform } from "../platform";
+import { isMac, isWebKit, platform } from "../platform";
 import type { HotkeyParts } from "../api";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useSearchHotkey } from "../useSearchHotkey";
@@ -52,11 +52,15 @@ export function SettingsDialog({ open, onClose, update, onOpenUpdate }: Props) {
           <div className={styles.body}>
             <Group title="General">
               <ThemeRow />
-              <SwitchRow
-                title="Start when you sign in"
-                description="Automatically launch the app in the background."
-                {...signIn}
-              />
+              {isMac ? (
+                <UnavailableSignInRow />
+              ) : (
+                <SwitchRow
+                  title="Launch at startup"
+                  description="Automatically launch the app in the background."
+                  {...signIn}
+                />
+              )}
             </Group>
             <Group title="Updates">
               <VersionRow {...update} onOpenUpdate={onOpenUpdate} />
@@ -162,6 +166,17 @@ function SwitchRow({ title, description, enabled, pending, error, change }: { ti
       />
       <SettingError error={error} />
     </>
+  );
+}
+
+function UnavailableSignInRow() {
+  return (
+    <Row
+      title="Launch at startup"
+      note="Currently not available on macOS."
+      disabled
+      control={(ids) => <Switch checked={false} disabled onChange={() => {}} {...ids} />}
+    />
   );
 }
 
