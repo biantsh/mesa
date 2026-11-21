@@ -558,6 +558,27 @@
   white-space: nowrap;
 }
 
+.typeSlot {
+  display: grid;
+  justify-items: start;
+  align-items: center;
+}
+
+.typeSlot > *,
+.typeSizer > * {
+  grid-area: 1 / 1;
+}
+
+.typeSizer {
+  display: grid;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.typeSizer > .token {
+  animation: none;
+}
+
 .parsedText {
   display: block;
   color: var(--color-text);
@@ -731,6 +752,7 @@
   align-items: stretch;
   gap: var(--gap);
   height: var(--field-height);
+  will-change: transform;
   transition:
     opacity calc(var(--focus-time) * 0.55) ease calc(var(--focus-time) * 0.35),
     transform calc(var(--focus-time) * 0.7) var(--focus-ease) calc(var(--focus-time) * 0.35);

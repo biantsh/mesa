@@ -20,27 +20,29 @@ static HAS_HAD_FOCUS: AtomicBool = AtomicBool::new(false);
 const TOP_AT: f64 = 0.14;
 static SHOWN: AtomicBool = AtomicBool::new(false);
 static PICKING: AtomicBool = AtomicBool::new(false);
-static VISIBLE: Mutex<Option<[f64; 4]>> = Mutex::new(None);
+static VISIBLE: Mutex<Option<Vec<[f64; 4]>>> = Mutex::new(None);
 
 #[cfg(target_os = "macos")]
 static FRAME: Mutex<Option<[f64; 4]>> = Mutex::new(None);
 static WATCH: AtomicU64 = AtomicU64::new(0);
 const WATCH_EVERY: Duration = Duration::from_millis(16);
 
-pub fn set_visible_box(window: &WebviewWindow, rect: [f64; 4]) {
-    *lock(&VISIBLE) = Some(rect);
+pub fn set_visible_boxes(window: &WebviewWindow, boxes: Vec<[f64; 4]>) {
+    *lock(&VISIBLE) = Some(boxes.clone());
     #[cfg(target_os = "linux")]
     if SHOWN.load(Ordering::SeqCst) {
-        input_region(window, Some(rect));
+        input_region(window, Some(boxes));
     }
+    #[cfg(not(target_os = "linux"))]
+    let _ = boxes;
     #[cfg(not(target_os = "linux"))]
     let _ = window;
 }
 
 #[cfg(target_os = "linux")]
-fn input_region(window: &WebviewWindow, rect: Option<[f64; 4]>) {
+fn input_region(window: &WebviewWindow, boxes: Option<Vec<[f64; 4]>>) {
     let scale = crate::page_scale::factor();
-    let rect = rect.map(|box_| box_.map(|side| side * scale));
+    let boxes = boxes.map(|boxes| boxes.into_iter().map(|box_| box_.map(|side| side * scale)).collect::<Vec<_>>());
     let on_window = window.clone();
     let _ = window.run_on_main_thread(move || {
         use gtk::{
@@ -49,19 +51,22 @@ fn input_region(window: &WebviewWindow, rect: Option<[f64; 4]>) {
         };
         let Ok(gtk_window) = on_window.gtk_window() else { return };
         let Some(surface) = gtk_window.window() else { return };
-        let rectangle = match rect {
-            Some([left, top, right, bottom]) => {
-                let (left, top) = (left.floor() as i32, top.floor() as i32);
-                RectangleInt::new(
-                    left,
-                    top,
-                    (right.ceil() as i32 - left).max(0),
-                    (bottom.ceil() as i32 - top).max(0),
-                )
-            }
-            None => RectangleInt::new(0, 0, i32::MAX / 2, i32::MAX / 2),
+        let rectangles: Vec<RectangleInt> = match boxes {
+            Some(boxes) => boxes
+                .into_iter()
+                .map(|[left, top, right, bottom]| {
+                    let (left, top) = (left.floor() as i32, top.floor() as i32);
+                    RectangleInt::new(
+                        left,
+                        top,
+                        (right.ceil() as i32 - left).max(0),
+                        (bottom.ceil() as i32 - top).max(0),
+                    )
+                })
+                .collect(),
+            None => vec![RectangleInt::new(0, 0, i32::MAX / 2, i32::MAX / 2)],
         };
-        surface.input_shape_combine_region(&Region::create_rectangle(&rectangle), 0, 0);
+        surface.input_shape_combine_region(&Region::create_rectangles(&rectangles), 0, 0);
     });
 }
 
@@ -81,6 +86,11 @@ fn page_place_on_mac(mouse: (f64, f64), frame: [f64; 4]) -> (f64, f64) {
 
 fn in_box(at: (f64, f64), rect: [f64; 4]) -> bool {
     at.0 >= rect[0] && at.0 <= rect[2] && at.1 >= rect[1] && at.1 <= rect[3]
+}
+
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+fn in_any_box(at: (f64, f64), boxes: &[[f64; 4]]) -> bool {
+    boxes.iter().any(|&rect| in_box(at, rect))
 }
 
 #[cfg(target_os = "macos")]
@@ -110,8 +120,8 @@ fn watch_pointer(app: &AppHandle, watch: u64) {
         let Some(at) = pointer_in_page(app, &window) else {
             continue;
         };
-        let over_it = match *lock(&VISIBLE) {
-            Some(rect) => in_box(at, rect),
+        let over_it = match &*lock(&VISIBLE) {
+            Some(boxes) => in_any_box(at, boxes),
             None => true,
         };
         if over_it == letting_through && WATCH.load(Ordering::SeqCst) == watch {
@@ -334,5 +344,14 @@ mod tests {
     fn fits_short_screen() {
         assert_eq!(position((0, 0), (1280, 600), (900, 560)), (190, 40));
         assert_eq!(position((0, 0), (800, 480), (900, 560)), (0, 0));
+    }
+
+    #[test]
+    fn takes_the_pointer_over_a_popup_below_the_bar() {
+        let boxes = [[100.0, 20.0, 900.0, 140.0], [120.0, 130.0, 320.0, 390.0]];
+        assert!(in_any_box((500.0, 80.0), &boxes));
+        assert!(in_any_box((200.0, 320.0), &boxes));
+        assert!(!in_any_box((600.0, 320.0), &boxes));
+        assert!(!in_any_box((50.0, 80.0), &boxes));
     }
 }

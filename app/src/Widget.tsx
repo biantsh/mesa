@@ -7,7 +7,7 @@ import { useIndexState } from "./useIndexState";
 import { useModelStatus } from "./useModelStatus";
 import { useTauriEvent } from "./useTauriEvent";
 import { useBlockContextMenu } from "./window";
-import { reportVisibleBox } from "./widgetBox";
+import { reportVisibleBoxes } from "./widgetBox";
 import styles from "./Widget.module.css";
 
 export default function Widget() {
@@ -52,7 +52,7 @@ export default function Widget() {
 
   useEffect(() => {
     if (!there) return;
-    return reportVisibleBox((box) => void api.setWidgetBox(...box).catch(() => {}));
+    return reportVisibleBoxes((boxes) => void api.setWidgetBoxes(boxes).catch(() => {}));
   }, [there]);
 
   useEffect(() => {

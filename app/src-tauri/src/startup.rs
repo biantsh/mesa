@@ -25,18 +25,12 @@ pub fn in_background(args: &[String]) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub fn launched_at_sign_in() -> bool {
-    use objc2::{msg_send, rc::Retained};
-    use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
-    const KEY_AE_PROP_DATA: u32 = u32::from_be_bytes(*b"prop");
-    const KEY_AE_LAUNCHED_AS_LOG_IN_ITEM: u32 = u32::from_be_bytes(*b"lgit");
-    let manager = NSAppleEventManager::sharedAppleEventManager();
-    let Some(event) = manager.currentAppleEvent() else {
-        return false;
-    };
-    let data: Option<Retained<NSAppleEventDescriptor>> =
-        unsafe { msg_send![&event, paramDescriptorForKeyword: KEY_AE_PROP_DATA] };
-    data.is_some_and(|data| data.enumCodeValue() == KEY_AE_LAUNCHED_AS_LOG_IN_ITEM)
+pub fn stay_out_of_relaunch_at_login() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm).disableRelaunchOnLogin();
+    }
 }
 
 fn can_change() -> bool {
@@ -83,6 +77,10 @@ fn at_start_does(made: bool, kept: bool, system: Option<bool>) -> AtStart {
 }
 
 pub fn at_start(app: &AppHandle, settings: &SettingsStore) {
+    #[cfg(target_os = "macos")]
+    if can_change() {
+        macos::move_from_main_app();
+    }
     let kept = settings.get();
     let does = at_start_does(kept.sign_in_entry_made, kept.start_at_sign_in, system_says(app));
     if does == AtStart::Nothing {
@@ -184,8 +182,17 @@ fn unregister(app: &AppHandle) -> Result<(), String> {
 mod macos {
     use smappservice_rs::{AppService, ServiceStatus, ServiceType};
 
+    const AGENT_PLIST: &str = "com.mesa.desktop.agent.plist";
+
     fn service() -> AppService {
-        AppService::new(ServiceType::MainApp)
+        AppService::new(ServiceType::Agent { plist_name: AGENT_PLIST })
+    }
+
+    pub fn move_from_main_app() {
+        let old = AppService::new(ServiceType::MainApp);
+        if old.status() == ServiceStatus::Enabled && old.unregister().is_ok() && !is_on() {
+            let _ = register(false);
+        }
     }
 
     pub fn is_on() -> bool {
@@ -201,7 +208,7 @@ mod macos {
                 if open_settings {
                     AppService::open_system_settings_login_items();
                 }
-                Err("Turn Mesa on in System Settings, under Login Items, to have it start when you sign in.".into())
+                Err("Turn Mesa on in System Settings, under Login Items > Allow in the Background, to have it start when you sign in.".into())
             }
             _ => Err(format!(
                 "Couldn't make Mesa start when you sign in. {}",

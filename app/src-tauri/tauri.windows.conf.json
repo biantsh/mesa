@@ -4,6 +4,12 @@
     "beforeBundleCommand": "node scripts/copy-ocr-runtime.mjs"
   },
   "bundle": {
-    "resources": { "runtime/ocr/": "" }
+    "resources": { "runtime/ocr/": "" },
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico"
+      }
+    }
   }
 }

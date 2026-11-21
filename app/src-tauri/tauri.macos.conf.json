@@ -34,6 +34,11 @@
   },
   "bundle": {
     "targets": ["app", "dmg"],
-    "macOS": { "minimumSystemVersion": "13.0", "signingIdentity": "-", "entitlements": "Entitlements.plist" }
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
+      "files": { "Library/LaunchAgents/com.mesa.desktop.agent.plist": "macos/com.mesa.desktop.agent.plist" }
+    }
   }
 }

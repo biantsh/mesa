@@ -197,9 +197,7 @@ fn main() {
         })
         .setup(move |app| {
             #[cfg(target_os = "macos")]
-            if startup::launched_at_sign_in() {
-                main_window::keep_hidden_at_start(true);
-            }
+            startup::stay_out_of_relaunch_at_login();
             #[cfg(target_os = "linux")]
             page_scale::watch();
             main_window::fit_to_page_scale(app);
@@ -315,7 +313,7 @@ fn main() {
             commands::example_progress,
             commands::open_main,
             commands::show_main,
-            commands::set_widget_box,
+            commands::set_widget_boxes,
             commands::widget_fills_screen,
             commands::update_status,
             commands::check_for_updates,

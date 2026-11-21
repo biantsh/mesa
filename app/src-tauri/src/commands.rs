@@ -853,9 +853,9 @@ pub fn open_main(app: AppHandle, screen: String) {
 }
 
 #[tauri::command]
-pub fn set_widget_box(window: tauri::WebviewWindow, left: f64, top: f64, right: f64, bottom: f64) {
+pub fn set_widget_boxes(window: tauri::WebviewWindow, boxes: Vec<[f64; 4]>) {
     if window.label() == crate::widget::LABEL {
-        crate::widget::set_visible_box(&window, [left, top, right, bottom]);
+        crate::widget::set_visible_boxes(&window, boxes);
     }
 }
 

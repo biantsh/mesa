@@ -3,6 +3,15 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - app/package-lock.json
+      - app/src-tauri/Cargo.lock
+      - app/scripts/build-*.mjs
+      - app/scripts/linux-tools.mjs
+  schedule:
+    - cron: '17 3 * * 1,4'
   workflow_dispatch:
     inputs:
       platform:
@@ -57,7 +66,7 @@ jobs:
     timeout-minutes: 120
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_API_TOKEN: ${{ (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && secrets.SIGNPATH_API_TOKEN || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -193,7 +202,7 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
 
       - name: Set up notarization
-        if: env.APPLE_CERTIFICATE != ''
+        if: env.APPLE_CERTIFICATE != '' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
         env:
           API_KEY: ${{ secrets.APPLE_API_KEY }}
           API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}

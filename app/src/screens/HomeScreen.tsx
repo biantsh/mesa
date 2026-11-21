@@ -163,6 +163,21 @@ function Token({ icon, ghost, open, label, className, tooltip, onPress, children
   );
 }
 
+const TYPE_SIZER = (
+  <span className={styles.typeSizer} aria-hidden>
+    <span className={cx(styles.token, styles.ghost)}>Any type</span>
+    {(Object.keys(CATEGORY_LABELS) as Category[]).map((type) => {
+      const Icon = CATEGORY_ICONS[type];
+      return (
+        <span key={type} className={styles.token}>
+          <Icon size={12} aria-hidden />
+          {CATEGORY_LABELS[type]}
+        </span>
+      );
+    })}
+  </span>
+);
+
 let measuring: CanvasRenderingContext2D | null | undefined;
 const measuringContext = () => (measuring === undefined ? (measuring = document.createElement("canvas").getContext("2d")) : measuring);
 
@@ -302,7 +317,8 @@ function Understanding({ understood, indexedTypes, query, examples, examplesProg
     <div className={cx(styles.parsed, examples.length > 0 && styles.parsedWithFiles)}>
       <div>
         <div className={styles.parsedLabel}>File type</div>
-        <div className={styles.parsedValue}>
+        <div className={cx(styles.parsedValue, styles.typeSlot)}>
+          {TYPE_SIZER}
           {understood.fileType && TypeIcon ? (
             <Token icon={<TypeIcon size={12} aria-hidden />} open={open?.what === "type"} label="Change the file type" onPress={press("type")}>
               {CATEGORY_LABELS[understood.fileType]}
@@ -888,7 +904,8 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       onPointerDown={
         asWidget && onDismiss
           ? (e) => {
-              const box = home.current?.querySelector(`.${styles.spot}`)?.getBoundingClientRect();
+              if (!home.current?.contains(e.target as Node)) return;
+              const box = home.current.querySelector(`.${styles.spot}`)?.getBoundingClientRect();
               if (!results && box && (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom)) onDismiss();
             }
           : undefined

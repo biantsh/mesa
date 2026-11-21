@@ -392,7 +392,7 @@ export const api = {
   prepareExample: (path: string) => invoke<void>("prepare_example", { path }),
   exampleProgress: (paths: string[]) => invoke<(ExampleProgress | null)[]>("example_progress", { paths }),
   openMain: (screen: "index" | "settings") => invoke<void>("open_main", { screen }),
-  setWidgetBox: (left: number, top: number, right: number, bottom: number) => invoke<void>("set_widget_box", { left, top, right, bottom }),
+  setWidgetBoxes: (boxes: [number, number, number, number][]) => invoke<void>("set_widget_boxes", { boxes }),
   widgetFillsScreen: () => invoke<boolean>("widget_fills_screen"),
   showMain: () => invoke<void>("show_main"),
 };
