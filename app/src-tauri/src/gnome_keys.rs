@@ -1,8 +1,6 @@
 //! GNOME before 48 has no shortcuts portal, so the search key is kept as a GNOME custom shortcut ("Mesa search")
 //! that runs `mesa-app --search`.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use gtk::{gio, gio::prelude::*};
 
 const MEDIA_KEYS: &str = "org.gnome.settings-daemon.plugins.media-keys";
@@ -20,7 +18,6 @@ const GNOME_SCHEMAS: &[&str] = &[
 
 const WINDOW_MENU: (&str, &str) = ("org.gnome.desktop.wm.keybindings", "activate-window-menu");
 const ALT_SPACE: &str = "<Alt>space";
-static HAD_ALT_SPACE: AtomicBool = AtomicBool::new(false);
 
 pub enum Refusal {
     TakenBy(String),
@@ -41,7 +38,6 @@ fn schema(id: &str) -> Option<gio::SettingsSchema> {
 pub fn take(accelerator: &str, command: &str) -> Result<(), Refusal> {
     let failed = |e: gtk::glib::BoolError| Refusal::Failed(e.to_string());
     let ours = gio::Settings::with_path(CUSTOM_KEY, OURS);
-    let had_alt_space = HAD_ALT_SPACE.load(Ordering::SeqCst) || same_key(&ours.string("binding"), ALT_SPACE);
     match taken_by(accelerator) {
         Some((schema_id, key, _))
             if (schema_id.as_str(), key.as_str()) == WINDOW_MENU && same_key(accelerator, ALT_SPACE) =>
@@ -65,11 +61,6 @@ pub fn take(accelerator: &str, command: &str) -> Result<(), Refusal> {
         paths.push(OURS.to_owned());
         set_strings(&list, "custom-keybindings", &paths).map_err(failed)?;
     }
-    let has_alt_space = same_key(accelerator, ALT_SPACE);
-    HAD_ALT_SPACE.store(has_alt_space, Ordering::SeqCst);
-    if had_alt_space && !has_alt_space {
-        give_back_alt_space();
-    }
     gio::Settings::sync();
     Ok(())
 }
@@ -88,10 +79,13 @@ pub fn release() {
     gio::Settings::sync();
 }
 
-fn give_back_alt_space() {
+/// Takes Alt+Space, the default search key, off GNOME's window menu, which would otherwise get it first.
+pub fn free_alt_space() {
     let settings = gio::Settings::new(WINDOW_MENU.0);
-    if settings.strv(WINDOW_MENU.1).is_empty() && taken_by(ALT_SPACE).is_none() {
-        let _ = settings.set_strv(WINDOW_MENU.1, [ALT_SPACE].as_slice());
+    let keys = strings(&settings, WINDOW_MENU.1);
+    let left: Vec<String> = keys.iter().filter(|key| !same_key(key, ALT_SPACE)).cloned().collect();
+    if left.len() < keys.len() && set_strings(&settings, WINDOW_MENU.1, &left).is_ok() {
+        gio::Settings::sync();
     }
 }
 

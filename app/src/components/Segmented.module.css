@@ -20,9 +20,11 @@
   background: var(--color-surface-raised);
 }
 
+/* Slides by left, not transform: WebKit redraws nearby text slightly differently as a GPU slide's layer comes and
+   goes. */
 .sliding .thumb {
   transition:
-    transform var(--slide),
+    left var(--slide),
     width var(--slide);
 }
 

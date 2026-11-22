@@ -203,6 +203,9 @@
   --color-text-muted: #6b5d52;
   --color-text-disabled: #a39689;
   --color-text-faint: #85786c;
+  /* Faint text shown above the dimming, which greys this theme's background. */
+  --color-text-over-dim: #3e2e27;
+  --color-text-strong-over-dim: var(--color-text);
   --color-paused: #85786c;
 
   --color-danger: #b5362b;
@@ -237,7 +240,11 @@
   --syntax-variable: #a03a3a;
   --color-selected-border: rgba(226, 105, 49, 0.5);
   --color-overlay: rgba(42, 26, 20, 0.42);
-  --color-border-strong-dimmed: color-mix(in srgb, var(--color-border-strong), rgb(42, 26, 20) 42%);
+  /* The same as a solid colour and an opacity, for the dimming built from pieces. */
+  --color-overlay-solid: rgb(42, 26, 20);
+  --overlay-opacity: 0.42;
+  /* The strong border under the overlay, mixed by hand: the site's demo runs in browsers without color-mix(). */
+  --color-border-strong-dimmed: #8c8077;
   --color-scrollbar: var(--color-text-disabled);
   --color-scrollbar-hover: var(--color-file);
   --color-scrollbar-active: var(--color-text-muted);
@@ -246,8 +253,10 @@
   --shadow-sm: 0 1px 2px rgba(42, 26, 20, 0.08);
   --shadow-primary: 0 1px 3px rgba(42, 26, 20, 0.22);
   --gradient-primary: linear-gradient(135deg, rgba(181, 54, 43, 0), rgba(181, 54, 43, 0.4));
-  --shadow-field: 0 1px 2px rgba(42, 26, 20, 0.06), 0 4px 14px rgba(42, 26, 20, 0.06);
-  --shadow-field-hover: 0 1px 2px rgba(42, 26, 20, 0.08), 0 6px 18px rgba(42, 26, 20, 0.1);
+  /* The tight layer looks like 0 1px 2px, but WebKit blurs a shadow that small across the whole box on every repaint,
+     which made the results panel slow on Linux. */
+  --shadow-field: 0 1px 6px -2px rgba(42, 26, 20, 0.09), 0 4px 14px rgba(42, 26, 20, 0.06);
+  --shadow-field-hover: 0 1px 6px -2px rgba(42, 26, 20, 0.12), 0 6px 18px rgba(42, 26, 20, 0.1);
   --color-focus-ring: rgba(226, 105, 49, 0.28);
   --shadow-menu: 0 10px 30px rgba(42, 26, 20, 0.18), 0 2px 6px rgba(42, 26, 20, 0.08);
   --shadow-tooltip: 0 3px 10px rgba(42, 26, 20, 0.1), 0 1px 2px rgba(42, 26, 20, 0.06);
@@ -279,6 +288,8 @@
   --color-text-muted: #b3a498;
   --color-text-disabled: #766a60;
   --color-text-faint: #9a8d82;
+  --color-text-over-dim: var(--color-text-faint);
+  --color-text-strong-over-dim: var(--color-text-muted);
 
   --color-primary-ink: #ee7a40;
 
@@ -305,12 +316,14 @@
   --syntax-variable: #ec9f93;
   --color-selected-border: rgba(226, 105, 49, 0.6);
   --color-overlay: rgba(0, 0, 0, 0.6);
-  --color-border-strong-dimmed: color-mix(in srgb, var(--color-border-strong), black 60%);
+  --color-overlay-solid: rgb(0, 0, 0);
+  --overlay-opacity: 0.6;
+  --color-border-strong-dimmed: #1f1916;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-primary: 0 1px 3px rgba(0, 0, 0, 0.5);
-  --shadow-field: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.25);
-  --shadow-field-hover: 0 1px 2px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
+  --shadow-field: 0 1px 6px -2px rgba(0, 0, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.25);
+  --shadow-field-hover: 0 1px 6px -2px rgba(0, 0, 0, 0.525), 0 6px 18px rgba(0, 0, 0, 0.4);
   --color-focus-ring: rgba(226, 105, 49, 0.4);
   --shadow-menu: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
   --shadow-tooltip: 0 3px 10px rgba(0, 0, 0, 0.26), 0 1px 2px rgba(0, 0, 0, 0.2);

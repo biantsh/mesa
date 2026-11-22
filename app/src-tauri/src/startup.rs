@@ -20,9 +20,9 @@ pub fn data_dir(identifier: &str) -> Option<PathBuf> {
 
 pub fn another_launch(app: &AppHandle, args: &[String]) {
     if wants_search(args) && cfg!(target_os = "linux") {
-        crate::widget::toggle(app);
+        crate::hotkey::pressed(app, crate::widget::toggle);
     } else if wants_search(args) {
-        crate::widget::show(app);
+        crate::hotkey::pressed(app, crate::widget::show);
     } else if !in_background(args) {
         crate::main_window::show(app);
     }

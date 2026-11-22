@@ -14,6 +14,7 @@ import { isForSomethingElse } from "../useSelection";
 import { EASE_CURVE, EASE_MS } from "./PanelSplitter";
 import { CodeThumb } from "./CodeThumb";
 import styles from "./ResultGrid.module.css";
+import "../registeredZoom";
 import { fileManager, shortcut } from "../platform";
 
 const CODE_SCALE = 0.82;
@@ -460,6 +461,7 @@ export function ResultGrid({ paneRef, batches, searchId, more, moreClose, stalle
         )}
         inert={!shown}
         onScroll={scrolled}
+        data-panel-room
       >
         <div ref={grid} className={cx(styles.grid, alone && styles.alone, panel && styles.withPanel)}>
           {message && (batches[0]?.length ?? 0) === 0 && (

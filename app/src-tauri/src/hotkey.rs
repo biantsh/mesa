@@ -2,7 +2,7 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::Serialize;
@@ -13,8 +13,23 @@ use crate::index::lock;
 
 const DEFAULT: (Modifiers, Code) = (Modifiers::ALT, Code::Space);
 const PAUSE_LIMIT: Duration = Duration::from_secs(60);
+// A recorded shortcut is taken while its keys are still down, and holding them can press it. Its presses are ignored
+// until SETTLE_LATE after the window sees the keys go up (a press can arrive late, as when the desktop starts
+// `mesa-app --search` for it). Failing that, until SETTLE_FIRST after it was taken, or SETTLE_QUIET after the last
+// ignored press, whichever is later.
+const SETTLE_FIRST: Duration = Duration::from_secs(5);
+const SETTLE_QUIET: Duration = Duration::from_millis(500);
+const SETTLE_LATE: Duration = Duration::from_millis(1000);
 
 pub struct TrayItem(pub MenuItem<Wry>);
+
+/// Acts on a press of the search shortcut, unless it's one to ignore (see `holds_back`).
+pub fn pressed(app: &AppHandle, act: impl FnOnce(&AppHandle)) {
+    if app.try_state::<Hotkey>().is_some_and(|hotkey| hotkey.holds_back()) {
+        return;
+    }
+    act(app);
+}
 
 #[derive(Serialize, Clone, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -61,6 +76,7 @@ struct Inner {
     active: Option<Shortcut>,
     paused: Option<u64>,
     pauses: u64,
+    settling: Option<Instant>,
     chosen_in: ChosenIn,
     desktop_key: Option<Parts>,
     keys: Keys,
@@ -72,6 +88,7 @@ impl Inner {
             active,
             paused: None,
             pauses: 0,
+            settling: None,
             chosen_in,
             desktop_key: None,
             keys,
@@ -102,6 +119,7 @@ impl Hotkey {
         if keys == Keys::Plugin && crate::wayland::is_wayland() {
             return Self::from_the_desktop(app, chosen);
         }
+        keys.free_default();
         let active = chosen
             .and_then(|text| match parse(text) {
                 Ok(shortcut) => match keys.take(app, shortcut) {
@@ -187,7 +205,7 @@ impl Hotkey {
         }
         let keys = inner.keys;
         let old = inner.active;
-        inner.paused = None;
+        let recorded = inner.paused.take().is_some();
         crate::system_menu::set_recording(false);
         if let Some(old) = old {
             keys.release(app, old);
@@ -200,6 +218,9 @@ impl Hotkey {
         match taken {
             Ok(active) => {
                 inner.active = active;
+                if recorded {
+                    inner.settling = Some(Instant::now() + SETTLE_FIRST);
+                }
                 drop(inner);
                 self.show_in_tray(app);
                 Ok(old)
@@ -237,6 +258,7 @@ impl Hotkey {
         if let Some(active) = inner.active {
             inner.keys.release(app, active);
         }
+        inner.keys.free_default();
         inner.pauses += 1;
         let pause = inner.pauses;
         inner.paused = Some(pause);
@@ -249,6 +271,28 @@ impl Hotkey {
                 hotkey.resume_pause(&app, Some(pause));
             }
         });
+    }
+
+    /// Whether a press comes from the keys the shortcut was just recorded with. Each one ignored extends the wait,
+    /// for as long as they keep repeating.
+    pub fn holds_back(&self) -> bool {
+        let mut inner = lock(&self.inner);
+        let now = Instant::now();
+        match inner.settling {
+            Some(until) if now < until => {
+                inner.settling = Some(until.max(now + SETTLE_QUIET));
+                true
+            }
+            _ => {
+                inner.settling = None;
+                false
+            }
+        }
+    }
+
+    /// The keys the shortcut was recorded with have been let go, though a press from them may still be on its way.
+    pub fn settle(&self) {
+        lock(&self.inner).settling = Some(Instant::now() + SETTLE_LATE);
     }
 
     pub fn resume(&self, app: &AppHandle) {
@@ -436,6 +480,14 @@ impl Keys {
                     }
                 })
             }
+        }
+    }
+
+    /// GNOME takes Alt+Space, the default search key, for its window menu before the recorder sees it.
+    fn free_default(self) {
+        #[cfg(target_os = "linux")]
+        if self == Self::Gnome {
+            crate::gnome_keys::free_alt_space();
         }
     }
 

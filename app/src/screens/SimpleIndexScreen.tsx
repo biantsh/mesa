@@ -65,19 +65,21 @@ export function SimpleIndexScreen({
     if (active && shown === "setup" && mode === "running") changeWithTransition(() => setShown(mode), { onlyMorph: true });
     else setShown(mode);
   }, [settled, mode, shown, active]);
+  // The hint says indexing carries on in the background, so it waits out pauses (and hides during them).
+  const paused = progress?.paused ?? false;
   const [hint, setHint] = useState(false);
   useEffect(() => {
     if (view !== "running") {
       setHint(false);
       return;
     }
-    if (!active || hint || hasShownBackgroundHint()) return;
+    if (!active || paused || hint || hasShownBackgroundHint()) return;
     const timer = setTimeout(() => {
       markBackgroundHintShown();
       setHint(true);
     }, HINT_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [view, active, hint]);
+  }, [view, active, paused, hint]);
 
   const chosenTypes = indexed.types;
   useEffect(() => {
@@ -213,7 +215,7 @@ export function SimpleIndexScreen({
                   <h2 className={styles.cardTitle}>{progress.updating ? "Updating your index" : "Indexing your files"}</h2>
                   <div className={styles.middle}>
                     <SimpleProgress progress={progress} secondsLeft={secondsLeft} onScreen={active} onRefresh={refresh} onError={setError} />
-                    {hint && (
+                    {hint && !paused && (
                       <p className={styles.hint}>
                         <Info size={16} aria-hidden />
                         <span>

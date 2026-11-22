@@ -21,7 +21,7 @@ interface Props {
 export function PanelResizer({ track, taken, least, most, standard, onResize, onAiming }: Props) {
   const handle = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
-  const drag = useRef<{ x: number; from: number; width: number; aim: number; screen: HTMLElement; release: () => void; frame: number } | null>(null);
+  const drag = useRef<{ x: number; from: number; width: number; aim: number; sized: HTMLElement[]; release: () => void; frame: number } | null>(null);
   const panel = () => handle.current?.parentElement ?? null;
   const screen = () => panel()?.parentElement ?? null;
   const widthOf = (columns: number) => panelWidth(track, columns);
@@ -56,13 +56,17 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const setWidth = (element: HTMLElement, width: number | null) => {
-    if (width === null) {
-      element.style.removeProperty("--panel-drag-width");
-      element.style.removeProperty("--panel-drag-room");
-    } else {
-      element.style.setProperty("--panel-drag-width", `${width}px`);
-      element.style.setProperty("--panel-drag-room", `${panelRoom(width)}px`);
+  // Set only where it's read: on the screen, it would restyle every result each frame.
+  const sizedBy = (element: HTMLElement): HTMLElement[] => [panel()!, ...Array.from(element.querySelectorAll<HTMLElement>("[data-panel-room]"))];
+  const setWidth = (sized: HTMLElement[], width: number | null) => {
+    for (const element of sized) {
+      if (width === null) {
+        element.style.removeProperty("--panel-drag-width");
+        element.style.removeProperty("--panel-drag-room");
+      } else {
+        element.style.setProperty("--panel-drag-width", `${width}px`);
+        element.style.setProperty("--panel-drag-room", `${panelRoom(width)}px`);
+      }
     }
   };
 
@@ -72,15 +76,15 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
     setDragging(false);
     if (!now) return;
     cancelAnimationFrame(now.frame);
-    setWidth(now.screen, now.width);
+    setWidth(now.sized, now.width);
     now.release();
-    void now.screen.offsetWidth;
+    void document.body.offsetWidth;
     const nearest = nearestPanelColumns(now.width, track, least, most);
     flushSync(() => {
       onResize(nearest);
       onAiming(null);
     });
-    setWidth(now.screen, null);
+    setWidth(now.sized, null);
     placeLine();
   };
   useEffect(
@@ -88,7 +92,7 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
       const now = drag.current;
       if (!now) return;
       cancelAnimationFrame(now.frame);
-      setWidth(now.screen, null);
+      setWidth(now.sized, null);
       now.release();
       onAiming(null);
     },
@@ -104,8 +108,9 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
     e.currentTarget.dataset.pressed = "";
     e.currentTarget.setPointerCapture(e.pointerId);
     const from = widthOf(taken);
-    drag.current = { x: e.clientX, from, width: from, aim: taken, screen: element, release: holdStill(element), frame: 0 };
-    setWidth(element, from);
+    const sized = sizedBy(element);
+    drag.current = { x: e.clientX, from, width: from, aim: taken, sized, release: holdStill(element), frame: 0 };
+    setWidth(sized, from);
     setDragging(true);
   };
 
@@ -115,7 +120,7 @@ export function PanelResizer({ track, taken, least, most, standard, onResize, on
     now.width = Math.round(Math.max(widthOf(least), Math.min(widthOf(most), now.from - (e.clientX - now.x))));
     cancelAnimationFrame(now.frame);
     now.frame = requestAnimationFrame(() => {
-      setWidth(now.screen, now.width);
+      setWidth(now.sized, now.width);
       placeLine();
     });
     const aim = nearestPanelColumns(now.width, track, least, most);

@@ -158,6 +158,7 @@ export function figures({ counting, found, done, total, paused }: Progress): str
 }
 
 const AFTER_SWEEP_MS = 2_000;
+const SWEEP_FADE_MS = 400;
 
 export function Bar({ progress }: { progress: Progress }) {
   const { counting, done, total, paused, turbo } = progress;
@@ -171,6 +172,14 @@ export function Bar({ progress }: { progress: Progress }) {
     const timer = window.setTimeout(() => setWaiting(false), AFTER_SWEEP_MS);
     return () => window.clearTimeout(timer);
   }, [waiting, determinate]);
+  // Stopped once faded out: a hidden animation still runs every frame, and on WebKitGTK can cause blank frames.
+  const [swept, setSwept] = useState(!sweeping);
+  if (sweeping && swept) setSwept(false);
+  useEffect(() => {
+    if (sweeping || swept) return;
+    const timer = window.setTimeout(() => setSwept(true), SWEEP_FADE_MS);
+    return () => window.clearTimeout(timer);
+  }, [sweeping, swept]);
 
   return (
     <div
@@ -187,7 +196,7 @@ export function Bar({ progress }: { progress: Progress }) {
         className={cx(styles.fill, determinate && done > 0 && styles.started, waiting && styles.afterSweep)}
         style={{ width: determinate ? `${percent}%` : "0%" }}
       />
-      <div className={cx(styles.searching, (determinate || paused) && styles.searchingGone)} />
+      <div className={cx(styles.searching, !sweeping && styles.searchingGone, swept && styles.searchingStopped)} />
     </div>
   );
 }

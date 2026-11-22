@@ -1,21 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api, errorText, hotkeyFailure, type HotkeyStatus } from "./api";
-import { NONE_HELD, heldFrom, isKeyCode, isModifierCode, anyHeld, shortcutString, type Held } from "./hotkey";
+import { NONE_HELD, heldKeys, isKeyCode, isModifierCode, anyHeld, shortcutString, type Held } from "./hotkey";
 
 export function useSearchHotkey(open: boolean) {
   const [status, setStatus] = useState<HotkeyStatus | null>(null);
   const [recording, setRecording] = useState(false);
   const [held, setHeld] = useState<Held>(NONE_HELD);
   const [refused, setRefused] = useState<string | null>(null);
+  // The key of a shortcut being saved, shown with the held modifiers until recording ends.
+  const [chosen, setChosen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const recordingRef = useRef(false);
   const savingRef = useRef(false);
   const alive = useRef(true);
   const field = useRef<HTMLButtonElement>(null);
+  // Replaced with each recording, in case a Super key went up while the window was unfocused.
+  const heldNow = useRef(heldKeys());
   const justEnded = useRef(false);
   const refocus = useRef(false);
+  // The keys a shortcut was just recorded with, until they're let go: the backend ignores the shortcut until then.
+  const settling = useRef<{ code: string; alone: boolean; up: boolean; saved: Promise<unknown> } | null>(null);
 
   const load = useCallback(() => {
     api
@@ -43,18 +49,22 @@ export function useSearchHotkey(open: boolean) {
     setRecording(false);
     setHeld(NONE_HELD);
     setRefused(null);
+    setChosen(null);
     if (was && !taken) api.endHotkeyRecording().catch(() => {});
     if (was) {
       justEnded.current = true;
       setTimeout(() => (justEnded.current = false), 0);
     }
+    // Started with the mouse, the field lets go of focus, or the keys just typed would leave it with a focus ring.
     if (was && refocus.current) setTimeout(() => field.current?.focus(), 0);
+    else if (was) field.current?.blur();
   }, []);
 
   const start = useCallback((byKeyboard: boolean) => {
     if (recordingRef.current || savingRef.current) return;
     refocus.current = byKeyboard;
     recordingRef.current = true;
+    heldNow.current = heldKeys();
     setError(null);
     setHeld(NONE_HELD);
     setRefused(null);
@@ -65,13 +75,17 @@ export function useSearchHotkey(open: boolean) {
   const cancel = useCallback(() => finish(false), [finish]);
 
   const choose = useCallback(
-    (shortcut: string | null, code: string | null = null) => {
+    (shortcut: string | null, code: string | null = null, held: Held = NONE_HELD) => {
       if (savingRef.current) return;
       savingRef.current = true;
       setSaving(true);
       setError(null);
-      api
-        .setSearchHotkey(shortcut)
+      setChosen(code);
+      const saved = api.setSearchHotkey(shortcut);
+      settling.current = code ? { code, alone: !anyHeld(held), up: false, saved } : null;
+      // Backspace (back to the default) isn't part of the shortcut, so there's nothing to wait for.
+      if (!code) saved.then(() => api.hotkeyKeysReleased()).catch(() => {});
+      saved
         .then((now) => {
           if (!alive.current) return;
           setStatus(now);
@@ -80,6 +94,8 @@ export function useSearchHotkey(open: boolean) {
         .catch((e) => {
           if (!alive.current) return;
           const failure = hotkeyFailure(e);
+          settling.current = null;
+          setChosen(null);
           if (failure.kind === "invalid" && recordingRef.current) {
             setRefused(code);
           } else {
@@ -105,7 +121,7 @@ export function useSearchHotkey(open: boolean) {
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat || savingRef.current) return;
-      const now = heldFrom(event);
+      const now = heldNow.current(event);
       lastHeld = now;
       if (isModifierCode(event.code)) {
         setHeld(now);
@@ -116,10 +132,10 @@ export function useSearchHotkey(open: boolean) {
       if (!anyHeld(now) && event.code === "Backspace") return reset();
       if (!isKeyCode(event.code)) return;
       setHeld(now);
-      choose(shortcutString(now, event.code), event.code);
+      choose(shortcutString(now, event.code), event.code, now);
     };
     const up = (event: KeyboardEvent) => {
-      lastHeld = heldFrom(event);
+      lastHeld = heldNow.current(event);
       if (isModifierCode(event.code)) setHeld(lastHeld);
     };
     window.addEventListener("keydown", down, true);
@@ -133,7 +149,7 @@ export function useSearchHotkey(open: boolean) {
       if (savingRef.current) return;
       const now = { ...lastHeld, alt: true };
       setHeld(now);
-      choose(shortcutString(now, "Space"), "Space");
+      choose(shortcutString(now, "Space"), "Space", now);
     });
     return () => {
       space.then((unlisten) => unlisten()).catch(() => {});
@@ -143,6 +159,21 @@ export function useSearchHotkey(open: boolean) {
       window.removeEventListener("blur", cancel);
     };
   }, [recording, cancel, reset, choose]);
+
+  useEffect(() => {
+    // Once the modifiers are up, the key alone can't press the shortcut, so only a shortcut without modifiers waits
+    // for its key (whose key-up the desktop may keep from the window).
+    const up = (event: KeyboardEvent) => {
+      const keys = settling.current;
+      if (!keys) return;
+      if (event.code === keys.code) keys.up = true;
+      if (anyHeld(heldNow.current(event)) || (keys.alone && !keys.up)) return;
+      settling.current = null;
+      keys.saved.then(() => api.hotkeyKeysReleased()).catch(() => {});
+    };
+    window.addEventListener("keyup", up, true);
+    return () => window.removeEventListener("keyup", up, true);
+  }, []);
 
   useEffect(() => {
     if (!open && recordingRef.current) {
@@ -156,6 +187,7 @@ export function useSearchHotkey(open: boolean) {
     recording,
     held,
     refused,
+    chosen,
     error,
     saving,
     field,

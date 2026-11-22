@@ -46,8 +46,10 @@
   right: calc(var(--actions-width, 0px) + var(--inset));
   height: calc(var(--field-height) - 2 * var(--inset));
   border-radius: calc(var(--radius-md) - var(--inset));
-  box-shadow: 0 0 0 4000px var(--color-overlay);
+  /* Just enough to cover the window: browsers size the screen's GPU layer to fit everything painted in it. */
+  box-shadow: 0 0 0 100vmax var(--color-overlay);
   opacity: 0;
+  --spot-fade: 0;
   pointer-events: none;
   transition:
     left var(--focus-time) var(--focus-ease),
@@ -62,6 +64,7 @@
   right: var(--inset);
   height: calc(var(--open-height) - 2 * var(--inset));
   opacity: 1;
+  --spot-fade: 1;
 }
 
 .results .spot {
@@ -176,11 +179,13 @@
   border-radius: inherit;
   box-shadow: 0 0 0 3px var(--wave-glow);
   opacity: 1;
+  --edge-fade: 1;
   transition: opacity calc(var(--focus-time) * 0.3) ease-out;
 }
 
 .results .spot::after {
   opacity: 0;
+  --edge-fade: 0;
   transition: opacity var(--focus-time) ease-in;
 }
 
@@ -287,9 +292,11 @@
   --slab-bottom-radius: 0px;
 }
 
+/* The slab stretches to close the gap to the field and the filters move up by a transform: moving the box by top made
+   the text step a pixel at a time as it settled. */
 .wide .tagsBox {
-  top: var(--field-height);
-  --slab-top: calc(-1 * var(--reach));
+  --slab-top: calc(-1 * (var(--reach) + var(--tags-gap)));
+  --slab-bottom: var(--tags-gap);
   --slab-top-radius: 0px;
 }
 
@@ -490,7 +497,6 @@
   visibility: hidden;
   pointer-events: none;
   transition:
-    top var(--merge-time) var(--merge-ease) var(--merge-delay),
     visibility 0s linear var(--focus-time),
     box-shadow 120ms ease;
 }
@@ -499,7 +505,6 @@
   visibility: visible;
   pointer-events: auto;
   transition:
-    top var(--merge-time) var(--merge-ease) var(--merge-delay),
     visibility 0s,
     box-shadow 120ms ease;
 }
@@ -520,7 +525,8 @@
   clip-path: inset(0 0 calc(100% + 6px) 0);
   transition:
     opacity calc(var(--focus-time) * 0.4) ease-out,
-    clip-path var(--merge-time) var(--focus-ease) var(--merge-delay);
+    clip-path var(--merge-time) var(--focus-ease) var(--merge-delay),
+    transform var(--merge-time) var(--merge-ease) var(--merge-delay);
 }
 
 .engaged .parsed {
@@ -528,7 +534,12 @@
   clip-path: inset(0 0 0 0);
   transition:
     opacity calc(var(--focus-time) * 0.6) ease calc(var(--focus-time) * 0.15),
-    clip-path var(--merge-time) var(--focus-ease) var(--merge-delay);
+    clip-path var(--merge-time) var(--focus-ease) var(--merge-delay),
+    transform var(--merge-time) var(--merge-ease) var(--merge-delay);
+}
+
+.wide .parsed {
+  transform: translateY(calc(-1 * var(--tags-gap)));
 }
 
 .parsedWithFiles {
@@ -810,6 +821,11 @@
     visibility 0s;
 }
 
+/* It sits above the dimming, so it takes a colour that reads on it. */
+.home:not(.asWidget).dim .indexNote {
+  color: var(--color-text-over-dim);
+}
+
 .asWidget:not(.results) .indexNote {
   opacity: 0;
   visibility: hidden;
@@ -820,11 +836,13 @@
     visibility 0s linear 220ms;
 }
 
+/* Its own layer keeps WebKit drawing it above the dimming, which is painted into the search row's layer. */
 .status {
   position: relative;
   display: flex;
   justify-content: center;
   width: 100%;
+  will-change: transform;
   transition:
     transform var(--focus-time) var(--focus-ease),
     opacity 160ms ease-out calc(var(--slide-time, 400ms) * 0.4);
@@ -927,4 +945,195 @@
 
 .failureDismiss:hover {
   background: var(--color-danger-bg);
+}
+
+/* WebKitGTK stutters starting and ending GPU animations of large layers, so there the dimming and the spot's edge fade
+   on the main thread, through these. */
+@property --spot-fade {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --edge-fade {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.dimming {
+  display: none;
+}
+
+@property --ring-left {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --ring-top {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --ring-right {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --ring-height {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --ring-round {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The dimming is drawn by .dimming there instead; the spot keeps its edge. */
+  :global(:root[data-engine="webkitgtk"]) .home:not(.asWidget) .spot {
+    box-shadow: none;
+    opacity: var(--spot-fade);
+    transition-property: left, top, right, height, border-radius, --spot-fade;
+  }
+
+  /* WebKitGTK repaints the spot's shadow in full on every frame the spot changes shape. So there the dimming is built
+     from pieces that only move: four bands around the hole and four corners, following the spot's geometry with the
+     same transitions, all faded together. */
+  :global(:root[data-engine="webkitgtk"]) .dimming {
+    --inset: -3px;
+    --corner: calc(var(--radius-md) - var(--inset));
+    --ring-left: var(--inset);
+    --ring-top: var(--inset);
+    --ring-right: calc(var(--actions-width, 0px) + var(--inset));
+    --ring-height: calc(var(--field-height) - 2 * var(--inset));
+    --ring-round: 1;
+    --spot-fade: 0;
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: calc(var(--overlay-opacity) * var(--spot-fade));
+    will-change: opacity;
+    transition:
+      --ring-left var(--focus-time) var(--focus-ease),
+      --ring-top var(--focus-time) var(--focus-ease),
+      --ring-right var(--focus-time) var(--focus-ease),
+      --ring-height var(--focus-time) var(--focus-ease),
+      --ring-round var(--focus-time) var(--focus-ease),
+      --spot-fade var(--focus-time) ease;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dim .dimming {
+    --ring-right: var(--inset);
+    --ring-height: calc(var(--open-height) - 2 * var(--inset));
+    --spot-fade: 1;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .results .dimming {
+    --ring-left: calc(-1 * var(--hole-left, 0px));
+    --ring-right: calc(-1 * var(--hole-right, 0px));
+    --ring-top: calc(-1 * var(--hole-top, 0px) - 48px);
+    --ring-height: calc(var(--home-height, 0px) + 48px);
+    --ring-round: 0;
+    transition:
+      --ring-left var(--focus-time) var(--focus-ease),
+      --ring-top var(--focus-time) var(--focus-ease),
+      --ring-right var(--focus-time) var(--focus-ease),
+      --ring-height var(--focus-time) var(--focus-ease),
+      --ring-round var(--focus-time) var(--focus-ease),
+      --spot-fade calc(var(--focus-time) * 0.5) ease-in calc(var(--focus-time) * 0.5);
+  }
+
+  /* Tiled like a pinwheel so no two bands overlap: each ends where the next begins. They're placed by layout, not
+     transforms, so WebKit snaps them all to device pixels the same way and shared edges meet. Solid-colour layers need
+     no repainting when they move or resize. The bands reach further than any window. */
+  :global(:root[data-engine="webkitgtk"]) .dimming > * {
+    position: absolute;
+    background: var(--color-overlay-solid);
+    will-change: transform;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimTop {
+    left: -200vmax;
+    right: calc(var(--ring-right) * var(--registered-unzoom, 1));
+    top: calc(var(--ring-top) * var(--registered-unzoom, 1) - 200vmax);
+    height: 200vmax;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimRight {
+    right: calc(var(--ring-right) * var(--registered-unzoom, 1) - 200vmax);
+    width: 200vmax;
+    top: -200vmax;
+    height: calc(200vmax + (var(--ring-top) + var(--ring-height)) * var(--registered-unzoom, 1));
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimBottom {
+    left: calc(var(--ring-left) * var(--registered-unzoom, 1));
+    right: -200vmax;
+    top: calc((var(--ring-top) + var(--ring-height)) * var(--registered-unzoom, 1));
+    height: 200vmax;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimLeft {
+    left: calc(var(--ring-left) * var(--registered-unzoom, 1) - 200vmax);
+    width: 200vmax;
+    top: calc(var(--ring-top) * var(--registered-unzoom, 1));
+    height: calc(100% + 400vmax);
+  }
+
+  /* Resized rather than scaled, since transformed layers aren't snapped to pixels like the bands. They overlap the
+     bands by 2px because WebKit snaps an image layer's edges slightly differently from a plain one's. */
+  :global(:root[data-engine="webkitgtk"]) .dimCorner {
+    --round: calc(var(--corner) * var(--ring-round));
+    width: calc(var(--round) + 2px);
+    height: calc(var(--round) + 2px);
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimTopLeft {
+    left: calc(var(--ring-left) * var(--registered-unzoom, 1) - 2px);
+    top: calc(var(--ring-top) * var(--registered-unzoom, 1) - 2px);
+    background: radial-gradient(circle at 100% 100%, transparent calc(var(--round) - 0.5px), var(--color-overlay-solid) calc(var(--round) + 0.5px));
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimTopRight {
+    right: calc(var(--ring-right) * var(--registered-unzoom, 1) - 2px);
+    top: calc(var(--ring-top) * var(--registered-unzoom, 1) - 2px);
+    background: radial-gradient(circle at 0% 100%, transparent calc(var(--round) - 0.5px), var(--color-overlay-solid) calc(var(--round) + 0.5px));
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimBottomLeft {
+    left: calc(var(--ring-left) * var(--registered-unzoom, 1) - 2px);
+    top: calc((var(--ring-top) + var(--ring-height)) * var(--registered-unzoom, 1) - var(--round));
+    background: radial-gradient(circle at 100% 0%, transparent calc(var(--round) - 0.5px), var(--color-overlay-solid) calc(var(--round) + 0.5px));
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dimBottomRight {
+    right: calc(var(--ring-right) * var(--registered-unzoom, 1) - 2px);
+    top: calc((var(--ring-top) + var(--ring-height)) * var(--registered-unzoom, 1) - var(--round));
+    background: radial-gradient(circle at 0% 0%, transparent calc(var(--round) - 0.5px), var(--color-overlay-solid) calc(var(--round) + 0.5px));
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .home:not(.asWidget) .spot::after {
+    opacity: var(--edge-fade);
+    transition-property: --edge-fade;
+  }
+
+  /* Focusing the field starts a dozen GPU animations at once. WebKitGTK can show a blank frame while it adds a layer for
+     each, so they keep their layers permanently. */
+  :global(:root[data-engine="webkitgtk"]) .halo,
+  :global(:root[data-engine="webkitgtk"]) .row,
+  :global(:root[data-engine="webkitgtk"]) .parsed,
+  :global(:root[data-engine="webkitgtk"]) .logo,
+  :global(:root[data-engine="webkitgtk"]) .actions,
+  :global(:root[data-engine="webkitgtk"]) .indexNote {
+    will-change: transform, opacity;
+  }
 }

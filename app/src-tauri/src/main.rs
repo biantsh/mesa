@@ -180,7 +180,7 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
                     if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        widget::toggle(app);
+                        hotkey::pressed(app, widget::toggle);
                     }
                 })
                 .build(),
@@ -303,6 +303,7 @@ fn main() {
             commands::set_search_hotkey,
             commands::begin_hotkey_recording,
             commands::end_hotkey_recording,
+            commands::hotkey_keys_released,
             commands::embedding_gpu,
             commands::model_status,
             commands::retry_model_setup,

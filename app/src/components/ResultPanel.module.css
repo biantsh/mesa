@@ -18,7 +18,7 @@
   bottom: var(--panel-bottom);
   --panel-to: var(--panel-drag-width, var(--panel-width, 308px));
   --panel-now: var(--panel-to);
-  width: var(--panel-now);
+  width: calc(var(--panel-now) * var(--registered-unzoom, 1));
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
@@ -41,7 +41,7 @@
   .panel {
     top: round(nearest, var(--panel-top), var(--device-px, 1px));
     bottom: round(nearest, var(--panel-bottom), var(--device-px, 1px));
-    width: calc(var(--panel-to) + round(nearest, var(--panel-now) - var(--panel-to), 1px));
+    width: calc(var(--panel-to) + round(nearest, var(--panel-now) * var(--registered-unzoom, 1) - var(--panel-to), 1px));
   }
 }
 

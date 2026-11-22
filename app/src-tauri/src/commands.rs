@@ -803,6 +803,11 @@ pub fn end_hotkey_recording(app: AppHandle, hotkey: State<'_, Hotkey>) {
 }
 
 #[tauri::command]
+pub fn hotkey_keys_released(hotkey: State<'_, Hotkey>) {
+    hotkey.settle();
+}
+
+#[tauri::command]
 pub fn page_painted(window: tauri::WebviewWindow, background: Option<[u8; 3]>) {
     if window.label() == "main" {
         if let Some([r, g, b]) = background {

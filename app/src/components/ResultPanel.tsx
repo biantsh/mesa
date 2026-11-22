@@ -15,7 +15,8 @@ import { atIsPage, pagingOf, pagingWord, type Paging } from "../paging";
 import { middleCuts } from "../pathCut";
 import type { PanelLayout } from "../resultWindow";
 import { parentOf } from "../paths";
-import { fileManager, shortcut } from "../platform";
+import { fileManager, isWebKitGTK, shortcut } from "../platform";
+import { isResizing } from "../resizing";
 import type { ResultActions } from "../resultMenu";
 import { previewShape, usePixelRatio, usePreview } from "../usePreview";
 import { Button } from "./Button";
@@ -24,6 +25,7 @@ import { PanelResizer } from "./PanelResizer";
 import { PreviewViewer } from "./PreviewViewer";
 import { CATEGORY_ICONS } from "./ResultGrid";
 import styles from "./ResultPanel.module.css";
+import "../registeredZoom";
 
 interface Props {
   hits: SearchHit[];
@@ -94,9 +96,17 @@ export function ResultPanel({ hits, shown, query, withFiles, files, isWeak, prog
 }
 
 const GLIDE = "panel-layout";
+// Where each gliding element was drawn as the current frame began.
+const drawnAt = new WeakMap<HTMLElement, DOMRect>();
 
 function glide(element: HTMLElement, from: DOMRect, scaled: boolean) {
-  for (const animation of element.getAnimations()) if (animation.id === GLIDE) animation.cancel();
+  // A glide under way carries on from where the element is drawn, not a stale measurement: as the panel's width eases,
+  // the picture's room can change several times during one glide.
+  const running = element.getAnimations().filter((animation) => animation.id === GLIDE);
+  if (running.length > 0) from = drawnAt.get(element) ?? from;
+  for (const animation of running) animation.cancel();
+  // WebKitGTK can't keep up with gliding while the panel is being dragged, so there things just move.
+  if (isWebKitGTK && isResizing()) return;
   const to = element.getBoundingClientRect();
   if (to.width === 0 || to.height === 0) return;
   const x = from.left - to.left;
@@ -104,13 +114,20 @@ function glide(element: HTMLElement, from: DOMRect, scaled: boolean) {
   const width = scaled ? from.width / to.width : 1;
   const height = scaled ? from.height / to.height : 1;
   if (Math.abs(x) < 0.5 && Math.abs(y) < 0.5 && Math.abs(width - 1) < 0.005 && Math.abs(height - 1) < 0.005) return;
-  element.animate(
+  const animation = element.animate(
     [
       { transform: `translate(${x}px, ${y}px) scale(${width}, ${height})`, transformOrigin: "0 0" },
       { transform: "none", transformOrigin: "0 0" },
     ],
     { duration: EASE_MS, easing: EASE_CURVE, id: GLIDE },
   );
+  drawnAt.set(element, from);
+  const follow = () => {
+    if (animation.playState !== "running") return;
+    drawnAt.set(element, element.getBoundingClientRect());
+    requestAnimationFrame(follow);
+  };
+  requestAnimationFrame(follow);
 }
 
 function useLayoutGlide(panel: RefObject<HTMLElement | null>, layout: PanelLayout) {

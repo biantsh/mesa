@@ -30,6 +30,7 @@ import { useResultSelection } from "../useResultSelection";
 import { useShortcutTip } from "../useShortcutTip";
 import { useIndexedTypes } from "../useIndexedTypes";
 import { useTauriEvent } from "../useTauriEvent";
+import { snapToDevice } from "../registeredZoom";
 import styles from "./HomeScreen.module.css";
 
 const FAILURE_MS = 8000;
@@ -835,7 +836,8 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
       const block = search.current.getBoundingClientRect();
       const gap = parseFloat(getComputedStyle(row.current).columnGap) || 0;
       const actionsWidth = parseFloat(getComputedStyle(actions.current).width);
-      const lift = Math.max(0, block.top - around.top - TOP_GAP_PX);
+      // A whole number of device pixels, so the layers inside the row (the dimming's pieces) stay on whole pixels.
+      const lift = snapToDevice(Math.max(0, block.top - around.top - TOP_GAP_PX));
       const set = (name: string, px: number) => root.style.setProperty(name, `${px}px`);
       set("--top-gap", TOP_GAP_PX);
       const bottomGap = asWidget ? BOTTOM_GAP_PX : BOTTOM_GAP_WITH_CORNERS_PX;
@@ -978,6 +980,18 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
           ref={row}
           className={cx(styles.row, dropping && (dropping.supported.length > 0 && room > 0 ? styles.dropping : styles.refusing), dragging?.over && styles.hot)}
         >
+          {!asWidget && (
+            <div className={styles.dimming} aria-hidden>
+              <div className={styles.dimTop} />
+              <div className={styles.dimBottom} />
+              <div className={styles.dimLeft} />
+              <div className={styles.dimRight} />
+              <div className={cx(styles.dimCorner, styles.dimTopLeft)} />
+              <div className={cx(styles.dimCorner, styles.dimTopRight)} />
+              <div className={cx(styles.dimCorner, styles.dimBottomLeft)} />
+              <div className={cx(styles.dimCorner, styles.dimBottomRight)} />
+            </div>
+          )}
           <div className={styles.spot} data-widget-spot aria-hidden />
           <div className={styles.halo} aria-hidden />
           <div className={styles.separator} aria-hidden />

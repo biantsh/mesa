@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { X } from "lucide-react";
 import { api, type CodeFile, type CodePart } from "../api";
 import { cx } from "../cx";
-import { prefersReducedMotion } from "../motion";
+import { animateLarge, prefersReducedMotion } from "../motion";
 import { Button } from "./Button";
 import { CodeLine } from "./CodeView";
 import { IconButton } from "./IconButton";
@@ -105,7 +105,7 @@ export function CodeViewer({ path, name, query, line, found, from, onOpen, onClo
     box.style.visibility = "visible";
     if (prefersReducedMotion()) return;
     aim(box, from());
-    box.animate([{ transform: `scale(${SMALL})`, opacity: 0 }, { transform: "none", opacity: 1 }], { duration: EASE_MS, easing: EASE_CURVE });
+    animateLarge(box, { scaleX: SMALL, scaleY: SMALL, opacity: 0 }, { opacity: 1 }, { duration: EASE_MS, easing: EASE_CURVE });
   }, [ready, from]);
   const [leaving, setLeaving] = useState(false);
   const [shut, setShut] = useState(false);
@@ -115,7 +115,7 @@ export function CodeViewer({ path, name, query, line, found, from, onOpen, onClo
     const box = frame.current;
     if (!box || !appeared.current || prefersReducedMotion()) return setShut(true);
     aim(box, from());
-    const going = box.animate([{ transform: "none", opacity: 1 }, { transform: `scale(${SMALL})`, opacity: 0 }], {
+    const going = animateLarge(box, { opacity: 1 }, { scaleX: SMALL, scaleY: SMALL, opacity: 0 }, {
       duration: LEAVING_MS,
       easing: "ease-in",
       fill: "forwards",

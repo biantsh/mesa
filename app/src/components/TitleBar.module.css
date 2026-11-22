@@ -17,8 +17,11 @@
   padding-left: 12px;
 }
 
+/* Like the window controls, they stay above the search's dimming. */
 .logo,
 .title {
+  position: relative;
+  z-index: 2;
   pointer-events: none;
 }
 

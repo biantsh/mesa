@@ -25,7 +25,7 @@ export function ShortcutTip({ show, keys, lifted }: Props) {
   return (
     <div className={cx(styles.tip, lifted && styles.lifted)} role="status" data-leaving={show ? undefined : ""}>
       <span className={styles.text}>
-        <strong className={styles.label}>Tip:</strong> Press <Keycaps keys={keys} compact /> from anywhere on your computer to search, even when this app is closed.
+        <strong className={styles.label}>Tip:</strong> Press <Keycaps keys={keys} compact /> from anywhere on your computer to search, even when the app is closed.
       </span>
     </div>
   );

@@ -1,5 +1,6 @@
 import type { CodePart, CodeView, MatchSnippet, SearchHit } from "../../../app/src/api";
-import { isMac } from "../../../app/src/platform";
+import { keyLabel, modifierLabels } from "../../../app/src/hotkey";
+import { isMac, platform } from "../../../app/src/platform";
 import { GITHUB } from "../links";
 import evaluatePy from "./code/iris-classifier/evaluate.py?raw";
 import { highlightPython } from "./python";
@@ -373,6 +374,9 @@ export function pictureOf(path: string): string {
 
 export const TOTALS = { files: 5_887, bytes: Math.round(60.4 * 1_048_576) };
 
+// The demo's search shortcut, as recorded in its settings.
+let searchKey = isMac ? { keys: ["⌥", "Space"], name: "Option+Space" } : { keys: ["Alt", "Space"], name: "Alt+Space" };
+
 const ANSWERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   model_status: () => ({ state: "ready" }),
   index_view: () => ({
@@ -381,10 +385,16 @@ const ANSWERS: Record<string, (args: Record<string, unknown>) => unknown> = {
     lists: null,
   }),
   get_settings: () => ({ gpuAcceleration: true, alwaysFullSpeed: false, startAtSignIn: false }),
-  get_search_hotkey: () => ({
-    active: isMac ? { keys: ["⌥", "Space"], name: "Option+Space" } : { keys: ["Alt", "Space"], name: "Alt+Space" },
-    chosenIn: { kind: "mesa" },
-  }),
+  get_search_hotkey: () => ({ active: searchKey, chosenIn: { kind: "mesa" } }),
+  set_search_hotkey: (args) => {
+    const parts = String(args.shortcut ?? "alt+Space").split("+");
+    const code = parts.pop() ?? "Space";
+    const held = { ctrl: parts.includes("control"), alt: parts.includes("alt"), shift: parts.includes("shift"), meta: parts.includes("super") };
+    if (!held.ctrl && !held.alt && !held.meta) throw { kind: "invalid", message: `${keyLabel(code)} on its own would stop you typing it anywhere.` };
+    const keys = [...modifierLabels(held, platform), keyLabel(code)];
+    searchKey = { keys, name: keys.join("+") };
+    return { active: searchKey, chosenIn: { kind: "mesa" } };
+  },
   get_indexed_types: () => ["document", "image", "video", "audio", "code"],
   embedding_gpu: () => ({ name: "Apple M2", shared: true }),
   search: async (args) => {

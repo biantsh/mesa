@@ -61,6 +61,13 @@
   opacity: 1;
 }
 
+/* Fades in as the field's focus animation runs (see the permanent layers in HomeScreen.module.css). */
+@media (prefers-reduced-motion: no-preference) {
+  :global(:root[data-engine="webkitgtk"]) .progress::before {
+    will-change: opacity;
+  }
+}
+
 .raised:hover::before {
   background-image: linear-gradient(var(--color-hover-bg), var(--color-hover-bg));
 }

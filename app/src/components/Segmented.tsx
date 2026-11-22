@@ -68,7 +68,7 @@ export function Segmented<T extends string>({ segments, value, onChange, labelle
       aria-describedby={describedBy}
       className={cx(styles.group, sliding && styles.sliding)}
     >
-      {place && <span className={styles.thumb} style={{ transform: `translateX(${place.left}px)`, width: place.width }} aria-hidden />}
+      {place && <span className={styles.thumb} style={{ left: place.left, width: place.width }} aria-hidden />}
       {segments.map((segment, i) => {
         const isChosen = i === chosen;
         return (

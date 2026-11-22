@@ -378,6 +378,7 @@ export const api = {
   setSearchHotkey: (shortcut: string | null) => invoke<HotkeyStatus>("set_search_hotkey", { shortcut }),
   beginHotkeyRecording: () => invoke<void>("begin_hotkey_recording"),
   endHotkeyRecording: () => invoke<void>("end_hotkey_recording"),
+  hotkeyKeysReleased: () => invoke<void>("hotkey_keys_released"),
   modelStatus: () => invoke<ModelStatus>("model_status"),
   retryModelSetup: () => invoke<void>("retry_model_setup"),
   embeddingGpu: () => invoke<{ name: string; shared: boolean } | null>("embedding_gpu"),

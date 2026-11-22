@@ -15,22 +15,26 @@ export interface TypeQuestion {
 
 const UNTOUCHED = "Your files themselves aren’t touched.";
 
+// Audio and code are counted as a whole, not one by one: "it", where images, documents and videos are "them".
+const UNCOUNTED: ReadonlySet<Category> = new Set(["audio", "code"]);
+
 function questionFor(type: Category, change: Change): Omit<TypeQuestion, "open"> {
   const words = describeTypes([type]);
+  const [it, they] = UNCOUNTED.has(type) ? ["it", "it"] : ["them", "they"];
   switch (change) {
     case "add":
       return {
         title: `Index ${words} too?`,
         confirmLabel: `Index ${words}`,
         danger: false,
-        paragraphs: [`Mesa will find the ${words} in everything that’s indexed and process them in the background.`],
+        paragraphs: [`Mesa will find the ${words} in everything that’s indexed and process ${it} in the background.`],
       };
     case "remove":
       return {
         title: `Remove ${words} from the index?`,
         confirmLabel: "Remove",
         danger: true,
-        paragraphs: [`The ${words} in the index will be removed, and they won’t be indexed until you turn them back on.`, UNTOUCHED],
+        paragraphs: [`The ${words} in the index will be removed, and ${they} won’t be indexed until you turn ${it} back on.`, UNTOUCHED],
       };
     case "clear":
       return {

@@ -2,9 +2,15 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, 
 import { cx } from "../cx";
 import { Keycaps } from "./Keycaps";
 import styles from "./ShortcutField.module.css";
+import { snapToDevice as snap } from "../registeredZoom";
 
 const PAD = 6;
 const ROW_HEIGHT = 28;
+// How far .clip reaches past the field on each side.
+const CLIP_REACH = 4;
+// Keycaps are this tall (Keycaps.module.css), and keep this much room around them while recording.
+const KEYCAP_HEIGHT = 28;
+const KEYCAP_ROOM = 3;
 
 type View = "idle" | "prompt" | "live";
 type Sizes = Record<View, { width: number; height: number }>;
@@ -13,6 +19,8 @@ interface Props {
   listening: boolean;
   children: ReactNode;
   live: string[];
+  // The keys shown at rest, when they're keycaps: if recording ends showing just these, it hands over without a fade.
+  idleKeys?: string[];
   refusedLast: boolean;
   prompt: string;
   label: string;
@@ -23,7 +31,7 @@ interface Props {
   ref?: Ref<HTMLButtonElement>;
 }
 
-export function ShortcutField({ listening, children, live, refusedLast, prompt, label, tooltip, describedBy, disabled, onClick, ref }: Props) {
+export function ShortcutField({ listening, children, live, idleKeys, refusedLast, prompt, label, tooltip, describedBy, disabled, onClick, ref }: Props) {
   const view: View = !listening ? "idle" : live.length > 0 ? "live" : "prompt";
   const idle = useRef<HTMLSpanElement>(null);
   const asking = useRef<HTMLSpanElement>(null);
@@ -33,6 +41,9 @@ export function ShortcutField({ listening, children, live, refusedLast, prompt, 
   const [ready, setReady] = useState(false);
   const lastLive = useRef<string[]>([]);
   if (live.length > 0) lastLive.current = live;
+  // Two copies of the same keycaps cross-fading look dimmer than either, so when recording ends on the keys just set,
+  // the held ones stay at full strength until the set ones have faded in beneath them.
+  const handOff = view === "idle" && !refusedLast && idleKeys !== undefined && sameKeys(lastLive.current, idleKeys);
 
   useLayoutEffect(() => {
     const layers = { idle: idle.current, prompt: asking.current, live: holding.current };
@@ -68,22 +79,26 @@ export function ShortcutField({ listening, children, live, refusedLast, prompt, 
     return () => cancelAnimationFrame(frame);
   }, [sizes, ready]);
 
-  const pad = listening ? PAD : 0;
+  // Every size and offset is a whole number of device pixels. The CSS rounds the eased values to device pixels too,
+  // and a target between two of them would make the last frame step a pixel past the one before.
+  const pad = view === "live" ? KEYCAP_ROOM : view === "prompt" ? PAD : 0;
   const size = sizes?.[view];
+  // While recording, the field keeps one height, with room for keycaps, so it doesn't change size as keys go down.
+  const listeningHeight = sizes ? snap(Math.max(sizes.prompt.height + 2 * PAD, KEYCAP_HEIGHT + 2 * KEYCAP_ROOM)) : 0;
   let style: CSSProperties | undefined;
   if (size) {
-    const width = size.width + 2 * pad;
-    const height = size.height + 2 * pad;
-    const vertical = (ROW_HEIGHT - height) / 2;
-    const right = listening && row ? (row.height - height) / 2 - row.paddingRight : 0;
-    style = { width, height, margin: `${vertical}px ${right}px ${vertical}px 0` };
+    const width = snap(size.width + 2 * pad);
+    const height = listening ? listeningHeight : snap(size.height);
+    const vertical = snap((ROW_HEIGHT - height) / 2);
+    const right = listening && row ? snap((row.height - height) / 2 - row.paddingRight) : 0;
+    style = { "--field-row": `${ROW_HEIGHT}px`, "--field-pad": `${pad}px`, "--field-w": `${width}px`, "--field-h": `${height}px`, "--field-mv": `${vertical}px`, "--field-mr": `${right}px` } as CSSProperties;
   }
 
   return (
     <button
       ref={ref}
       type="button"
-      className={cx(styles.field, ready && styles.ready, listening && styles.listening)}
+      className={cx(styles.field, size && styles.sized, ready && styles.ready, listening && styles.listening)}
       style={style}
       disabled={disabled}
       aria-label={label}
@@ -93,16 +108,28 @@ export function ShortcutField({ listening, children, live, refusedLast, prompt, 
       onClick={onClick}
     >
       <span className={styles.clip}>
-        <span ref={idle} className={cx(styles.layer, view === "idle" && styles.seen)}>
+        <span ref={idle} className={cx(styles.layer, view === "idle" && styles.seen)} style={placed(0, sizes ? snap(sizes.idle.height) : 0)}>
           {children}
         </span>
-        <span ref={asking} className={cx(styles.layer, view === "prompt" && styles.seen)}>
+        <span ref={asking} className={cx(styles.layer, view === "prompt" && styles.seen)} style={placed(sizes ? (listeningHeight - sizes.prompt.height) / 2 : 0, listeningHeight)}>
           <span className={styles.prompt}>{prompt}</span>
         </span>
-        <span ref={holding} className={cx(styles.layer, view === "live" && styles.seen)}>
+        <span ref={holding} className={cx(styles.layer, view === "live" && styles.seen, handOff && styles.handOff)} style={placed(sizes ? (listeningHeight - sizes.live.height) / 2 : 0, listeningHeight)}>
           {lastLive.current.length > 0 && <Keycaps keys={lastLive.current} refusedLast={refusedLast} />}
         </span>
       </span>
     </button>
   );
+}
+
+// Each layer sits where it's centred in the field made for it. Sideways it keeps the padding of whichever view is
+// showing (--pad-now), so keycaps two views share stay on top of each other as they cross-fade. Up and down, its top
+// takes back the field's top margin as that eases (--mv-now), so the layer holds still while the field grows around it.
+function placed(padTop: number, fieldHeight: number): CSSProperties {
+  const margin = fieldHeight ? snap((ROW_HEIGHT - fieldHeight) / 2) : 0;
+  return { "--layer-top": `${snap(CLIP_REACH + margin + padTop)}px` } as CSSProperties;
+}
+
+function sameKeys(a: string[], b: string[]) {
+  return a.length === b.length && a.every((key, i) => key === b[i]);
 }

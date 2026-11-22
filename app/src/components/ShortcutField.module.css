@@ -12,11 +12,67 @@
   box-shadow: 0 0 0 1px transparent;
 }
 
+/* The size, margins and padding ease through registered properties, rounded to device pixels on the way, so the
+   outline and the contents move together and stop on the same frame. */
+@property --field-w {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --field-h {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --field-mv {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --field-pad {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --field-mr {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* The layers read the eased top margin and padding (--mv-now, --pad-now). The bottom margin takes whatever the
+   rounding leaves, so the field and its margins always add up to the row's height, or the row's centring would shift
+   everything by half a pixel on some frames. */
+.sized {
+  --mv-now: calc(var(--field-mv) * var(--registered-unzoom, 1));
+  --h-now: calc(var(--field-h) * var(--registered-unzoom, 1));
+  --pad-now: calc(var(--field-pad) * var(--registered-unzoom, 1));
+  width: calc(var(--field-w) * var(--registered-unzoom, 1));
+  height: var(--h-now);
+  margin: var(--mv-now) calc(var(--field-mr) * var(--registered-unzoom, 1)) calc(var(--field-row) - var(--h-now) - var(--mv-now)) 0;
+}
+
+@supports (width: round(1px, 1px)) {
+  .sized {
+    --mv-now: round(nearest, calc(var(--field-mv) * var(--registered-unzoom, 1)), var(--device-unit, 1px));
+    --h-now: round(nearest, calc(var(--field-h) * var(--registered-unzoom, 1)), var(--device-unit, 1px));
+    --pad-now: round(nearest, calc(var(--field-pad) * var(--registered-unzoom, 1)), var(--device-unit, 1px));
+    width: round(nearest, calc(var(--field-w) * var(--registered-unzoom, 1)), var(--device-unit, 1px));
+    margin: var(--mv-now) round(nearest, calc(var(--field-mr) * var(--registered-unzoom, 1)), var(--device-unit, 1px)) calc(var(--field-row) - var(--h-now) - var(--mv-now)) 0;
+  }
+}
+
 .ready {
   transition:
-    width 260ms ease,
-    height 260ms ease,
-    margin 260ms ease,
+    --field-w 260ms ease,
+    --field-h 260ms ease,
+    --field-mv 260ms ease,
+    --field-mr 260ms ease,
+    --field-pad 260ms ease,
     border-radius 260ms ease,
     box-shadow 260ms ease;
 }
@@ -31,18 +87,26 @@
   box-shadow: 0 0 0 1px var(--color-primary);
 }
 
+/* The outline already shows where typing goes; the focus ring would come on with the first key. */
+.listening:focus-visible {
+  outline: none;
+}
+
+/* Reaches CLIP_REACH past the field for the keycaps' shadows, except on the right, where it stops at the padding so
+   nothing sliding in or out there crosses the outline. */
 .clip {
   position: absolute;
   inset: -4px;
+  right: var(--pad-now, 0px);
   overflow: hidden;
   pointer-events: none;
 }
 
 .layer {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: calc(var(--layer-top) - var(--mv-now, 0px));
+  /* CLIP_REACH in, plus the padding. */
+  left: calc(4px + var(--pad-now, 0px));
   display: flex;
   align-items: center;
   white-space: nowrap;
@@ -67,6 +131,13 @@
     visibility 0s;
 }
 
+/* Stays at full strength until the same keys have faded in beneath it. */
+.ready .layer.handOff {
+  transition:
+    opacity 0s linear 160ms,
+    visibility 0s linear 160ms;
+}
+
 .prompt {
   padding: 0 5px;
   color: var(--color-text-faint);
@@ -77,7 +148,8 @@
 @media (prefers-reduced-motion: reduce) {
   .ready,
   .ready .layer,
-  .ready .layer.seen {
+  .ready .layer.seen,
+  .ready .layer.handOff {
     transition: none;
   }
 }

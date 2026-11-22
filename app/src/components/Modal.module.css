@@ -41,12 +41,14 @@
   z-index: 1;
   background: var(--color-overlay);
   opacity: 0;
+  --scrim-fade: 0;
   pointer-events: none;
   transition: opacity 360ms ease;
 }
 
 .scrimOpen {
   opacity: 1;
+  --scrim-fade: 1;
 }
 
 .catcher {
@@ -63,5 +65,37 @@
 @media (prefers-reduced-motion: reduce) {
   .scrim {
     transition: none;
+  }
+}
+
+@property --scrim-fade {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --pop {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@keyframes pop-fade {
+  from {
+    --pop: 0;
+  }
+}
+
+/* WebKitGTK stutters starting and ending GPU animations of surfaces this large, so there the backdrop and card fade
+   on the main thread. The card skips its rise, since a transform would move its fixed menus. */
+@media (prefers-reduced-motion: no-preference) {
+  :global(:root[data-engine="webkitgtk"]) .scrim {
+    opacity: var(--scrim-fade);
+    transition-property: --scrim-fade;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .dialog[open] {
+    opacity: var(--pop);
+    animation-name: pop-fade;
   }
 }

@@ -17,6 +17,9 @@
 .titleArea {
   position: relative;
   flex: none;
+  transition:
+    --color-text-muted 360ms ease,
+    --color-text-faint 360ms ease;
 }
 
 /* Not "hidden": the dimming inside must also cover the title bar, or a seam shows at fractional scaling. */
@@ -35,6 +38,8 @@
   background: var(--color-bg);
   will-change: transform;
   transform: translateX(0);
+  --screen-x: 0%;
+  --screen-fade: 1;
   transition:
     transform var(--slide-time) var(--slide-curve),
     opacity 0s,
@@ -49,6 +54,7 @@
 .after {
   visibility: hidden;
   opacity: 0;
+  --screen-fade: 0;
   transition:
     transform var(--slide-time) var(--slide-curve),
     opacity calc(var(--slide-time) * 0.7) cubic-bezier(0.4, 0, 1, 1),
@@ -57,10 +63,12 @@
 
 .before {
   transform: translateX(-100%);
+  --screen-x: -100%;
 }
 
 .after {
   transform: translateX(100%);
+  --screen-x: 100%;
 }
 
 .fromWidget .pane,
@@ -108,7 +116,20 @@
 .legalCorner {
   transition:
     opacity 180ms ease-out,
-    visibility 0s;
+    visibility 0s,
+    --color-text-faint 360ms ease;
+}
+
+/* The corners are drawn above the search's dimming, which drowns dark text, so in the light theme it darkens. */
+.searchDimmed .totals,
+.searchDimmed .legalCorner {
+  --color-text-faint: var(--color-text-over-dim);
+}
+
+/* The title bar's text and buttons are drawn above the dimming too. */
+.searchDimmed .titleArea {
+  --color-text-muted: var(--color-text-strong-over-dim);
+  --color-text-faint: var(--color-text-over-dim);
 }
 
 .totals {
@@ -133,7 +154,8 @@
   visibility: hidden;
   transition:
     opacity 180ms ease-out,
-    visibility 0s linear 180ms;
+    visibility 0s linear 180ms,
+    --color-text-faint 360ms ease;
 }
 
 .legalCorner {
@@ -181,4 +203,30 @@
 
 .updateLink:hover {
   background: var(--color-hover-bg);
+}
+
+@property --screen-x {
+  syntax: "<length-percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+@property --screen-fade {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+/* WebKitGTK stutters starting and ending GPU animations of a whole screen, so there the screens slide on the main
+   thread. */
+@media (prefers-reduced-motion: no-preference) {
+  :global(:root[data-engine="webkitgtk"]) .pane {
+    opacity: var(--screen-fade);
+    transform: translateX(var(--screen-x));
+    transition-property: --screen-x, --screen-fade, visibility;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .arrive {
+    animation: none;
+  }
 }

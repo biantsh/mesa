@@ -4,6 +4,24 @@
   initial-value: 0px;
 }
 
+@property --pane-fade {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --pane-x {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --grid-fade {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
 @property --fade-top {
   syntax: "<length>";
   inherits: false;
@@ -34,32 +52,40 @@
   left: calc((100% - var(--column)) / 2);
   --pane-room-to: 0px;
   --pane-room: var(--pane-room-to);
-  width: calc(var(--column) - var(--pane-room) + var(--scrollbar-size));
+  width: calc(var(--column) - var(--pane-room) * var(--registered-unzoom, 1) + var(--scrollbar-size));
   transform: translateX(calc(-1 * var(--results-shift, 0px)));
   top: 0;
   bottom: calc(var(--bottom-gap) + var(--for-progress) + var(--for-count));
   overflow-x: hidden;
   overflow-y: scroll;
   scroll-padding-top: var(--bar-room);
-  --fade-mask:
+  /* Chrome only reads the unprefixed mask properties from version 120. */
+  -webkit-mask-image:
     linear-gradient(
       to bottom,
-      transparent var(--fade-top),
-      #000 calc(var(--fade-top) + var(--fade-length)),
+      transparent calc(var(--fade-top) * var(--registered-unzoom, 1)),
+      #000 calc((var(--fade-top) + var(--fade-length)) * var(--registered-unzoom, 1)),
       #000 calc(100% - 14px),
       transparent calc(100% - 2px)
     ),
     linear-gradient(#000, #000);
-  /* Chrome only reads the unprefixed mask properties from version 120. */
-  -webkit-mask-image: var(--fade-mask);
   -webkit-mask-size: calc(100% - var(--scrollbar-size)) 100%, var(--scrollbar-size) 100%;
   -webkit-mask-position: left top, right top;
   -webkit-mask-repeat: no-repeat;
-  mask-image: var(--fade-mask);
+  mask-image:
+    linear-gradient(
+      to bottom,
+      transparent calc(var(--fade-top) * var(--registered-unzoom, 1)),
+      #000 calc((var(--fade-top) + var(--fade-length)) * var(--registered-unzoom, 1)),
+      #000 calc(100% - 14px),
+      transparent calc(100% - 2px)
+    ),
+    linear-gradient(#000, #000);
   mask-size: calc(100% - var(--scrollbar-size)) 100%, var(--scrollbar-size) 100%;
   mask-position: left top, right top;
   mask-repeat: no-repeat;
   opacity: 0;
+  --pane-fade: 0;
   visibility: hidden;
   pointer-events: none;
   transition:
@@ -74,7 +100,7 @@
 
 @supports (width: round(1px, 1px)) {
   .pane {
-    width: calc(var(--column) - var(--pane-room-to) - round(nearest, var(--pane-room) - var(--pane-room-to), 1px) + var(--scrollbar-size));
+    width: calc(var(--column) - var(--pane-room-to) - round(nearest, var(--pane-room) * var(--registered-unzoom, 1) - var(--pane-room-to), 1px) + var(--scrollbar-size));
   }
 }
 
@@ -118,6 +144,7 @@
 
 .shown {
   opacity: 1;
+  --pane-fade: 1;
   visibility: visible;
   pointer-events: auto;
   transition:
@@ -152,7 +179,7 @@
   top: 0;
   left: 0;
   right: 0;
-  height: var(--fade-top);
+  height: calc(var(--fade-top) * var(--registered-unzoom, 1));
   pointer-events: none;
   transition: height var(--focus-time) var(--focus-ease);
 }
@@ -173,6 +200,7 @@
   width: min(968px, 100%);
   margin: 0 auto;
   padding: calc(var(--bar-room) + 12px) 0 20px;
+  --grid-fade: 1;
   transition: opacity 120ms ease;
 }
 
@@ -393,6 +421,7 @@
 
 .busy .grid {
   opacity: 0.55;
+  --grid-fade: 0.55;
   transition: opacity 120ms ease 250ms;
 }
 
@@ -575,5 +604,26 @@
 @media (prefers-reduced-motion: reduce) {
   .pane {
     --stagger: 0ms;
+  }
+}
+
+/* WebKitGTK stutters starting and ending GPU animations of surfaces this large, so there the results fade and shift
+   on the main thread, with the same timings. */
+@media (prefers-reduced-motion: no-preference) {
+  :global(:root[data-engine="webkitgtk"]) .pane {
+    --pane-x: calc(-1 * var(--results-shift, 0px));
+    opacity: var(--pane-fade);
+    transform: translateX(calc(var(--pane-x) * var(--registered-unzoom, 1)));
+    transition-property: --pane-fade, visibility, bottom, --pane-room, --pane-x, --fade-top, --fade-length;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .grid {
+    opacity: var(--grid-fade);
+    transition-property: --grid-fade;
+  }
+
+  /* A pop-in per tile halves WebKitGTK's frame rate while results arrive; the results' own fade is enough. */
+  :global(:root[data-engine="webkitgtk"]) .tile {
+    animation: none;
   }
 }

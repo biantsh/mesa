@@ -47,7 +47,8 @@ export default function App() {
   const cardOpen = card !== null;
   const [querying, setQuerying] = useState(false);
   const onIndex = screen === "index";
-  const dimmed = (querying && !onIndex) || cardOpen;
+  const searchDimmed = querying && !onIndex;
+  const dimmed = searchDimmed || cardOpen;
   const maximized = useMaximized();
   useFullscreen();
   const { overview, refresh: refreshIndex, watch: watchIndex } = useIndexState();
@@ -171,7 +172,7 @@ export default function App() {
   }, [onIndex, goHome]);
 
   return (
-    <div className={cx(styles.window, dimmed && styles.dimmedWindow)}>
+    <div className={cx(styles.window, dimmed && styles.dimmedWindow, searchDimmed && styles.searchDimmed)}>
       <div className={styles.titleArea}>
         <TitleBar maximized={maximized} />
       </div>

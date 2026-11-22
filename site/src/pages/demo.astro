@@ -29,9 +29,17 @@ const border = `
       opacity: 0;
     }
   }
+  @keyframes demo-in-fade {
+    from {
+      --screen-fade: 0;
+    }
+  }
   @media (prefers-reduced-motion: no-preference) {
     ${app} .${appStyles.pane} {
       animation: demo-in 450ms ease-out;
+    }
+    :root[data-engine="webkitgtk"] ${app} .${appStyles.pane} {
+      animation-name: demo-in-fade;
     }
   }
 `;
@@ -56,6 +64,8 @@ const border = `
         const name = navigator.platform || navigator.userAgent;
         const os = (site && site.dataset.os) || (/Mac/i.test(name) ? "mac" : /Linux/i.test(name) ? "linux" : "windows");
         if (os !== "windows") root.dataset.platform = os;
+        const agent = navigator.userAgent;
+        if (/Linux/.test(agent) && /AppleWebKit/.test(agent) && !/Chrome|Chromium|Edg\//.test(agent)) root.dataset.engine = "webkitgtk";
       })();
     </script>
     <style is:inline>

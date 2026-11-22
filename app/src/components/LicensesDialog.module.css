@@ -79,6 +79,11 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* Its height leaves out the divider, which it only has when it follows a row. */
+.unbuilt {
+  box-sizing: content-box;
+}
+
 .itemHead {
   display: flex;
   align-items: center;

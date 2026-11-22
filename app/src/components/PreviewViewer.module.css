@@ -183,3 +183,29 @@
     animation: none;
   }
 }
+
+@property --backdrop-fade {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@keyframes dimming-fade {
+  from {
+    --backdrop-fade: 0;
+  }
+}
+
+/* WebKitGTK stutters starting and ending GPU animations of a full-window layer, so there the backdrop fades on the
+   main thread. */
+@media (prefers-reduced-motion: no-preference) {
+  :global(:root[data-engine="webkitgtk"]) .viewer::backdrop {
+    opacity: var(--backdrop-fade);
+    animation-name: dimming-fade;
+  }
+
+  :global(:root[data-engine="webkitgtk"]) .leaving::backdrop {
+    --backdrop-fade: 0;
+    transition-property: --backdrop-fade;
+  }
+}

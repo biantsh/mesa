@@ -224,9 +224,10 @@ function UnavailableHotkeyRow({ desktop }: { desktop: string | null }) {
   );
 }
 
-function RecordedHotkeyRow({ status, recording, held, refused, error, saving, field, start, cancel }: ReturnType<typeof useSearchHotkey>) {
+function RecordedHotkeyRow({ status, recording, held, refused, chosen, error, saving, field, start, cancel }: ReturnType<typeof useSearchHotkey>) {
   const active = status?.active ?? null;
-  const live = [...modifierLabels(held, platform), ...(refused ? [keyLabel(refused)] : [])];
+  const key = refused ?? chosen;
+  const live = [...modifierLabels(held, platform), ...(key ? [keyLabel(key)] : [])];
 
   return (
     <>
@@ -238,13 +239,18 @@ function RecordedHotkeyRow({ status, recording, held, refused, error, saving, fi
             ref={field}
             listening={recording}
             live={live}
+            idleKeys={active?.keys}
             refusedLast={refused !== null}
             prompt="Type shortcut"
-            disabled={!status || saving}
+            disabled={!status}
             label={recording ? "Recording the new shortcut. Type it, or press Escape to cancel." : `Search shortcut: ${active?.name ?? "none"}. Press to change.`}
             describedBy={ids.describedBy}
             tooltip={recording ? "Press Escape to cancel" : "Click to change"}
-            onClick={(e) => (recording ? cancel() : start(e.detail === 0))}
+            onClick={(e) => {
+              if (saving) return;
+              if (recording) cancel();
+              else start(e.detail === 0);
+            }}
           >
             {status ? active ? <Keycaps keys={active.keys} /> : <span className={styles.none}>None</span> : null}
           </ShortcutField>

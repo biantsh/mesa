@@ -191,11 +191,6 @@ button {
   animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-html[data-platform="linux"]::view-transition-old(root) {
-  animation: none;
-  opacity: 1;
-}
-
 ::view-transition-old(index-switch),
 ::view-transition-new(index-switch) {
   height: 100%;

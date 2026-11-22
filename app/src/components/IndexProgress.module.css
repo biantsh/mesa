@@ -94,6 +94,11 @@
   transition: opacity 400ms ease, visibility 0s linear 400ms;
 }
 
+/* After the fade (SWEEP_FADE_MS). */
+.searching.searchingStopped {
+  animation: none;
+}
+
 .count {
   flex: none;
   display: flex;

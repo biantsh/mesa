@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { api, largePreviewUrl, mediaUrl, type SearchHit } from "../api";
 import { cx } from "../cx";
 import { pageFromText, pagingOf, pagingWord } from "../paging";
-import { prefersReducedMotion } from "../motion";
+import { animateLarge, prefersReducedMotion, type Look } from "../motion";
 import { usePixelRatio } from "../usePreview";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
@@ -130,7 +130,7 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
       const box = frame.current;
       const start = from.rect();
       if (!box || !start || prefersReducedMotion()) return;
-      box.animate([{ transform: towards(start, box.getBoundingClientRect()) }, { transform: "none" }], { duration: EASE_MS, easing: EASE_CURVE });
+      animateLarge(box, towards(start, box.getBoundingClientRect()), {}, { duration: EASE_MS, easing: EASE_CURVE });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -144,7 +144,7 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
     box?.querySelector("video")?.pause();
     const end = from.rect();
     if (!box || !end || prefersReducedMotion()) return setShut(true);
-    const moving = box.animate([{ transform: "none" }, { transform: towards(end, box.getBoundingClientRect()) }], {
+    const moving = animateLarge(box, {}, towards(end, box.getBoundingClientRect()), {
       duration: LEAVING_MS,
       easing: "ease-in",
       fill: "forwards",
@@ -235,9 +235,9 @@ export function PreviewViewer({ hit, page: firstPage, from, onOpen, onClosed }: 
   );
 }
 
-function towards(from: DOMRect, to: DOMRect): string {
-  if (to.width === 0 || to.height === 0) return "none";
-  return `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`;
+function towards(from: DOMRect, to: DOMRect): Look {
+  if (to.width === 0 || to.height === 0) return {};
+  return { x: from.left - to.left, y: from.top - to.top, scaleX: from.width / to.width, scaleY: from.height / to.height };
 }
 
 function PageField({ page, pages, label, onGo }: { page: number; pages: number | null; label: string; onGo: (page: number) => void }) {
