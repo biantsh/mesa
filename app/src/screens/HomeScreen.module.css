@@ -65,10 +65,11 @@
 }
 
 .results .spot {
+  --above-home: 48px;
   left: calc(-1 * var(--hole-left, 0px));
   right: calc(-1 * var(--hole-right, 0px));
-  top: calc(-1 * var(--hole-top, 0px));
-  height: var(--home-height, 100%);
+  top: calc(-1 * var(--hole-top, 0px) - var(--above-home));
+  height: calc(var(--home-height, 100%) + var(--above-home));
   border-radius: 0;
   transition:
     left var(--focus-time) var(--focus-ease),

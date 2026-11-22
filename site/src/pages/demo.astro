@@ -5,6 +5,36 @@ import "../../../app/src/styles/global.css";
 import DemoApp from "../demo/DemoApp";
 import DemoShell from "../demo/DemoShell";
 import logo from "../demo/logo";
+import appStyles from "../../../app/src/App.module.css";
+
+const app = `#root .${appStyles.window}`;
+const border = `
+  ${app} {
+    border-color: transparent;
+  }
+  #demo-border {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
+    border: var(--window-border) solid var(--color-border-strong);
+    border-radius: var(--window-radius);
+    transition: border-color 360ms ease;
+  }
+  :root:has(${app}.${appStyles.dimmedWindow}) #demo-border {
+    border-color: var(--color-border-strong-dimmed);
+  }
+  @keyframes demo-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    ${app} .${appStyles.pane} {
+      animation: demo-in 450ms ease-out;
+    }
+  }
+`;
 ---
 
 <html lang="en">
@@ -49,11 +79,13 @@ import logo from "../demo/logo";
         display: none;
       }
     </style>
+    <style is:inline set:html={border} />
   </head>
   <body>
     <div id="root">
       <DemoApp client:only="react" />
     </div>
+    <div id="demo-border" aria-hidden="true"></div>
     <div id="demo-shell" aria-hidden="true" inert>
       <DemoShell />
     </div>

@@ -49,7 +49,7 @@
 
 .controls {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   display: flex;
   align-self: stretch;
   margin-left: auto;

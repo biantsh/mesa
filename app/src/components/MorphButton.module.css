@@ -25,6 +25,7 @@
   position: absolute;
   inset: 0 8px;
   overflow: hidden;
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 6px, #000 calc(100% - 6px), transparent);
   mask-image: linear-gradient(to right, transparent, #000 6px, #000 calc(100% - 6px), transparent);
 }
 

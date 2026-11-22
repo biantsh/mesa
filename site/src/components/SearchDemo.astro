@@ -5,7 +5,7 @@ const HEIGHT = 635;
 
 <div class="frame" data-demo style={`--demo-width: ${WIDTH}; --demo-height: ${HEIGHT}`}>
   <div class="scaled">
-    <iframe src="/demo/" title="Mesa searching" tabindex="-1" aria-hidden="true" width={WIDTH} height={HEIGHT}></iframe>
+    <iframe src="/demo/" title="Mesa searching" tabindex="-1" aria-hidden="true" inert width={WIDTH} height={HEIGHT}></iframe>
     <span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
   </div>
   <div class="glass" aria-hidden="true"></div>
@@ -19,6 +19,20 @@ const HEIGHT = 635;
       const scale = () => frame.style.setProperty("--scale", String(Math.min(1, frame.clientWidth / width)));
       scale();
       new ResizeObserver(scale).observe(frame);
+
+      const demo = frame.querySelector("iframe");
+      const loaded = () => {
+        try {
+          return demo.contentWindow.location.pathname.startsWith("/demo");
+        } catch {
+          return true;
+        }
+      };
+      const show = () => {
+        if (loaded()) frame.dataset.loaded = "";
+      };
+      demo.addEventListener("load", show);
+      show();
     }
   })();
 </script>
@@ -91,7 +105,7 @@ const HEIGHT = 635;
     max-width: calc(var(--demo-width) * 1px);
     margin: 0 auto;
     aspect-ratio: var(--demo-width) / var(--demo-height);
-    border-radius: 14px;
+    border-radius: calc(14px * var(--scale, 1));
     box-shadow: var(--shadow-dialog);
     overflow: hidden;
     background: var(--color-bg);
@@ -115,6 +129,12 @@ const HEIGHT = 635;
     height: 100%;
     border: 0;
     background: transparent;
+    opacity: 0;
+    transition: opacity 150ms ease-out;
+  }
+
+  .frame[data-loaded] iframe {
+    opacity: 1;
   }
 
   .glass {

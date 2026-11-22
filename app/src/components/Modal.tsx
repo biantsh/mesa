@@ -48,7 +48,8 @@ export function Modal({ open, onClose, className, label, labelledBy, focusCard, 
 
   return (
     <>
-      {modeless && <div className={cx(styles.scrim, open && styles.scrimOpen)} onClick={onClose} aria-hidden />}
+      {modeless && <div className={cx(styles.scrim, open && styles.scrimOpen)} aria-hidden />}
+      {modeless && <div className={cx(styles.catcher, open && styles.catcherOpen)} onClick={onClose} aria-hidden />}
       <dialog
         ref={dialog}
         className={cx(styles.dialog, modeless && styles.modeless, className)}

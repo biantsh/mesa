@@ -19,26 +19,14 @@
   flex: none;
 }
 
-.titleDim {
-  position: absolute;
-  inset: 0;
-  background: var(--color-overlay);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 360ms ease;
-}
-
-.dimmed {
-  opacity: 1;
-}
-
+/* Not "hidden": the dimming inside must also cover the title bar, or a seam shows at fractional scaling. */
 .screens {
   --slide-time: 400ms;
   --slide-curve: cubic-bezier(0.32, 0.72, 0, 1);
   position: relative;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: clip;
 }
 
 .pane {
@@ -93,8 +81,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .window,
-  .titleDim {
+  .window {
     transition: none;
   }
 

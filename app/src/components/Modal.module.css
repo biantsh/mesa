@@ -37,7 +37,7 @@
 
 .scrim {
   position: absolute;
-  inset: 0;
+  inset: -100vh 0 0;
   z-index: 1;
   background: var(--color-overlay);
   opacity: 0;
@@ -47,7 +47,17 @@
 
 .scrimOpen {
   opacity: 1;
-  pointer-events: auto;
+}
+
+.catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+}
+
+.catcherOpen {
+  display: block;
 }
 
 @media (prefers-reduced-motion: reduce) {

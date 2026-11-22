@@ -238,8 +238,17 @@ const pointer = (() => {
     "pointer-events: none; z-index: 2147483647; " +
     "transition: opacity 160ms ease; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));";
   let over: Element | null = null;
+  // Without popovers (Firefox before 125), the pointer joins the top layer by moving into the open modal instead.
+  const popovers = typeof element.showPopover === "function";
+  let started = false;
   const raise = () => {
     const cards = document.querySelectorAll("dialog[open]");
+    if (!popovers) {
+      if (!started) return;
+      const home = [...cards].filter((card) => card.matches(":modal")).pop() ?? document.body;
+      if (element.parentElement !== home) home.appendChild(element);
+      return;
+    }
     const last = cards.length ? cards[cards.length - 1] : null;
     if (last === over || !element.isConnected) return;
     over = last;
@@ -380,6 +389,7 @@ const pointer = (() => {
 
   return {
     start() {
+      started = true;
       document.body.appendChild(element);
       try {
         element.showPopover();

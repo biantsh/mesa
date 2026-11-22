@@ -17,7 +17,7 @@ function others(id: string) {
   {
     PLATFORMS.map((platform) => (
       <div class="choice" data-for={platform.id}>
-        <div class="group">
+        <div class:list={["group primary", { several: platform.installers.length > 1 }]}>
           {platform.installers.map((kind, i) =>
             i === 0 ? (
               <button type="button" class="button primary large">
@@ -74,20 +74,20 @@ function others(id: string) {
   }
 
   @media (max-width: 480px) {
-    .group:has(.button + .button) .for-os {
+    .group.several .for-os {
       display: none;
     }
 
-    .group:has(.button + .button) .button {
+    .group.several .button {
       padding: 0 14px;
     }
   }
 
-  .end .group:has(.button + .button) .for-os {
+  .end .group.several .for-os {
     display: none;
   }
 
-  .end .group:has(.button + .button) .button {
+  .end .group.several .button {
     padding: 0 16px;
   }
 

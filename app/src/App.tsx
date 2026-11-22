@@ -174,7 +174,6 @@ export default function App() {
     <div className={cx(styles.window, dimmed && styles.dimmedWindow)}>
       <div className={styles.titleArea}>
         <TitleBar maximized={maximized} />
-        <div className={cx(styles.titleDim, dimmed && styles.dimmed)} aria-hidden />
       </div>
       <div ref={screensBox} className={cx(styles.screens, fromWidget && styles.fromWidget)}>
         <div

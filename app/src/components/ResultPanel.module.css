@@ -14,11 +14,11 @@
   --panel-top: calc(var(--top-gap) + var(--field-height) + var(--tags-gap) + var(--tags-height) + 4px + 14px + 12px + 6px);
   --panel-bottom: calc(var(--bottom-gap) + var(--for-progress) + 8px);
   --resting-height: calc(var(--home-height, 100vh) - var(--panel-top) - var(--panel-bottom));
-  top: round(nearest, var(--panel-top), var(--device-px, 1px));
-  bottom: round(nearest, var(--panel-bottom), var(--device-px, 1px));
+  top: var(--panel-top);
+  bottom: var(--panel-bottom);
   --panel-to: var(--panel-drag-width, var(--panel-width, 308px));
   --panel-now: var(--panel-to);
-  width: calc(var(--panel-to) + round(nearest, var(--panel-now) - var(--panel-to), 1px));
+  width: var(--panel-now);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--color-border);
@@ -35,6 +35,14 @@
     visibility 0s linear 260ms,
     top var(--focus-time) var(--focus-ease),
     bottom var(--focus-time) var(--focus-ease);
+}
+
+@supports (width: round(1px, 1px)) {
+  .panel {
+    top: round(nearest, var(--panel-top), var(--device-px, 1px));
+    bottom: round(nearest, var(--panel-bottom), var(--device-px, 1px));
+    width: calc(var(--panel-to) + round(nearest, var(--panel-now) - var(--panel-to), 1px));
+  }
 }
 
 .shown {
@@ -77,6 +85,14 @@
 
 .body::-webkit-scrollbar {
   width: 18px;
+}
+
+/* Firefox can't style the scrollbar that makes the right-hand gap. */
+@supports (-moz-appearance: none) {
+  .body {
+    padding-right: 18px;
+    scrollbar-width: none;
+  }
 }
 
 .body::-webkit-scrollbar-thumb {

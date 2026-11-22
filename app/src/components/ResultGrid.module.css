@@ -34,22 +34,28 @@
   left: calc((100% - var(--column)) / 2);
   --pane-room-to: 0px;
   --pane-room: var(--pane-room-to);
-  width: calc(var(--column) - var(--pane-room-to) - round(nearest, var(--pane-room) - var(--pane-room-to), 1px) + var(--scrollbar-size));
+  width: calc(var(--column) - var(--pane-room) + var(--scrollbar-size));
   transform: translateX(calc(-1 * var(--results-shift, 0px)));
   top: 0;
   bottom: calc(var(--bottom-gap) + var(--for-progress) + var(--for-count));
   overflow-x: hidden;
   overflow-y: scroll;
   scroll-padding-top: var(--bar-room);
-  mask-image:
+  --fade-mask:
     linear-gradient(
       to bottom,
       transparent var(--fade-top),
       #000 calc(var(--fade-top) + var(--fade-length)),
-      #000 calc(100% - 12px),
-      transparent
+      #000 calc(100% - 14px),
+      transparent calc(100% - 2px)
     ),
     linear-gradient(#000, #000);
+  /* Chrome only reads the unprefixed mask properties from version 120. */
+  -webkit-mask-image: var(--fade-mask);
+  -webkit-mask-size: calc(100% - var(--scrollbar-size)) 100%, var(--scrollbar-size) 100%;
+  -webkit-mask-position: left top, right top;
+  -webkit-mask-repeat: no-repeat;
+  mask-image: var(--fade-mask);
   mask-size: calc(100% - var(--scrollbar-size)) 100%, var(--scrollbar-size) 100%;
   mask-position: left top, right top;
   mask-repeat: no-repeat;
@@ -64,6 +70,12 @@
     transform 260ms cubic-bezier(0.32, 0.72, 0, 1),
     --fade-top var(--focus-time) var(--focus-ease),
     --fade-length var(--focus-time) var(--focus-ease);
+}
+
+@supports (width: round(1px, 1px)) {
+  .pane {
+    width: calc(var(--column) - var(--pane-room-to) - round(nearest, var(--pane-room) - var(--pane-room-to), 1px) + var(--scrollbar-size));
+  }
 }
 
 .pane.besidePanel {
@@ -81,14 +93,27 @@
 }
 
 .pane::-webkit-scrollbar-thumb {
-  border-left-width: round(3px, var(--device-px, 1px));
-  border-right-width: round(3px, var(--device-px, 1px));
+  border-left-width: 3px;
+  border-right-width: 3px;
 }
 
 .pane::-webkit-scrollbar-thumb:hover,
 .pane::-webkit-scrollbar-thumb:active {
-  border-left-width: round(2px, var(--device-px, 1px));
-  border-right-width: round(2px, var(--device-px, 1px));
+  border-left-width: 2px;
+  border-right-width: 2px;
+}
+
+@supports (width: round(1px, 1px)) {
+  .pane::-webkit-scrollbar-thumb {
+    border-left-width: round(3px, var(--device-px, 1px));
+    border-right-width: round(3px, var(--device-px, 1px));
+  }
+
+  .pane::-webkit-scrollbar-thumb:hover,
+  .pane::-webkit-scrollbar-thumb:active {
+    border-left-width: round(2px, var(--device-px, 1px));
+    border-right-width: round(2px, var(--device-px, 1px));
+  }
 }
 
 .shown {
@@ -337,7 +362,7 @@
   justify-content: center;
   width: min(968px, 100%);
   margin: 0 auto;
-  padding: 0 0 12px;
+  padding: 0 0 14px;
 }
 
 .grid:has(+ .more) {
@@ -374,6 +399,7 @@
 .tile {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 2px;
   min-width: 0;
   padding: 6px 6px 8px;

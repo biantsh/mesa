@@ -124,6 +124,7 @@ const description = "Find anything in your files using any combination of clues:
         </p>
       </div>
     </section>
+    <div class="rest-end" aria-hidden="true"></div>
     </div>
   </main>
 
@@ -365,7 +366,20 @@ const description = "Find anything in your files using any combination of clues:
   }
 
   #download {
-    padding-bottom: calc(var(--section-space) * 0.5 + 26px);
+    padding-bottom: 0;
+  }
+
+  .rest-end {
+    --end-space: calc(var(--section-space) * 0.5 + 26px);
+    flex: 1 0 auto;
+    min-height: calc(var(--section-space) * 0.3);
+    max-height: var(--end-space);
+  }
+
+  @media (max-width: 760px) {
+    .rest-end {
+      min-height: var(--end-space);
+    }
   }
 
   .features {
