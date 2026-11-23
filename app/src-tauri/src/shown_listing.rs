@@ -273,7 +273,7 @@ impl ShownListing {
     }
 
     pub fn read(&self, path: &str, index: &Index, access: &FolderAccess) -> Result<Said, String> {
-        let listing = browse::list(path).map_err(|e| browse::explain(&e))?;
+        let listing = browse::list(path).map_err(|e| browse::explain(Path::new(path), &e))?;
         let (rows, prefix, paths) = rows_of(&listing, index, access);
         let generation = self.next_generation();
         let said = Said {
@@ -297,7 +297,7 @@ impl ShownListing {
     }
 
     pub fn refresh(&self, path: &str, base: u64, index: &Index, access: &FolderAccess) -> Result<Refreshed, String> {
-        let listing = browse::list(path).map_err(|e| browse::explain(&e))?;
+        let listing = browse::list(path).map_err(|e| browse::explain(Path::new(path), &e))?;
         let (rows, prefix, paths) = rows_of(&listing, index, access);
         let mut held = self.lock();
         let Some(was) = held

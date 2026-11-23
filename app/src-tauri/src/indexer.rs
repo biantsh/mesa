@@ -770,6 +770,7 @@ fn each_entry(
     let mut own_code: Option<bool> = None;
     let photos_library = unindexable::is_photos_library(dir);
     let remote = crate::cloud::is_remote(dir);
+    let locked = unindexable::is_unindexable(dir);
     for item in fs::read_dir(dir).ok()? {
         let Ok(item) = item else {
             complete = false;
@@ -781,6 +782,11 @@ fn each_entry(
         let Some((name, shown)) = browse::classify(&item) else {
             continue;
         };
+        if (locked || (matches!(shown, Shown::Folder) && unindexable::could_be_unindexable(&name)))
+            && unindexable::is_wholly_unindexable(&item.path())
+        {
+            continue;
+        }
         if matches!(shown, Shown::File(category) if !types.contains(category)) {
             continue;
         }
@@ -792,7 +798,6 @@ fn each_entry(
         }
         if matches!(shown, Shown::Folder)
             && (item.file_type().map_or(true, |kind| kind.is_symlink())
-                || (unindexable::could_be_unindexable(&name) && unindexable::is_unindexable(&item.path()))
                 || crate::code_scope::is_others_folder(&item.path()))
         {
             continue;

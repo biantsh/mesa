@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{index::IndexStatus, indexer};
+use crate::{index::IndexStatus, indexer, unindexable};
 
 #[cfg(windows)]
 const COMPUTER_LABEL: &str = "This PC";
@@ -166,7 +166,7 @@ impl Entry {
     }
 
     fn folder(name: String, path: &Path) -> Self {
-        let (readable, has_contents) = if crate::folder_access::may_open(path) {
+        let (readable, has_contents) = if crate::folder_access::may_open(path) && !unindexable::is_unindexable(path) {
             probe(path)
         } else {
             (true, true)
@@ -540,7 +540,7 @@ fn entry_of(item: &fs::DirEntry) -> Option<Entry> {
         Shown::File(category_of(&name).filter(|_| is_what_it_is_named(&item.path()))?)
     };
     let own = item.metadata().ok();
-    if is_hidden_entry(&name, || own.clone()) {
+    if is_hidden_entry(&item.path(), &name, || own.clone()) {
         return None;
     }
     let facts = if package {
@@ -611,7 +611,7 @@ fn is_dir(item: &fs::DirEntry) -> Option<bool> {
 }
 
 #[cfg_attr(not(any(windows, target_os = "macos")), allow(unused_variables))]
-fn is_hidden_entry(name: &str, metadata: impl FnOnce() -> Option<fs::Metadata>) -> bool {
+fn is_hidden_entry(path: &Path, name: &str, metadata: impl FnOnce() -> Option<fs::Metadata>) -> bool {
     if name.starts_with('.') {
         return true;
     }
@@ -621,7 +621,7 @@ fn is_hidden_entry(name: &str, metadata: impl FnOnce() -> Option<fs::Metadata>) 
         const HIDDEN: u32 = 0x2;
         const SYSTEM: u32 = 0x4;
         if let Some(metadata) = metadata() {
-            return metadata.file_attributes() & (HIDDEN | SYSTEM) != 0;
+            return metadata.file_attributes() & (HIDDEN | SYSTEM) != 0 && !unindexable::is_app_data(path);
         }
     }
     #[cfg(target_os = "macos")]
@@ -629,27 +629,31 @@ fn is_hidden_entry(name: &str, metadata: impl FnOnce() -> Option<fs::Metadata>) 
         use std::os::macos::fs::MetadataExt;
         const UF_HIDDEN: u32 = 0x8000;
         if let Some(metadata) = metadata() {
-            return metadata.st_flags() & UF_HIDDEN != 0;
+            return metadata.st_flags() & UF_HIDDEN != 0 && !unindexable::is_app_data(path);
         }
     }
     false
 }
 
-pub fn explain(error: &io::Error) -> String {
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub fn explain(path: &Path, error: &io::Error) -> String {
     #[cfg(target_os = "macos")]
     if error.kind() == io::ErrorKind::PermissionDenied {
+        if unindexable::is_unindexable(path) {
+            return "macOS keeps this folder private.".into();
+        }
         return "macOS isn't letting Mesa read it. Allow Mesa under System Settings \u{203A} Privacy & Security \u{203A} Files and Folders (or Full Disk Access), then try again.".into();
     }
     error.to_string()
 }
 
 fn is_hidden(item: &fs::DirEntry, name: &str) -> bool {
-    is_hidden_entry(name, || item.metadata().ok())
+    is_hidden_entry(&item.path(), name, || item.metadata().ok())
 }
 
 pub fn is_hidden_path(path: &Path) -> bool {
     path.file_name()
-        .is_some_and(|name| is_hidden_entry(&name.to_string_lossy(), || fs::symlink_metadata(path).ok()))
+        .is_some_and(|name| is_hidden_entry(path, &name.to_string_lossy(), || fs::symlink_metadata(path).ok()))
 }
 
 pub fn is_listed_file(path: &Path) -> bool {

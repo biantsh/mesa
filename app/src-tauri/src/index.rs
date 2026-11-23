@@ -1527,7 +1527,8 @@ impl Children {
             .into_iter()
             .map(|(name, cloud)| (OsString::from(name), cloud))
             .collect();
-        let unindexable = unindexable::is_unindexable(folder);
+        let may_differ = unindexable::children_may_differ(folder);
+        let unindexable = unindexable::is_unindexable(folder) && !may_differ;
         let excluded_above = shared.is_excluded(folder);
         let excluded = names_in(inside(&lock(&shared.excluded), folder), folder);
         let (indexed_above, roots, roots_below) = {
@@ -1548,7 +1549,7 @@ impl Children {
         let job_roots = lock(&shared.progress).job_root_children(folder);
         Self {
             unindexable,
-            each_may_be_unindexable: !unindexable && unindexable::children_may_differ(folder),
+            each_may_be_unindexable: may_differ,
             excluded_above,
             excluded,
             types: shared.types(),

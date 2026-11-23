@@ -139,6 +139,8 @@ fn protected_in(home: &Path) -> Vec<Folder> {
         ("Pictures/Photos Library.photoslibrary", "Photos library", Pane::Photos),
         ("Music/Music", "Music library", Pane::Media),
         ("Movies/TV", "TV library", Pane::Media),
+        ("Library/Mobile Documents", "iCloud Drive", Pane::FilesAndFolders),
+        ("Library/CloudStorage", "Cloud storage", Pane::FilesAndFolders),
     ]
     .iter()
     .map(|&(path, name, pane)| Folder {
