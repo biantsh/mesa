@@ -6,6 +6,8 @@ use std::{
 
 use symphonia::core::io::MediaSource;
 
+const MOST_STREAM_HEADER: u32 = 64 * 1024;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Piece {
     at: u64,
@@ -294,6 +296,7 @@ fn avi(file: &mut BufReader<File>) -> Option<(Vec<Piece>, Codec)> {
                 file.seek_relative(4).ok()?;
                 continue;
             }
+            b"strh" | b"strf" if size > MOST_STREAM_HEADER => return None,
             b"strh" => {
                 let mut header = vec![0u8; size as usize];
                 file.read_exact(&mut header).ok()?;

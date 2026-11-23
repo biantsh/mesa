@@ -346,7 +346,7 @@ pub fn paging(path: String) -> Option<crate::document_preview::Paging> {
     if !browse::is_listed_file(Path::new(&path)) {
         return None;
     }
-    crate::document_preview::paging(&path)
+    crate::reader::previews().paging(&path)
 }
 
 #[tauri::command]
@@ -697,11 +697,11 @@ pub fn set_gpu_acceleration(
     settings: State<'_, SettingsStore>,
     index: State<'_, Index>,
 ) -> Result<(), String> {
-    let after = Settings {
-        gpu_acceleration: enabled,
-        ..settings.get()
-    };
-    apply_setting(&settings, after, |s| index.set_device(s.device()))
+    apply_setting(
+        &settings,
+        |s| s.gpu_acceleration = enabled,
+        |s| index.set_device(s.device()),
+    )
 }
 
 #[tauri::command]
@@ -711,10 +711,7 @@ pub fn set_always_full_speed(
     index: State<'_, Index>,
 ) -> Result<(), String> {
     settings
-        .set(Settings {
-            always_full_speed: enabled,
-            ..settings.get()
-        })
+        .update(|s| s.always_full_speed = enabled)
         .map_err(|e| format!("Couldn't save the setting. {e}"))?;
     index.set_always_full_speed(enabled);
     Ok(())
@@ -743,21 +740,21 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn set_check_for_updates(enabled: bool, settings: State<'_, SettingsStore>) -> Result<(), String> {
     settings
-        .set(Settings {
-            check_for_updates: enabled,
-            ..settings.get()
-        })
+        .update(|s| s.check_for_updates = enabled)
+        .map(|_| ())
         .map_err(|e| format!("Couldn't save the setting. {e}"))
 }
 
 fn apply_setting(
     settings: &SettingsStore,
-    after: Settings,
+    change: impl Fn(&mut Settings),
     apply: impl Fn(Settings) -> Result<(), String>,
 ) -> Result<(), String> {
     let before = settings.get();
-    apply(after.clone())?;
-    if let Err(e) = settings.set(after) {
+    let mut after = before.clone();
+    change(&mut after);
+    apply(after)?;
+    if let Err(e) = settings.update(change) {
         let _ = apply(before);
         return Err(format!("Couldn't save the setting. {e}"));
     }
@@ -781,11 +778,7 @@ pub fn set_search_hotkey(
         .as_deref()
         .and_then(|text| hotkey::parse(text).ok())
         .map(|key| hotkey::canonical(&key));
-    let after = Settings {
-        search_hotkey: chosen,
-        ..settings.get()
-    };
-    if let Err(e) = settings.set(after) {
+    if let Err(e) = settings.update(|s| s.search_hotkey = chosen) {
         hotkey.restore(&app, old);
         return Err(hotkey::Error::Failed(format!("Couldn't save the setting. {e}")));
     }

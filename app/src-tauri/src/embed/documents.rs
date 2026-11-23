@@ -162,7 +162,7 @@ fn decode_entities(text: &str) -> String {
     while let Some(amp) = rest.find('&') {
         out.push_str(&rest[..amp]);
         rest = &rest[amp..];
-        let Some(semi) = rest[..rest.len().min(12)].find(';') else {
+        let Some(semi) = rest.bytes().take(12).position(|byte| byte == b';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -693,5 +693,13 @@ mod tests {
         assert_eq!(pieces.len(), 2);
         assert_eq!(pieces[0].chars().count(), PASSAGE_CHARS);
         assert_eq!(pieces.concat(), text);
+    }
+
+    #[test]
+    fn decodes_entities_beside_multibyte_text() {
+        assert_eq!(decode_entities("R&D部門の研究"), "R&D部門の研究");
+        assert_eq!(decode_entities("&😀😀😀;"), "&😀😀😀;");
+        assert_eq!(decode_entities("研究&amp;開発 &#x7814;"), "研究&開発 研");
+        assert_eq!(decode_entities("a &nbsp;b &unknown;"), "a  b &unknown;");
     }
 }

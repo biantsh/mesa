@@ -1,6 +1,6 @@
 use std::{fs::File, io::Read, path::Path};
 
-use image::{DynamicImage, ImageDecoder, codecs::jpeg::JpegDecoder, metadata::Orientation};
+use image::{ImageDecoder, codecs::jpeg::JpegDecoder, metadata::Orientation};
 
 const MAX_BYTES: u64 = 400 * 1024 * 1024;
 const SMALLEST: u32 = 320;
@@ -37,7 +37,7 @@ pub fn preview(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
             .orientation()
             .ok()
             .filter(|orientation| *orientation != Orientation::NoTransforms);
-        let Ok(mut picture) = DynamicImage::from_decoder(decoder) else {
+        let Ok(mut picture) = super::picture::decode_within_limits(decoder) else {
             continue;
         };
         if let Some(orientation) = own.or(raw_orientation) {

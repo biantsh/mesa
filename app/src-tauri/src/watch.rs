@@ -98,7 +98,7 @@ pub fn poll(chores: Chores, every: Duration, after_asking: Duration, at_most_eve
                 if stop.load(Ordering::SeqCst) {
                     break;
                 }
-                chores.check_later(chores.roots());
+                chores.check_everything();
                 last = Instant::now();
             }
         }
@@ -230,14 +230,18 @@ impl State {
                 return;
             }
         };
-        if event.need_rescan() {
-            self.rescan();
-        }
         if !self.aliases.is_empty() {
             event.paths = std::mem::take(&mut event.paths)
                 .into_iter()
                 .map(|path| self.as_watched(path))
                 .collect();
+        }
+        if event.need_rescan() {
+            if event.paths.is_empty() {
+                self.rescan();
+            } else {
+                self.chores.check_later(event.paths.clone());
+            }
         }
         let kind = if self.undirected_renames {
             directed(event.kind, &event.paths)
@@ -323,7 +327,7 @@ impl State {
             return;
         }
         self.last_rescan = Some(Instant::now());
-        self.chores.check_later(self.chores.roots());
+        self.chores.check_everything();
     }
 
     fn settled(&mut self) {
@@ -592,6 +596,28 @@ mod tests {
         state.hear(news(EventKind::Create(notify::event::CreateKind::File), "c.jpg"));
         assert!(state.moved_from.is_none() && state.moves.is_empty());
         assert!(state.heard.contains_key(&photos.join("b.jpg")));
+        drop(index);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn rescans_only_the_folder_named() {
+        use notify::event::Flag;
+        let root = std::env::temp_dir().join(format!("mesa-watch-rescan-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let index = crate::index::Index::open(
+            &root.join("data"),
+            std::sync::Arc::new(crate::embed::testing::Everything),
+        )
+        .unwrap();
+        let mut state = State::new(index.chores(), Duration::from_millis(100));
+        state.hear(Ok(Event::new(EventKind::Other)
+            .set_flag(Flag::Rescan)
+            .add_path(root.join("build"))));
+        assert!(state.last_rescan.is_none(), "only the named folder is looked at again");
+        state.hear(Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan)));
+        assert!(state.last_rescan.is_some(), "with no folder named, everything is");
         drop(index);
         let _ = fs::remove_dir_all(&root);
     }

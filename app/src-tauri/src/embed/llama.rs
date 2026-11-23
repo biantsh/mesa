@@ -39,6 +39,8 @@ const SERVER: &str = if cfg!(windows) {
 const SLOTS: usize = 8;
 const TOKENS_PER_SLOT: usize = 2048;
 const START_TIMEOUT: Duration = Duration::from_secs(180);
+const PORT_TRIES: usize = 3;
+const PORT_TAKEN: &str = "couldn't bind HTTP server socket";
 
 #[derive(Clone, Debug)]
 pub struct Locations {
@@ -599,10 +601,32 @@ fn server_threads() -> usize {
     thread::available_parallelism().map_or(4, |n| n.get()).min(8)
 }
 
+enum Start {
+    PortTaken(Error),
+    Failed(Error),
+}
+
+impl From<Error> for Start {
+    fn from(error: Error) -> Self {
+        Start::Failed(error)
+    }
+}
+
 fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
     if let Some(problem) = locations.problem() {
         return Err(Error(problem));
     }
+    let mut tries = 1;
+    loop {
+        match start(locations, device) {
+            Ok(server) => return Ok(server),
+            Err(Start::PortTaken(_)) if tries < PORT_TRIES => tries += 1,
+            Err(Start::PortTaken(error) | Start::Failed(error)) => return Err(error),
+        }
+    }
+}
+
+fn start(locations: &Locations, device: Device) -> Result<Running, Start> {
     let port = TcpListener::bind(("127.0.0.1", 0))
         .and_then(|listener| listener.local_addr())
         .map_err(|e| Error(format!("no free port for the embedding server: {e}")))?
@@ -630,7 +654,8 @@ fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
         .args(["-b", &TOKENS_PER_SLOT.to_string(), "-ub", &TOKENS_PER_SLOT.to_string()])
         .args(["--image-min-tokens", "1", "--image-max-tokens", "1024"])
         .args(["-t", &threads, "-tb", &threads])
-        .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key])
+        .args(["--host", "127.0.0.1", "--port", &port.to_string()])
+        .env("LLAMA_API_KEY", &key)
         .args(["--no-webui", "-lv", "2"])
         // Skip the fit check and the warm-up run: together they cost 0.4 s of a 1.6 s start.
         .args(["--fit", "off", "--no-warmup"])
@@ -685,23 +710,39 @@ fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
     let started = Instant::now();
     loop {
         if let Some(status) = server.child.as_mut().and_then(|child| child.try_wait().ok().flatten()) {
-            return Err(Error(format!(
-                "the embedding server stopped while starting ({status}); its log, {}, ends: {}",
+            let tail = tail_of(&locations.log);
+            let error = Error(format!(
+                "the embedding server stopped while starting ({status}); its log, {}, ends: {tail}",
                 locations.log.display(),
-                tail_of(&locations.log)
-            )));
+            ));
+            return Err(if tail.contains(PORT_TAKEN) {
+                Start::PortTaken(error)
+            } else {
+                Start::Failed(error)
+            });
         }
         let ready = probe
             .get(&format!("{}/health", server.connection.url))
             .call()
             .is_ok_and(|response| response.status().as_u16() == 200);
         if ready {
-            return Ok(server);
+            let ours = probe
+                .get(&format!("{}/v1/models", server.connection.url))
+                .header("Authorization", &format!("Bearer {}", server.connection.key))
+                .call()
+                .is_ok_and(|response| response.status().as_u16() == 200);
+            if ours {
+                return Ok(server);
+            }
+            return Err(Start::PortTaken(Error(format!(
+                "another program answered on port {port}"
+            ))));
         }
         if started.elapsed() > START_TIMEOUT {
             return Err(Error(format!(
                 "the embedding server didn't get ready within {START_TIMEOUT:?}"
-            )));
+            ))
+            .into());
         }
         thread::sleep(Duration::from_millis(100));
     }

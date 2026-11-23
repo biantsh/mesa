@@ -49,8 +49,10 @@ pub use llama::Locations;
 pub use model::{ModelState, ModelStatus};
 pub use office::shown_sheets;
 pub(crate) use opendocument::is_encrypted;
+#[cfg(target_os = "linux")]
+pub use picture::decode_within_limits;
 pub use pipeline::{GENTLE_SLOWDOWN, Pipeline};
-pub use prepare::{MOST_PIECES, passages};
+pub use prepare::{MOST_PIECES, Prepared, ReadText, Unit, passages, prepare, sample};
 #[cfg(target_os = "linux")]
 pub use raw::{EXTENSIONS as RAW_EXTENSIONS, decode as raw_photo};
 

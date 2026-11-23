@@ -17,6 +17,7 @@ use super::{
 use crate::{
     index::lock,
     ocr,
+    reader::Failure,
     vectors::{self, Located, Record},
 };
 
@@ -414,15 +415,17 @@ impl<B: Backend> Pipeline<B> {
         let (send, receive) = std::sync::mpsc::sync_channel::<Unit>(batch_size * 2);
         let (made, read) = std::thread::scope(|scope| {
             let reader = scope.spawn(move || {
-                prepare::sample(
-                    &Item {
-                        path: path.to_owned(),
-                        words_only: false,
-                    },
-                    from,
-                    to,
-                    &mut |unit| send.send(unit).is_ok(),
-                )
+                crate::reader::indexing()
+                    .sample(
+                        &Item {
+                            path: path.to_owned(),
+                            words_only: false,
+                        },
+                        from,
+                        to,
+                        &mut |unit| send.send(unit).is_ok(),
+                    )
+                    .map_err(Failure::into_text)
             });
             let made = self.embed_units(&receive, batch_size, each);
             drop(receive);
@@ -470,7 +473,9 @@ impl<B: Backend> Embedder for Pipeline<B> {
                 height: height as usize,
             });
         };
-        prepare::prepare(&item, Some(&mut read), &mut |_| true, &mut String::new()).ok()?;
+        crate::reader::indexing()
+            .prepare(&item, Some(&mut read), &mut |_| true, &mut String::new(), &|| false)
+            .ok()?;
         text.filter(|text| !text.trim().is_empty())
     }
 
@@ -504,7 +509,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
         thread::scope(|scope| {
             for number in 0..self.preparers {
                 let (ready_in, event_in, text_in) = (ready_in.clone(), event_in.clone(), text_in.clone());
-                let (next, cancel, preparing) = (&next, &cancel, &preparing);
+                let (next, cancel, preparing, failure) = (&next, &cancel, &preparing, &failure);
                 scope.spawn(move || {
                     let _leaving = self.parking.waker();
                     while !cancel.load(Ordering::Relaxed) {
@@ -528,7 +533,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
                                 texts += 1;
                             }
                         };
-                        let result = prepare::prepare(
+                        let result = crate::reader::indexing().prepare(
                             file,
                             reading.map(|_| &mut read_text as &mut dyn FnMut(u64, Vec<u8>, u32, u32)),
                             &mut |unit| {
@@ -561,15 +566,26 @@ impl<B: Backend> Embedder for Pipeline<B> {
                                 true
                             },
                             &mut words,
+                            &|| cancel.load(Ordering::Relaxed),
                         );
                         if cancel.load(Ordering::Relaxed) {
                             break;
                         }
+                        let error = match result {
+                            Ok(()) => None,
+                            Err(Failure::File(why)) => Some(why),
+                            Err(Failure::Reader(why)) => {
+                                lock(failure).get_or_insert(Error(why));
+                                cancel.store(true, Ordering::Relaxed);
+                                self.parking.wake();
+                                break;
+                            }
+                        };
                         if event_in
                             .send(Event::Read {
                                 item,
                                 units,
-                                error: result.err(),
+                                error,
                                 words,
                                 texts,
                             })

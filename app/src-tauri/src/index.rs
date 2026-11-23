@@ -1083,8 +1083,7 @@ impl Index {
     }
 
     pub fn check_for_changes(&self) {
-        let chores = self.chores();
-        chores.check_later(chores.roots());
+        self.chores().check_everything();
     }
 
     pub fn check_for_added_types(&self) {
@@ -1281,6 +1280,11 @@ impl Chores {
 
     pub fn roots(&self) -> BTreeSet<PathBuf> {
         lock(&self.shared.rules).clone()
+    }
+
+    pub fn check_everything(&self) {
+        crate::code_scope::forget();
+        self.check_later(self.roots());
     }
 
     pub fn is_indexed(&self, path: &Path) -> bool {
@@ -1488,7 +1492,22 @@ impl Facts for Asked<'_> {
         self.0.control.is_paused()
     }
     fn cloud(&self, path: &Path) -> CloudOnly {
-        lock(&self.0.store).cloud_of(path).unwrap_or(CloudOnly::Not)
+        if crate::cloud::is_remote(path) {
+            return CloudOnly::Wholly;
+        }
+        let mut store = lock(&self.0.store);
+        if !crate::cloud::remote_mounts_below(path).is_empty() {
+            return remote_below(&store, path);
+        }
+        store.cloud_of(path).unwrap_or(CloudOnly::Not)
+    }
+}
+
+fn remote_below(store: &Store, path: &Path) -> CloudOnly {
+    if store.files_below(path).unwrap_or(true) {
+        CloudOnly::Partly
+    } else {
+        CloudOnly::Wholly
     }
 }
 
@@ -1521,12 +1540,32 @@ impl FolderStates {
 impl Children {
     fn of(index: &Index, folder: &Path) -> Self {
         let shared = &index.shared;
-        let cloud = lock(&shared.store)
-            .cloud_in(folder)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(name, cloud)| (OsString::from(name), cloud))
-            .collect();
+        let cloud = {
+            let mut store = lock(&shared.store);
+            let mut cloud: HashMap<OsString, CloudOnly> = store
+                .cloud_in(folder)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(name, cloud)| (OsString::from(name), cloud))
+                .collect();
+            for mount in crate::cloud::remote_mounts_below(folder) {
+                let Some(first) = mount
+                    .strip_prefix(folder)
+                    .ok()
+                    .and_then(|rest| rest.components().next())
+                else {
+                    continue;
+                };
+                let child = folder.join(first);
+                let state = if child == mount {
+                    CloudOnly::Wholly
+                } else {
+                    remote_below(&store, &child)
+                };
+                cloud.insert(first.as_os_str().to_owned(), state);
+            }
+            cloud
+        };
         let may_differ = unindexable::children_may_differ(folder);
         let unindexable = unindexable::is_unindexable(folder) && !may_differ;
         let excluded_above = shared.is_excluded(folder);

@@ -8,6 +8,10 @@ pub fn is_remote(path: &Path) -> bool {
     imp::is_remote(path)
 }
 
+pub fn remote_mounts_below(path: &Path) -> Vec<std::path::PathBuf> {
+    imp::remote_mounts_below(path)
+}
+
 pub fn is_cloud_only_path(path: &Path) -> bool {
     is_remote(path) || fs::metadata(path).is_ok_and(|metadata| is_cloud_only(&metadata))
 }
@@ -27,6 +31,10 @@ mod imp {
     pub fn is_remote(_: &Path) -> bool {
         false
     }
+
+    pub fn remote_mounts_below(_: &Path) -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -41,6 +49,10 @@ mod imp {
 
     pub fn is_remote(_: &Path) -> bool {
         false
+    }
+
+    pub fn remote_mounts_below(_: &Path) -> Vec<std::path::PathBuf> {
+        Vec::new()
     }
 }
 
@@ -62,14 +74,20 @@ mod imp {
     }
 
     pub fn is_remote(path: &Path) -> bool {
+        with_mounts(|table| super::is_on_remote(table, path))
+    }
+
+    pub fn remote_mounts_below(path: &Path) -> Vec<PathBuf> {
+        with_mounts(|table| super::remote_mounts_in(table, path))
+    }
+
+    fn with_mounts<T>(look: impl FnOnce(&[(PathBuf, bool)]) -> T) -> T {
         let mut mounts = MOUNTS.lock().unwrap_or_else(PoisonError::into_inner);
         if mounts.as_ref().is_none_or(|(read, _)| read.elapsed() > FRESH) {
             let list = fs::read_to_string("/proc/self/mounts").unwrap_or_default();
             *mounts = Some((Instant::now(), super::mounts_in(&list)));
         }
-        mounts
-            .as_ref()
-            .is_some_and(|(_, table)| super::is_on_remote(table, path))
+        look(mounts.as_ref().map_or(&[], |(_, table)| table.as_slice()))
     }
 }
 
@@ -83,6 +101,10 @@ mod imp {
 
     pub fn is_remote(_: &Path) -> bool {
         false
+    }
+
+    pub fn remote_mounts_below(_: &Path) -> Vec<std::path::PathBuf> {
+        Vec::new()
     }
 }
 
@@ -134,6 +156,15 @@ fn is_on_remote(mounts: &[(std::path::PathBuf, bool)], path: &Path) -> bool {
         .is_some_and(|&(_, remote)| remote)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn remote_mounts_in(mounts: &[(std::path::PathBuf, bool)], path: &Path) -> Vec<std::path::PathBuf> {
+    mounts
+        .iter()
+        .filter(|(point, remote)| *remote && point != path && point.starts_with(path) && is_on_remote(mounts, point))
+        .map(|(point, _)| point.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +188,17 @@ vault /home/me/Vaults/Private fuse.gocryptfs rw 0 0
         assert!(remote("/run/user/1000/gvfs/google-drive:host=gmail.com/report.pdf"));
         assert!(remote("/home/me/Google Drive/photo.jpg"));
         assert!(remote("/mnt/share/notes.txt"));
+    }
+
+    #[test]
+    fn finds_drives_below_a_folder() {
+        let mounts = mounts_in(MOUNTS);
+        let below = |path: &str| remote_mounts_in(&mounts, Path::new(path));
+        assert_eq!(below("/home/me"), [std::path::PathBuf::from("/home/me/Google Drive")]);
+        assert_eq!(below("/mnt"), [std::path::PathBuf::from("/mnt/share")]);
+        assert!(below("/mnt/share").is_empty());
+        assert!(below("/home/me/Documents").is_empty());
+        assert!(below("/media/me").is_empty());
     }
 
     #[test]

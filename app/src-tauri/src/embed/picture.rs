@@ -4,7 +4,7 @@ use fast_image_resize::{
     FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer,
     images::{Image, ImageRef},
 };
-use image::{DynamicImage, ImageDecoder, ImageReader};
+use image::{DynamicImage, ImageDecoder, ImageReader, ImageResult, Limits};
 
 use super::IMAGE_TOKENS;
 
@@ -25,13 +25,20 @@ pub fn decode(path: &Path) -> Result<(Vec<u8>, u32, u32), String> {
         .into_decoder()
         .map_err(|e| format!("can't read the picture: {e}"))?;
     let orientation = decoder.orientation().ok();
-    let mut picture = DynamicImage::from_decoder(decoder).map_err(|e| format!("can't decode the picture: {e}"))?;
+    let mut picture = decode_within_limits(decoder).map_err(|e| format!("can't decode the picture: {e}"))?;
     if let Some(orientation) = orientation {
         picture.apply_orientation(orientation);
     }
     let rgb = picture.into_rgb8();
     let (width, height) = rgb.dimensions();
     Ok((rgb.into_raw(), width, height))
+}
+
+pub fn decode_within_limits(mut decoder: impl ImageDecoder) -> ImageResult<DynamicImage> {
+    let mut limits = Limits::default();
+    limits.reserve(decoder.total_bytes())?;
+    decoder.set_limits(limits)?;
+    DynamicImage::from_decoder(decoder)
 }
 
 pub fn from_rgb(rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
@@ -139,6 +146,22 @@ mod tests {
         segment.extend_from_slice(&orientation.to_be_bytes());
         segment.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
         [&jpeg[..2], &segment, &jpeg[2..]].concat()
+    }
+
+    #[test]
+    fn refuses_a_picture_too_big_to_hold() {
+        let mut jpeg = Vec::new();
+        image::RgbImage::new(16, 16)
+            .write_to(&mut std::io::Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+            .unwrap();
+        let frame = jpeg.windows(2).position(|marker| marker == [0xFF, 0xC0]).unwrap();
+        jpeg[frame + 5..frame + 9].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        let path = temp_dir("huge").join("huge.jpg");
+        fs::write(&path, &jpeg).unwrap();
+        let error = decode(&path).unwrap_err();
+        assert!(error.contains("limit"), "{error}");
+        let decoder = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(&jpeg)).unwrap();
+        assert!(decode_within_limits(decoder).is_err());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
 };
 
 #[derive(Clone, Copy)]
@@ -46,11 +46,22 @@ pub fn open_at(path: &Path, line: u32) -> Result<bool, String> {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    command
+    let child = command
         .spawn()
         .map_err(|e| format!("Couldn't start {}: {e}", editor.program.display()))?;
+    let_run(child);
     Ok(true)
 }
+
+#[cfg(unix)]
+fn let_run(mut child: Child) {
+    let _ = std::thread::Builder::new().name("editor-reaper".into()).spawn(move || {
+        let _ = child.wait();
+    });
+}
+
+#[cfg(not(unix))]
+fn let_run(_: Child) {}
 
 fn find(path: &Path) -> Option<Editor> {
     let extension = path
@@ -311,6 +322,6 @@ pub fn open_as_text(path: &Path) -> Result<(), String> {
     command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     command
         .spawn()
-        .map(|_| ())
+        .map(let_run)
         .map_err(|e| format!("Couldn't open it as text: {e}"))
 }

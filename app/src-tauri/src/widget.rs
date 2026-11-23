@@ -315,15 +315,21 @@ fn place(app: &AppHandle, window: &WebviewWindow) {
         .ok()
         .and_then(|pointer| app.monitor_from_point(pointer.x, pointer.y).ok().flatten())
         .or_else(|| app.primary_monitor().ok().flatten());
-    let (Some(monitor), Ok(size)) = (monitor, window.outer_size()) else {
+    let (Some(monitor), Ok(size), Ok(scale)) = (monitor, window.outer_size(), window.scale_factor()) else {
         return;
     };
+    let size = size_at(size, scale, monitor.scale_factor());
     let (x, y) = position(
         (monitor.position().x, monitor.position().y),
         (monitor.size().width, monitor.size().height),
         (size.width, size.height),
     );
     let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn size_at(size: tauri::PhysicalSize<u32>, scale: f64, target_scale: f64) -> tauri::PhysicalSize<u32> {
+    size.to_logical::<f64>(scale).to_physical(target_scale)
 }
 
 fn position(screen_at: (i32, i32), screen: (u32, u32), widget: (u32, u32)) -> (i32, i32) {
@@ -339,6 +345,14 @@ fn position(screen_at: (i32, i32), screen: (u32, u32), widget: (u32, u32)) -> (i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sizes_the_panel_for_the_screen_it_goes_to() {
+        let size = tauri::PhysicalSize::new(992, 600);
+        assert_eq!(size_at(size, 1.0, 1.5), tauri::PhysicalSize::new(1488, 900));
+        assert_eq!(size_at(tauri::PhysicalSize::new(1488, 900), 1.5, 1.0), size);
+        assert_eq!(size_at(size, 1.25, 1.25), size);
+    }
 
     #[test]
     fn fits_short_screen() {

@@ -89,7 +89,7 @@ pub fn of_document(path: &Path, query: &str, at: Option<u64>, scanned: &PageText
         (!terms.is_empty() && all.len() < MOST_SNIPPETS) || (at.is_some() && closest.is_none())
     };
     let mut wanted = true;
-    let read = crate::embed::passages(path, &mut |locator, passage| {
+    let read = crate::reader::previews().passages(path, &mut |locator, passage| {
         wanted = look(locator, passage);
         wanted
     });
@@ -110,7 +110,7 @@ pub fn of_document(path: &Path, query: &str, at: Option<u64>, scanned: &PageText
     if is_laid_out(path)
         && let Some(pages) = path
             .to_str()
-            .and_then(crate::document_preview::page_texts)
+            .and_then(|path| crate::reader::previews().page_texts(path))
             .map(|texts| Pages::new(&texts))
     {
         for snippet in all.iter_mut() {

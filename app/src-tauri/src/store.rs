@@ -544,6 +544,8 @@ impl Store {
         let reading = (self.reading_pictures)();
         let tx = self.conn.transaction()?;
         let mut next_slot = self.vectors.next_slot();
+        let mut reused_up_to = None;
+        tx.execute("DELETE FROM temp.freed_now", [])?;
         let mut writes: Vec<(u64, Record)> = Vec::new();
 
         for scan in scans {
@@ -582,7 +584,7 @@ impl Store {
                         .execute(params![CONFIG_ID, file_id])?;
                 }
                 for vector in &file.vectors {
-                    let slot = take_slot(&tx, &mut next_slot)?;
+                    let slot = take_slot(&tx, &mut next_slot, &mut reused_up_to)?;
                     tx.prepare_cached(
                         "INSERT INTO embeddings (config_id, slot, file_id, locator) VALUES (?1, ?2, ?3, ?4)",
                     )?
@@ -695,6 +697,13 @@ impl Store {
         }
         self.cloud.paths.insert(path.to_owned(), found);
         Ok(found)
+    }
+
+    pub fn files_below(&self, path: &Path) -> Result<bool> {
+        match find_dir(&self.conn, path)? {
+            Some(dir) => has_files_below(&self.conn, dir),
+            None => Ok(false),
+        }
     }
 
     fn any_cloud(&mut self) -> Result<bool> {
@@ -1509,7 +1518,9 @@ fn open_db(dir: &Path) -> Result<Connection> {
             Ok(words::fold(&name))
         },
     )?;
-    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA mmap_size = 1073741824;",
+    )?;
     conn.execute_batch("PRAGMA journal_size_limit = 1048576;")?;
     let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?;
     if auto_vacuum != 2 {
@@ -1531,8 +1542,17 @@ fn open_db(dir: &Path) -> Result<Connection> {
     )?;
     conn.execute("DELETE FROM embeddings WHERE config_id != ?1", [CONFIG_ID])?;
     conn.execute("DELETE FROM free_slots WHERE config_id != ?1", [CONFIG_ID])?;
+    conn.execute_batch(FREED_NOW)?;
     Ok(conn)
 }
+
+const FREED_NOW: &str = "
+CREATE TEMP TABLE freed_now (slot INTEGER PRIMARY KEY);
+CREATE TEMP TRIGGER embeddings_freed_now AFTER DELETE ON main.embeddings
+BEGIN
+    INSERT OR IGNORE INTO freed_now (slot) VALUES (old.slot);
+END;
+";
 
 fn remove_other_vector_files(dir: &Path) {
     let keep = vectors_path(dir);
@@ -1998,15 +2018,22 @@ fn write_page_texts(tx: &Transaction, id: i64, pages: &PageTexts) -> Result<()> 
     Ok(())
 }
 
-fn take_slot(tx: &Transaction, next_slot: &mut u64) -> Result<u64> {
+fn take_slot(tx: &Transaction, next_slot: &mut u64, reused_up_to: &mut Option<i64>) -> Result<u64> {
     let freed: Option<i64> = tx
         .prepare_cached(
             "DELETE FROM free_slots
-             WHERE config_id = ?1 AND slot = (SELECT MIN(slot) FROM free_slots WHERE config_id = ?1)
+             WHERE config_id = ?1 AND slot = (
+                 SELECT slot FROM free_slots
+                 WHERE config_id = ?1 AND slot > ?2 AND slot NOT IN (SELECT slot FROM temp.freed_now)
+                 ORDER BY slot LIMIT 1
+             )
              RETURNING slot",
         )?
-        .query_row([CONFIG_ID], |r| r.get(0))
+        .query_row(params![CONFIG_ID, reused_up_to.unwrap_or(-1)], |r| r.get(0))
         .optional()?;
+    if freed.is_some() {
+        *reused_up_to = freed;
+    }
     Ok(match freed {
         Some(slot) => slot as u64,
         None => {
@@ -2093,6 +2120,36 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_database_through_memory() {
+        let store = Store::open(&temp_dir("mmap")).unwrap();
+        let mapped: i64 = store.conn.query_row("PRAGMA mmap_size", [], |r| r.get(0)).unwrap();
+        assert_eq!(mapped, 1 << 30);
+    }
+
+    #[test]
+    fn reuses_a_freed_slot_only_in_a_later_save() {
+        let mut store = Store::open(&temp_dir("slot-reuse")).unwrap();
+        let synchronous: i64 = store.conn.query_row("PRAGMA synchronous", [], |r| r.get(0)).unwrap();
+        assert_eq!(synchronous, 2);
+        let partial = |files| ScannedDir {
+            complete: false,
+            ..scan("p", files)
+        };
+
+        write(&mut store, &[partial(vec![file("a.jpg", 1)])]);
+        assert_eq!(slot_of(&store, "p", "a.jpg"), 0);
+
+        write(&mut store, &[partial(vec![file("a.jpg", 2), file("b.jpg", 1)])]);
+        assert_ne!(slot_of(&store, "p", "a.jpg"), 0);
+        assert_ne!(slot_of(&store, "p", "b.jpg"), 0);
+        assert_eq!(count(&store, "free_slots"), 1);
+
+        write(&mut store, &[partial(vec![file("c.jpg", 1)])]);
+        assert_eq!(slot_of(&store, "p", "c.jpg"), 0);
+        assert_eq!(count(&store, "free_slots"), 0);
+    }
+
+    #[test]
     fn stores_file_and_vector() {
         let mut store = Store::open(&temp_dir("basic")).unwrap();
         let mut video = file("b.mp4", 2000);
@@ -2156,14 +2213,14 @@ mod tests {
         );
         write(&mut store, &[scan("a", vec![in_parts("song.mp3", 2, &[0, 25_000])])]);
         assert_eq!(count(&store, "embeddings"), 2);
-        assert_eq!(count(&store, "free_slots"), 1);
-        assert_eq!(store.vectors.next_slot(), 3);
+        assert_eq!(count(&store, "free_slots"), 3);
+        assert_eq!(store.vectors.next_slot(), 5);
         write(
             &mut store,
             &[scan("a", vec![in_parts("song.mp3", 3, &[0, 25_000, 50_000, 75_000])])],
         );
-        assert_eq!((count(&store, "embeddings"), count(&store, "free_slots")), (4, 0));
-        assert_eq!(store.vectors.next_slot(), 4);
+        assert_eq!((count(&store, "embeddings"), count(&store, "free_slots")), (4, 2));
+        assert_eq!(store.vectors.next_slot(), 6);
     }
 
     #[test]

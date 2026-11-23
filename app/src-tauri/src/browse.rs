@@ -160,20 +160,23 @@ impl Entry {
 
     fn drive(root: &Path) -> Self {
         Self {
-            readable: fs::read_dir(root).is_ok(),
+            readable: is_network_drive(root) || fs::read_dir(root).is_ok(),
             ..Self::new(display_name(root), root, Kind::Drive)
         }
     }
 
     fn folder(name: String, path: &Path) -> Self {
-        let (readable, has_contents) = if crate::folder_access::may_open(path) && !unindexable::is_unindexable(path) {
-            probe(path)
-        } else {
-            (true, true)
-        };
+        let cloud = crate::cloud::is_cloud_only_path(path);
+        let (readable, has_contents) =
+            if crate::folder_access::may_open(path) && !unindexable::is_unindexable(path) && !cloud {
+                probe(path)
+            } else {
+                (true, true)
+            };
         Self {
             readable,
             has_contents,
+            cloud,
             ..Self::new(name, path, Kind::Folder)
         }
     }
@@ -256,10 +259,25 @@ pub fn describe(path: &Path) -> (Entry, bool) {
 
 #[cfg(windows)]
 pub fn roots() -> Vec<PathBuf> {
+    let present = unsafe { windows::Win32::Storage::FileSystem::GetLogicalDrives() };
     ('A'..='Z')
-        .map(|letter| PathBuf::from(format!("{letter}:\\")))
-        .filter(|root| root.exists())
+        .enumerate()
+        .filter(|&(at, _)| present & (1 << at) != 0)
+        .map(|(_, letter)| PathBuf::from(format!("{letter}:\\")))
+        .filter(|root| is_network_drive(root) || root.exists())
         .collect()
+}
+
+#[cfg(windows)]
+fn is_network_drive(root: &Path) -> bool {
+    const DRIVE_REMOTE: u32 = 4;
+    let root = windows::core::HSTRING::from(root.as_os_str());
+    unsafe { windows::Win32::Storage::FileSystem::GetDriveTypeW(&root) == DRIVE_REMOTE }
+}
+
+#[cfg(not(windows))]
+fn is_network_drive(_: &Path) -> bool {
+    false
 }
 
 #[cfg(target_os = "macos")]
@@ -522,7 +540,7 @@ fn read_entries(dir: &Path) -> io::Result<Vec<Entry>> {
 }
 
 fn entry_of(item: &fs::DirEntry) -> Option<Entry> {
-    let name = item.file_name().to_string_lossy().into_owned();
+    let name = item.file_name().into_string().ok()?;
     if name.starts_with('.') {
         return None;
     }
@@ -574,7 +592,7 @@ pub enum Shown {
 }
 
 pub fn classify(item: &fs::DirEntry) -> Option<(String, Shown)> {
-    let name = item.file_name().to_string_lossy().into_owned();
+    let name = item.file_name().into_string().ok()?;
     if is_hidden(item, &name) {
         return None;
     }
@@ -825,6 +843,43 @@ mod tests {
         dir
     }
 
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn leaves_out_names_that_arent_text() {
+        let dir = temp_dir("not-text");
+        fs::write(dir.join("fine.png"), "").unwrap();
+        #[cfg(windows)]
+        let not_text = |name: &[u16]| {
+            use std::os::windows::ffi::OsStringExt;
+            std::ffi::OsString::from_wide(name)
+        };
+        #[cfg(windows)]
+        let (file, folder) = (
+            not_text(&[0x62, 0xD800, 0x2E, 0x70, 0x6E, 0x67]),
+            not_text(&[0x64, 0xD800]),
+        );
+        #[cfg(unix)]
+        let (file, folder) = {
+            use std::os::unix::ffi::OsStrExt;
+            (
+                std::ffi::OsStr::from_bytes(b"b\xff.png").to_owned(),
+                std::ffi::OsStr::from_bytes(b"d\xff").to_owned(),
+            )
+        };
+        fs::write(dir.join(&file), "").unwrap();
+        fs::create_dir(dir.join(&folder)).unwrap();
+        fs::write(dir.join(&folder).join("inside.png"), "").unwrap();
+        let listing = list(dir.to_str().unwrap()).unwrap();
+        let names: Vec<_> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["fine.png"]);
+        let indexed: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter_map(|item| classify(&item).map(|(name, _)| name))
+            .collect();
+        assert_eq!(indexed, ["fine.png"]);
+    }
+
     #[test]
     fn folders_first_then_case_insensitive_name() {
         let dir = temp_dir("sort");
@@ -881,6 +936,24 @@ mod tests {
         assert_eq!(category_of("scan.tif"), Some(Category::Image));
         assert_eq!(category_of("book.m4b"), Some(Category::Audio));
         assert_eq!(category_of("archive.zip"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn leaves_cloud_only_folders_unlisted() {
+        use windows::{
+            Win32::Storage::FileSystem::{FILE_ATTRIBUTE_OFFLINE, SetFileAttributesW},
+            core::HSTRING,
+        };
+        let dir = temp_dir("cloud-folders");
+        fs::create_dir(dir.join("here")).unwrap();
+        fs::create_dir(dir.join("away")).unwrap();
+        unsafe { SetFileAttributesW(&HSTRING::from(dir.join("away").as_path()), FILE_ATTRIBUTE_OFFLINE) }.unwrap();
+        let listing = list(&dir.to_string_lossy()).unwrap();
+        let entry = |name: &str| listing.entries.iter().find(|entry| entry.name == name).unwrap();
+        assert!(entry("away").cloud && entry("away").readable && entry("away").has_contents);
+        assert!(!entry("here").cloud && !entry("here").has_contents);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]

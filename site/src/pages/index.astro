@@ -60,10 +60,10 @@ const description = "Find anything in your files using any combination of clues:
             <DemoScenarios client:load />
             <span class="about" data-about>
               <button class="about-button" type="button" aria-label="About this demo" aria-describedby="demo-about" aria-expanded="false">
-                <Icon name="info" size={15} />
+                <Icon name="info" size={18} stroke={1.75} />
               </button>
               <span class="about-text" id="demo-about" role="tooltip">
-                <span><strong>This is Mesa’s real code</strong>, running live in your browser using sample files.</span>
+                <span>This is the app’s actual code, running live<br />in your browser using sample files.</span>
               </span>
             </span>
           </div>
@@ -314,7 +314,7 @@ const description = "Find anything in your files using any combination of clues:
     z-index: 5;
     display: grid;
     gap: 8px;
-    width: 312px;
+    width: max-content;
     max-width: calc(100vw - 32px);
     padding: 10px 12px;
     border: 1px solid var(--color-border-strong);
@@ -334,11 +334,7 @@ const description = "Find anything in your files using any combination of clues:
       opacity 80ms ease-in,
       transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
       visibility 0s 150ms;
-  }
-
-  .about-text strong {
-    color: var(--color-text);
-    font-weight: 500;
+    will-change: transform, opacity;
   }
 
   @media (min-width: 860px) {

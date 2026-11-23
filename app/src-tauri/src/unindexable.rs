@@ -95,7 +95,15 @@ struct Locked {
 
 fn locked() -> &'static Locked {
     static LOCKED: OnceLock<Locked> = OnceLock::new();
-    LOCKED.get_or_init(Locked::here)
+    LOCKED.get_or_init(|| {
+        let locked = Locked::here();
+        #[cfg(test)]
+        let locked = Locked {
+            exceptions: [locked.exceptions, vec![std::env::temp_dir()]].concat(),
+            ..locked
+        };
+        locked
+    })
 }
 
 impl Locked {

@@ -374,9 +374,11 @@ impl Sound {
         if spec.rate == MODEL_RATE {
             out.extend_from_slice(&self.mono);
         } else {
-            self.resampler
-                .get_or_insert_with(|| Resampler::new(spec.rate, MODEL_RATE))
-                .push(&self.mono, out);
+            let resampler = match &mut self.resampler {
+                Some(resampler) => resampler,
+                none => none.insert(Resampler::new(spec.rate, MODEL_RATE)?),
+            };
+            resampler.push(&self.mono, out);
         }
         Ok(true)
     }

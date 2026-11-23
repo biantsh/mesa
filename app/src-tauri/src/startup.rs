@@ -124,10 +124,9 @@ pub fn at_start(app: &AppHandle, settings: &SettingsStore) {
         return;
     }
     let on = system_says(app).unwrap_or(kept.start_at_sign_in);
-    if let Err(e) = settings.set(Settings {
-        start_at_sign_in: on,
-        sign_in_entry_made: true,
-        ..settings.get()
+    if let Err(e) = settings.update(|s| {
+        s.start_at_sign_in = on;
+        s.sign_in_entry_made = true;
     }) {
         eprintln!("Mesa: couldn't save the settings. {e}");
     }
@@ -137,12 +136,10 @@ pub fn current(app: &AppHandle, settings: &SettingsStore) -> Settings {
     let kept = settings.get();
     match system_says(app) {
         Some(on) if kept.sign_in_entry_made && on != kept.start_at_sign_in => {
-            let now = Settings {
+            settings.update(|s| s.start_at_sign_in = on).unwrap_or(Settings {
                 start_at_sign_in: on,
                 ..kept
-            };
-            let _ = settings.set(now.clone());
-            now
+            })
         }
         _ => kept,
     }
@@ -156,12 +153,9 @@ pub fn set(app: &AppHandle, settings: &SettingsStore, on: bool) -> Result<(), St
     if changes {
         if on { register(app, true)? } else { unregister(app)? }
     }
-    let kept = settings.get();
-    let made = kept.sign_in_entry_made || changes;
-    if let Err(e) = settings.set(Settings {
-        start_at_sign_in: on,
-        sign_in_entry_made: made,
-        ..kept
+    if let Err(e) = settings.update(|s| {
+        s.start_at_sign_in = on;
+        s.sign_in_entry_made |= changes;
     }) {
         if changes {
             let _ = if on { unregister(app) } else { register(app, true) };

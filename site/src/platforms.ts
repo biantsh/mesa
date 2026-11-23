@@ -14,6 +14,6 @@ export interface Platform {
 
 export const PLATFORMS: Platform[] = [
   { id: "windows", name: "Windows", logo: windows, needs: "Windows 10 or 11 (x64)", installers: [".exe"] },
-  { id: "mac", name: "macOS", logo: apple, needs: "macOS 13 Ventura+", installers: [".dmg"] },
+  { id: "mac", name: "macOS", logo: apple, needs: "macOS 13+ (Apple silicon)", installers: [".dmg"] },
   { id: "linux", name: "Linux", logo: linux, needs: "Ubuntu 22.04+ or equivalent (x64)", installers: [".deb", ".rpm", "AppImage"] },
 ];

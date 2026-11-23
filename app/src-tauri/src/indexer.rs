@@ -252,7 +252,7 @@ fn supported_files(
     if browse::is_folder(root) {
         let total = AtomicU64::new(0);
         crawl(root.to_owned(), shared.crawl_threads(), shared.is_gentle(), |dir| {
-            if !counted(&dir) || !go_on() {
+            if !counted(&dir) || !go_on() || crate::cloud::is_remote(&dir) {
                 return Vec::new();
             }
             let mut subdirs = Vec::new();
@@ -303,6 +303,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
 
                     let found = if !dropped
                         && shared.is_indexed(&dir)
+                        && !crate::cloud::is_remote(&dir)
                         && (in_progress || !lock(&shared.progress).has_waiting())
                     {
                         scan_dir(&dir, shared.types())
@@ -766,6 +767,9 @@ fn each_entry(
     types: Categories,
     mut visit: impl FnMut(&fs::DirEntry, String, Shown, bool),
 ) -> Option<bool> {
+    if dir.to_str().is_none() {
+        return Some(true);
+    }
     let mut complete = true;
     let mut own_code: Option<bool> = None;
     let photos_library = unindexable::is_photos_library(dir);
@@ -798,6 +802,7 @@ fn each_entry(
         }
         if matches!(shown, Shown::Folder)
             && (item.file_type().map_or(true, |kind| kind.is_symlink())
+                || crate::cloud::is_remote(&item.path())
                 || crate::code_scope::is_others_folder(&item.path()))
         {
             continue;
@@ -862,7 +867,8 @@ fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
 }
 
 fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
-    let name = path.file_name()?.to_string_lossy().into_owned();
+    path.to_str()?;
+    let name = path.file_name()?.to_str()?.to_owned();
     let category = browse::category_of_path(path, &name).filter(|&category| types.contains(category))?;
     if crate::code_scope::in_others(path) || (category == Category::Code && !crate::code_scope::allows(path)) {
         return None;

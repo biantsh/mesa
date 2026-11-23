@@ -42,8 +42,8 @@ enum Kind {
     Code,
 }
 
-fn kind(path: &Path) -> Option<Kind> {
-    if code::is_code_path(path) {
+fn kind(path: &Path, code: bool) -> Option<Kind> {
+    if code {
         return Some(Kind::Code);
     }
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
@@ -75,7 +75,7 @@ fn kind(path: &Path) -> Option<Kind> {
 }
 
 pub fn is_supported(item: &Item) -> bool {
-    match kind(&item.path) {
+    match kind(&item.path, code::is_code_path(&item.path)) {
         None => false,
         Some(Kind::SystemPicture) => cfg!(any(windows, target_os = "macos", target_os = "linux")),
         Some(Kind::Video) => cfg!(any(windows, target_os = "macos", target_os = "linux")),
@@ -83,14 +83,14 @@ pub fn is_supported(item: &Item) -> bool {
     }
 }
 
-/// A panic while reading one file fails only that file, not the whole run.
 pub fn prepare(
     item: &Item,
+    code: bool,
     text: ReadText,
     emit: &mut dyn FnMut(Unit) -> bool,
     words: &mut String,
 ) -> Result<(), String> {
-    catch_unwind(AssertUnwindSafe(|| read(item, text, emit, words))).unwrap_or_else(|panic| {
+    catch_unwind(AssertUnwindSafe(|| read(item, code, text, emit, words))).unwrap_or_else(|panic| {
         let why = panic
             .downcast_ref::<String>()
             .map(String::as_str)
@@ -109,7 +109,7 @@ pub fn passages(path: &Path, each: &mut dyn FnMut(u64, &str) -> bool) -> Result<
         _ => true,
     };
     catch_unwind(AssertUnwindSafe(|| {
-        documents::every_passage(|| match kind(path) {
+        documents::every_passage(|| match kind(path, false) {
             Some(Kind::Text) => documents::plain(path, &mut emit, &mut words),
             Some(Kind::Word) => documents::docx(path, &mut emit, &mut words),
             Some(Kind::Excel) => office::xlsx(path, &mut emit, &mut words),
@@ -130,9 +130,15 @@ pub fn passages(path: &Path, each: &mut dyn FnMut(u64, &str) -> bool) -> Result<
     .unwrap_or_else(|_| Err("reading it went wrong inside Mesa".into()))
 }
 
-fn read(item: &Item, text: ReadText, emit: &mut dyn FnMut(Unit) -> bool, words: &mut String) -> Result<(), String> {
+fn read(
+    item: &Item,
+    code: bool,
+    text: ReadText,
+    emit: &mut dyn FnMut(Unit) -> bool,
+    words: &mut String,
+) -> Result<(), String> {
     let path = &item.path;
-    match kind(path) {
+    match kind(path, code) {
         Some(Kind::Picture) => one_picture(item, picture::decode(path)?, text, emit),
         Some(Kind::Raw) => one_picture(item, raw::decode(path)?, text, emit),
         #[cfg(windows)]
@@ -211,8 +217,14 @@ fn fraction(slot: usize, slots: usize) -> f64 {
     (slot as f64 + 0.5) / slots as f64
 }
 
-pub fn sample(item: &Item, from: usize, to: usize, emit: &mut dyn FnMut(Unit) -> bool) -> Result<usize, String> {
-    catch_unwind(AssertUnwindSafe(|| sample_unguarded(item, from, to, emit))).unwrap_or_else(|panic| {
+pub fn sample(
+    item: &Item,
+    code: bool,
+    from: usize,
+    to: usize,
+    emit: &mut dyn FnMut(Unit) -> bool,
+) -> Result<usize, String> {
+    catch_unwind(AssertUnwindSafe(|| sample_unguarded(item, code, from, to, emit))).unwrap_or_else(|panic| {
         let why = panic
             .downcast_ref::<String>()
             .map(String::as_str)
@@ -224,7 +236,13 @@ pub fn sample(item: &Item, from: usize, to: usize, emit: &mut dyn FnMut(Unit) ->
     })
 }
 
-fn sample_unguarded(item: &Item, from: usize, to: usize, emit: &mut dyn FnMut(Unit) -> bool) -> Result<usize, String> {
+fn sample_unguarded(
+    item: &Item,
+    code: bool,
+    from: usize,
+    to: usize,
+    emit: &mut dyn FnMut(Unit) -> bool,
+) -> Result<usize, String> {
     let path = &item.path;
     let wanted = |slots: usize| {
         order(slots)
@@ -233,11 +251,11 @@ fn sample_unguarded(item: &Item, from: usize, to: usize, emit: &mut dyn FnMut(Un
             .take(to.saturating_sub(from))
             .collect::<Vec<_>>()
     };
-    match kind(path) {
+    match kind(path, code) {
         None => Err("this kind of file isn't read".into()),
         Some(Kind::Picture | Kind::SystemPicture | Kind::Raw) => {
             if from == 0 {
-                read(item, None, emit, &mut String::new())?;
+                read(item, code, None, emit, &mut String::new())?;
             }
             Ok(1)
         }
@@ -253,7 +271,7 @@ fn sample_unguarded(item: &Item, from: usize, to: usize, emit: &mut dyn FnMut(Un
                 }
                 Ok(slots)
             }
-            None => by_choosing(item, from, to, emit),
+            None => by_choosing(item, code, from, to, emit),
         },
         #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         Some(Kind::Video) => {
@@ -325,7 +343,7 @@ fn sample_unguarded(item: &Item, from: usize, to: usize, emit: &mut dyn FnMut(Un
             emit,
         )
         .map(|pages| pages.clamp(1, MOST_PIECES)),
-        _ => by_choosing(item, from, to, emit),
+        _ => by_choosing(item, code, from, to, emit),
     }
 }
 
@@ -339,10 +357,17 @@ pub fn chosen(count: usize, from: usize, to: usize) -> (Vec<usize>, usize) {
     (picked.collect(), slots)
 }
 
-fn by_choosing(item: &Item, from: usize, to: usize, emit: &mut dyn FnMut(Unit) -> bool) -> Result<usize, String> {
+fn by_choosing(
+    item: &Item,
+    code: bool,
+    from: usize,
+    to: usize,
+    emit: &mut dyn FnMut(Unit) -> bool,
+) -> Result<usize, String> {
     let mut units = Vec::new();
     let read_result = read(
         item,
+        code,
         None,
         &mut |unit| {
             units.push(unit);
@@ -385,6 +410,10 @@ fn one_picture(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn kind(path: &Path) -> Option<Kind> {
+        super::kind(path, code::is_code_path(path))
+    }
 
     #[test]
     fn kind_from_extension() {
@@ -444,6 +473,7 @@ mod tests {
                 path,
                 words_only: false,
             },
+            false,
             None,
             &mut emit,
             &mut String::new(),

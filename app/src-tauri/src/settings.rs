@@ -78,17 +78,16 @@ impl SettingsStore {
         lock(&self.current).clone()
     }
 
-    pub fn set(&self, settings: Settings) -> io::Result<()> {
+    pub fn update(&self, change: impl FnOnce(&mut Settings)) -> io::Result<Settings> {
         let mut current = lock(&self.current);
+        let mut next = current.clone();
+        change(&mut next);
         fs::create_dir_all(&self.dir)?;
         let temporary = self.dir.join(format!("{FILE}.new"));
-        fs::write(
-            &temporary,
-            serde_json::to_vec_pretty(&settings).map_err(io::Error::other)?,
-        )?;
+        fs::write(&temporary, serde_json::to_vec_pretty(&next).map_err(io::Error::other)?)?;
         fs::rename(&temporary, self.dir.join(FILE))?;
-        *current = settings;
-        Ok(())
+        *current = next.clone();
+        Ok(next)
     }
 }
 
@@ -109,13 +108,40 @@ mod tests {
         fs::write(dir.join(FILE), "{ \"gpuAcceleration\": fal").unwrap();
         let store = SettingsStore::open(&dir);
         assert_eq!(store.get(), Settings::default());
-        store
-            .set(Settings {
-                gpu_acceleration: false,
-                ..Settings::default()
-            })
-            .unwrap();
+        store.update(|settings| settings.gpu_acceleration = false).unwrap();
         assert!(!SettingsStore::open(&dir).get().gpu_acceleration);
+    }
+
+    #[test]
+    fn changes_made_at_once_are_all_kept() {
+        let dir = temp_dir("at-once");
+        let store = std::sync::Arc::new(SettingsStore::open(&dir));
+        for round in 0..50 {
+            let on = round % 2 == 0;
+            let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let speed = std::thread::spawn({
+                let (store, start) = (store.clone(), start.clone());
+                move || {
+                    start.wait();
+                    store.update(|settings| settings.always_full_speed = on).unwrap();
+                }
+            });
+            let updates = std::thread::spawn({
+                let (store, start) = (store.clone(), start.clone());
+                move || {
+                    start.wait();
+                    store.update(|settings| settings.check_for_updates = on).unwrap();
+                }
+            });
+            speed.join().unwrap();
+            updates.join().unwrap();
+            let kept = SettingsStore::open(&dir).get();
+            assert_eq!(
+                (kept.always_full_speed, kept.check_for_updates),
+                (on, on),
+                "round {round}"
+            );
+        }
     }
 
     #[test]

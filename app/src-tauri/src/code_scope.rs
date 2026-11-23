@@ -100,17 +100,23 @@ pub fn in_others(path: &Path) -> bool {
 }
 
 pub const INSTALLED_FILES: usize = 5000;
+const INSTALLED_MARKERS: &[&str] = &[".vcpkg-root", "emsdk.py", "gclient.py", "packages/flutter_tools"];
 
 #[derive(Default)]
 struct Cache {
     marked: HashMap<PathBuf, bool>,
-    tops: HashMap<PathBuf, usize>,
+    installed_roots: HashMap<PathBuf, bool>,
+    units: HashMap<PathBuf, usize>,
     gitignores: HashMap<PathBuf, Option<Arc<Gitignore>>>,
     repositories: HashMap<PathBuf, Option<PathBuf>>,
     projects: HashMap<PathBuf, bool>,
 }
 
 static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(Mutex::default);
+
+pub fn forget() {
+    *lock(&CACHE) = Cache::default();
+}
 
 pub fn allows_folder(dir: &Path) -> bool {
     !in_dependency(dir) && !in_marked(dir) && !in_installed(dir)
@@ -136,14 +142,32 @@ fn in_marked(dir: &Path) -> bool {
     })
 }
 
-fn top_of(dir: &Path) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")
+fn home() -> Option<PathBuf> {
+    std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from);
+        .map(PathBuf::from)
+}
+
+struct Place {
+    top: PathBuf,
+    unit: Option<PathBuf>,
+}
+
+fn place_of(dir: &Path, home: Option<&Path>) -> Option<Place> {
     if let Some(home) = home.filter(|home| dir.starts_with(home)) {
-        let inside = dir.strip_prefix(&home).ok()?;
-        return inside.components().next().map(|first| home.join(first));
+        let mut inside = dir.strip_prefix(home).ok()?.components();
+        let top = home.join(inside.next()?);
+        let unit = inside.next().map(|second| top.join(second));
+        return Some(Place { top, unit });
     }
+    let top = top_outside_home(dir)?;
+    Some(Place {
+        unit: Some(top.clone()),
+        top,
+    })
+}
+
+fn top_outside_home(dir: &Path) -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let mut parts = dir.components();
@@ -175,13 +199,39 @@ fn top_of(dir: &Path) -> Option<PathBuf> {
 }
 
 fn in_installed(dir: &Path) -> bool {
-    let Some(top) = top_of(dir) else { return false };
-    if let Some(&count) = lock(&CACHE).tops.get(&top) {
-        return count > INSTALLED_FILES;
+    installed_below(dir, home().as_deref(), INSTALLED_FILES)
+}
+
+fn installed_below(dir: &Path, home: Option<&Path>, most: usize) -> bool {
+    let Some(Place { top, unit }) = place_of(dir, home) else {
+        return false;
+    };
+    if dir
+        .ancestors()
+        .take_while(|folder| folder.starts_with(&top))
+        .any(is_installed_root)
+    {
+        return true;
     }
-    let count = count_code(&top, INSTALLED_FILES + 1);
-    lock(&CACHE).tops.insert(top, count);
-    count > INSTALLED_FILES
+    if repository_of(dir).is_some_and(|repository| repository.starts_with(&top)) {
+        return false;
+    }
+    let Some(unit) = unit else { return false };
+    if let Some(&count) = lock(&CACHE).units.get(&unit) {
+        return count > most;
+    }
+    let count = count_code(&unit, most + 1);
+    lock(&CACHE).units.insert(unit, count);
+    count > most
+}
+
+fn is_installed_root(folder: &Path) -> bool {
+    if let Some(&known) = lock(&CACHE).installed_roots.get(folder) {
+        return known;
+    }
+    let is = INSTALLED_MARKERS.iter().any(|marker| folder.join(marker).exists());
+    lock(&CACHE).installed_roots.insert(folder.to_owned(), is);
+    is
 }
 
 fn count_code(top: &Path, most: usize) -> usize {
@@ -198,8 +248,9 @@ fn count_code(top: &Path, most: usize) -> usize {
             }
             let Ok(kind) = entry.file_type() else { continue };
             if kind.is_dir() {
-                if !DEPENDENCY_FOLDERS.contains(&name.as_str()) {
-                    stack.push(entry.path());
+                let path = entry.path();
+                if !DEPENDENCY_FOLDERS.contains(&name.as_str()) && !path.join(".git").exists() {
+                    stack.push(path);
                 }
             } else if kind.is_file() && crate::embed::code::is_code_name(&name) {
                 count += 1;
@@ -307,5 +358,84 @@ mod tests {
         assert!(is_ignored(&root.join("generated/api.py")));
         assert!(is_ignored(&root.join("src/schema.gen.ts")));
         assert!(!is_ignored(&root.join("src/main.ts")));
+    }
+
+    fn code_files(dir: &Path, count: usize) {
+        fs::create_dir_all(dir).unwrap();
+        for n in 0..count {
+            fs::write(dir.join(format!("m{n}.py")), "print()").unwrap();
+        }
+    }
+
+    #[test]
+    fn tells_installed_software_from_the_users_code() {
+        const MOST: usize = 50;
+        let home = temp("installed");
+        let installed = |dir: &str| installed_below(&home.join(dir), Some(&home), MOST);
+        fs::create_dir_all(home.join(".git")).unwrap();
+
+        for repository in ["app", "api", "tools"] {
+            fs::create_dir_all(home.join("Projects").join(repository).join(".git")).unwrap();
+            code_files(&home.join("Projects").join(repository).join("src"), 20);
+        }
+        assert!(
+            !installed("Projects/app/src"),
+            "repositories that add up past the limit"
+        );
+        assert!(!installed("Projects"), "files right in a top folder");
+
+        for repository in ["web", "cli"] {
+            fs::create_dir_all(home.join("Work/clients").join(repository).join(".git")).unwrap();
+            code_files(&home.join("Work/clients").join(repository), 30);
+        }
+        code_files(&home.join("Work/clients/notes"), 2);
+        assert!(
+            !installed("Work/clients/notes"),
+            "repositories don't count toward the folder around them"
+        );
+
+        for course in 1..=6 {
+            code_files(&home.join(format!("Courses/week{course}")), 10);
+        }
+        assert!(
+            !installed("Courses/week1"),
+            "small projects without git that add up past the limit"
+        );
+
+        code_files(&home.join("scoop/apps/python/current/Lib"), MOST + 1);
+        assert!(
+            installed("scoop/apps/python/current/Lib"),
+            "software, even with a repository around the home folder"
+        );
+        code_files(&home.join("Downloads/linux-6.1/kernel"), MOST + 1);
+        assert!(
+            installed("Downloads/linux-6.1/kernel"),
+            "a big folder of code that isn't a repository"
+        );
+
+        fs::create_dir_all(home.join("dev/vcpkg/.git")).unwrap();
+        fs::write(home.join("dev/vcpkg/.vcpkg-root"), "").unwrap();
+        code_files(&home.join("dev/vcpkg/ports/zlib"), 1);
+        assert!(installed("dev/vcpkg/ports/zlib"), "an SDK installed with git clone");
+        fs::create_dir_all(home.join("dev/flutter/.git")).unwrap();
+        fs::create_dir_all(home.join("dev/flutter/packages/flutter_tools")).unwrap();
+        code_files(&home.join("dev/flutter/packages/flutter/lib"), 1);
+        assert!(installed("dev/flutter/packages/flutter/lib"));
+        fs::create_dir_all(home.join("dev/game/.git")).unwrap();
+        code_files(&home.join("dev/game/src"), 1);
+        assert!(!installed("dev/game/src"), "a repository beside an SDK");
+    }
+
+    #[test]
+    fn looks_again_once_forgotten() {
+        const MOST: usize = 10;
+        let home = temp("forgotten");
+        let installed = || installed_below(&home.join("Downloads/tool/src"), Some(&home), MOST);
+        code_files(&home.join("Downloads/tool/src"), MOST + 1);
+        assert!(installed());
+        fs::create_dir_all(home.join("Downloads/tool/.git")).unwrap();
+        assert!(installed(), "kept until forgotten");
+        forget();
+        assert!(!installed());
     }
 }

@@ -341,9 +341,9 @@ fn make(caches: &Caches, disk: Option<&Disk>, key: &Key, keep_whole: bool) -> Op
         let drawn = (page > 1 || crate::document_preview::draws_every_page(&key.0))
             && !crate::cloud::is_cloud_only_path(Path::new(&key.0));
         let made = drawn
-            .then(|| crate::document_preview::render_page(&key.0, size, page))
+            .then(|| crate::reader::previews().render_page(&key.0, size, page))
             .flatten()
-            .or_else(|| render(&key.0, size))?;
+            .or_else(|| crate::reader::previews().render(&key.0, size))?;
         caches.put(key.clone(), made.clone());
         return Some(made);
     }
@@ -352,7 +352,7 @@ fn make(caches: &Caches, disk: Option<&Disk>, key: &Key, keep_whole: bool) -> Op
     let whole = match kept {
         Some(png) => png,
         None => {
-            let png = render(&key.0, PREVIEW_SIZE)?;
+            let png = crate::reader::previews().render(&key.0, PREVIEW_SIZE)?;
             if keep_whole || key.2 == Shape::Whole {
                 caches.put(whole_key, png.clone());
             }
@@ -876,7 +876,7 @@ mod freedesktop {
             .into_decoder()
             .ok()?;
         let orientation = decoder.orientation().ok();
-        let mut picture = DynamicImage::from_decoder(decoder).ok()?;
+        let mut picture = crate::embed::decode_within_limits(decoder).ok()?;
         if let Some(orientation) = orientation {
             picture.apply_orientation(orientation);
         }

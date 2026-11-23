@@ -238,9 +238,11 @@ fn read_sound(
             if rate == MODEL_RATE {
                 out.extend_from_slice(&mono);
             } else {
-                resampler
-                    .get_or_insert_with(|| Resampler::new(rate, MODEL_RATE))
-                    .push(&mono, &mut out);
+                let resampler = match &mut resampler {
+                    Some(resampler) => resampler,
+                    none => none.insert(Resampler::new(rate, MODEL_RATE)?),
+                };
+                resampler.push(&mono, &mut out);
             }
             if let Some(left) = left.as_mut() {
                 out.truncate(*left);

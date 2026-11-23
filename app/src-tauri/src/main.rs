@@ -31,6 +31,7 @@ mod page_scale;
 mod power;
 mod preview_queue;
 mod progress;
+mod reader;
 mod reclaim;
 mod relevance;
 mod rules;
@@ -144,6 +145,9 @@ fn menu_bar_icon() -> Option<tauri::image::Image<'static>> {
 }
 
 fn main() {
+    if reader::run_if_asked() {
+        return;
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     if embed::watchdog::run_if_asked() {
         return;
@@ -165,10 +169,9 @@ fn main() {
     };
     main_window::keep_hidden_at_start(startup::starts_without_window());
     let previews = thumbnail::PreviewServer::start();
-    std::thread::spawn(|| {
-        power::below_the_page();
-        document_preview::warm_up();
-    });
+    if claim.is_some() {
+        reader::start();
+    }
     let kept_previews = previews.clone();
     let managed_previews = previews.clone();
 
