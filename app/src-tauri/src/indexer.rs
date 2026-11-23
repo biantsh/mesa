@@ -131,7 +131,7 @@ fn walk_files(shared: &Shared, mine: Vec<Job>) {
         power::follow(shared.is_gentle());
         walker.stored &= walker.batch.pause_point(shared);
         match scan_file(&job.root, shared.types()).filter(|_| shared.is_indexed(&job.root)) {
-            Some(scan) => walker.add(scan),
+            Some(scan) => walker.add_root(scan, &job.root),
             None => walker.release(&job.root),
         }
         if walker.waiting() >= CHUNK_FILES {
@@ -257,9 +257,10 @@ fn supported_files(
             }
             let mut subdirs = Vec::new();
             let mut files = 0;
-            each_entry(&dir, shared.types(), |item, _, shown| match shown {
+            each_entry(&dir, shared.types(), |item, _, shown, cloud| match shown {
                 Shown::Folder => subdirs.push(item.path()),
-                Shown::File(_) => files += 1,
+                Shown::File(_) if !cloud => files += 1,
+                Shown::File(_) => {}
             });
             if files > 0 {
                 total.fetch_add(files, Ordering::Relaxed);
@@ -270,6 +271,7 @@ fn supported_files(
         total.into_inner()
     } else if browse::is_file_like(root)
         && counted(root)
+        && !crate::cloud::is_cloud_only_path(root)
         && root
             .file_name()
             .and_then(|name| browse::category_of(&name.to_string_lossy()))
@@ -343,7 +345,7 @@ fn walk_tree(shared: &Shared, tracking: Tracking, root: &Path) -> bool {
         });
     } else {
         match scan_file(root, shared.types()).filter(|_| shared.is_indexed(root)) {
-            Some(scan) => walker.add(scan),
+            Some(scan) => walker.add_root(scan, root),
             None => walker.release(root),
         }
     }
@@ -430,9 +432,17 @@ impl<'a> Walker<'a> {
         self.stored = false;
     }
 
+    fn add_root(&mut self, scan: ScannedDir, root: &Path) {
+        let local = !scan.files.is_empty();
+        self.add(scan);
+        if !local {
+            self.release(root);
+        }
+    }
+
     fn add(&mut self, scan: ScannedDir) {
         if scan.files.is_empty() {
-            if scan.complete {
+            if scan.complete || !scan.cloud.is_empty() {
                 self.batch.scans.push(scan);
             }
             return;
@@ -488,6 +498,8 @@ impl<'a> Walker<'a> {
             self.folders.push(scan);
         } else if scan.complete {
             self.batch.scans.push(scan);
+        } else if let Some(cloud) = scan.cloud_part() {
+            self.batch.scans.push(cloud);
         }
     }
 
@@ -590,9 +602,13 @@ impl<'a> Walker<'a> {
         self.rereads.clear();
 
         if !self.failed {
-            for folder in folders.drain(..).filter(|folder| folder.complete) {
-                self.batch.files += folder.files.len();
-                self.batch.scans.push(folder);
+            for folder in folders.drain(..) {
+                if folder.complete {
+                    self.batch.files += folder.files.len();
+                    self.batch.scans.push(folder);
+                } else if let Some(cloud) = folder.cloud_part() {
+                    self.batch.scans.push(cloud);
+                }
             }
         }
     }
@@ -636,6 +652,7 @@ impl Batch {
         self.scans.push(ScannedDir {
             path: folder.to_owned(),
             files: vec![file],
+            cloud: Vec::new(),
             complete: false,
             subfolders: None,
         });
@@ -744,10 +761,15 @@ struct Found {
     subdirs: Vec<PathBuf>,
 }
 
-fn each_entry(dir: &Path, types: Categories, mut visit: impl FnMut(&fs::DirEntry, String, Shown)) -> Option<bool> {
+fn each_entry(
+    dir: &Path,
+    types: Categories,
+    mut visit: impl FnMut(&fs::DirEntry, String, Shown, bool),
+) -> Option<bool> {
     let mut complete = true;
     let mut own_code: Option<bool> = None;
     let photos_library = unindexable::is_photos_library(dir);
+    let remote = crate::cloud::is_remote(dir);
     for item in fs::read_dir(dir).ok()? {
         let Ok(item) = item else {
             complete = false;
@@ -775,26 +797,31 @@ fn each_entry(dir: &Path, types: Categories, mut visit: impl FnMut(&fs::DirEntry
         {
             continue;
         }
-        visit(&item, name, shown);
+        let cloud = matches!(shown, Shown::File(_))
+            && (remote || metadata_of(&item).is_some_and(|metadata| crate::cloud::is_cloud_only(&metadata)));
+        visit(&item, name, shown, cloud);
     }
     Some(complete)
 }
 
 pub fn survey_folder(dir: &Path, mut file: impl FnMut(Category, PathBuf, u64)) -> Option<Vec<PathBuf>> {
     let mut subdirs = Vec::new();
-    each_entry(dir, Categories::ALL, |item, _, shown| match shown {
+    each_entry(dir, Categories::ALL, |item, _, shown, cloud| match shown {
         Shown::Folder => subdirs.push(item.path()),
-        Shown::File(category) => file(category, item.path(), facts(item).map_or(0, |(_, size)| size)),
+        Shown::File(category) if !cloud => file(category, item.path(), facts(item).map_or(0, |(_, size)| size)),
+        Shown::File(_) => {}
     })?;
     Some(subdirs)
 }
 
 fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
     let mut files = Vec::new();
+    let mut cloud = Vec::new();
     let mut subdirs = Vec::new();
     let mut unreadable_file = false;
-    let all_listed = each_entry(dir, types, |item, name, shown| match shown {
+    let all_listed = each_entry(dir, types, |item, name, shown, in_cloud| match shown {
         Shown::Folder => subdirs.push(item.path()),
+        Shown::File(category) if in_cloud => cloud.push((name, category)),
         Shown::File(category) => match facts(item) {
             Some((modified_ms, size)) => files.push(ScannedFile {
                 name,
@@ -821,6 +848,7 @@ fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
         scan: ScannedDir {
             path: dir.to_owned(),
             files,
+            cloud,
             complete,
             subfolders,
         },
@@ -833,6 +861,15 @@ fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
     let category = browse::category_of_path(path, &name).filter(|&category| types.contains(category))?;
     if crate::code_scope::in_others(path) || (category == Category::Code && !crate::code_scope::allows(path)) {
         return None;
+    }
+    if crate::cloud::is_cloud_only_path(path) {
+        return Some(ScannedDir {
+            path: path.parent()?.to_owned(),
+            files: Vec::new(),
+            cloud: vec![(name, category)],
+            complete: false,
+            subfolders: None,
+        });
     }
     let (modified_ms, size) = facts_of_path(path)?;
     Some(ScannedDir {
@@ -847,17 +884,22 @@ fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
             pages: Vec::new(),
             words_only: false,
         }],
+        cloud: Vec::new(),
         complete: false,
         subfolders: None,
     })
 }
 
-pub fn facts(item: &fs::DirEntry) -> Option<(i64, u64)> {
-    let metadata = if item.file_type().ok()?.is_symlink() {
-        fs::metadata(item.path()).ok()?
+fn metadata_of(item: &fs::DirEntry) -> Option<fs::Metadata> {
+    if item.file_type().ok()?.is_symlink() {
+        fs::metadata(item.path()).ok()
     } else {
-        item.metadata().ok()?
-    };
+        item.metadata().ok()
+    }
+}
+
+pub fn facts(item: &fs::DirEntry) -> Option<(i64, u64)> {
+    let metadata = metadata_of(item)?;
     if metadata.is_dir() && browse::is_package(&item.path()) {
         return package_facts(&item.path());
     }

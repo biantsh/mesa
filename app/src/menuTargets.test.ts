@@ -29,6 +29,14 @@ describe("menuTargets", () => {
     expect(names(only)).toEqual(["inside"]);
   });
 
+  it("never offers to add cloud-only items", () => {
+    const cloud = [entry("cloud", "cloudOnly", { kind: "file" }), entry("partly", "partlyCloudOnly")];
+    const { add, remove, inside } = menuTargets(cloud);
+    expect(add).toEqual([]);
+    expect(remove).toEqual([]);
+    expect(names(inside)).toEqual(["partly"]);
+  });
+
   it("handles a mixed selection", () => {
     const targets = [
       entry("added", "indexed", { removable: true }),

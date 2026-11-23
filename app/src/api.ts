@@ -12,7 +12,9 @@ export type IndexStatus =
   | "partlyIndexed"
   | "unindexable"
   | "excluded"
-  | "typeNotIndexed";
+  | "typeNotIndexed"
+  | "cloudOnly"
+  | "partlyCloudOnly";
 
 export interface Entry {
   name: string;

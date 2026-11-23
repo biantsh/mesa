@@ -1,4 +1,4 @@
-import type { Entry } from "./api";
+import type { Entry, IndexStatus } from "./api";
 
 export interface MenuTargets {
   add: Entry[];
@@ -8,11 +8,15 @@ export interface MenuTargets {
   stop: Entry[];
 }
 
+const IN_INDEX: IndexStatus[] = ["indexed", "partlyCloudOnly"];
+
+const isInIndex = (entry: Entry) => IN_INDEX.includes(entry.index);
+
 export function menuTargets(entries: Entry[]): MenuTargets {
   return {
     add: entries.filter((entry) => entry.index === "notIndexed" || entry.index === "partlyIndexed"),
     remove: entries.filter((entry) => entry.removable),
-    inside: entries.filter((entry) => entry.index === "indexed" && !entry.removable),
+    inside: entries.filter((entry) => isInIndex(entry) && !entry.removable),
     exclude: entries.filter(
       (entry) => entry.readable && entry.index !== "excluded" && entry.index !== "unindexable",
     ),
@@ -52,11 +56,12 @@ export function wholeFolderAdd(
       entry.index === "unindexable" ||
       entry.index === "excluded" ||
       entry.index === "typeNotIndexed" ||
+      entry.index === "cloudOnly" ||
       adding.has(entry.path) ||
-      entry.index === "indexed",
+      isInIndex(entry),
   );
   if (!everythingChosen || !everythingAccountedFor) return null;
-  return entries.some((entry) => entry.index === "indexed") ? "completing" : "folder";
+  return entries.some(isInIndex) ? "completing" : "folder";
 }
 
 export const MANY_TO_ADD = 500;

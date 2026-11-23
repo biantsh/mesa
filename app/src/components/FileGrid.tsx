@@ -1,5 +1,4 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
 import { type Entry, type PreviewBox } from "../api";
 import { cx } from "../cx";
 import { nameParts } from "../format";
@@ -124,6 +123,18 @@ if (typeof window !== "undefined") {
   window.addEventListener("pointerdown", note, { passive: true, capture: true });
 }
 
+const PLUS = "M8 5.2v5.6M5.2 8h5.6";
+const CROSS = "M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8";
+
+function CornerDisc({ className, glyph }: { className: string; glyph: string }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" aria-hidden="true">
+      <circle cx="8" cy="8" r="7" />
+      <path d={glyph} fill="none" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 function StopCorner({ entry, onStop }: { entry: Entry; onStop: (entry: Entry) => void }) {
   return (
     <span
@@ -136,9 +147,7 @@ function StopCorner({ entry, onStop }: { entry: Entry; onStop: (entry: Entry) =>
         if (e.detail < 2) onStop(entry);
       }}
     >
-      <span className={styles.stopDisc}>
-        <X size={12} strokeWidth={1.5} absoluteStrokeWidth style={{ transform: "scale(0.8)" }} aria-hidden />
-      </span>
+      <CornerDisc className={styles.stopDisc} glyph={CROSS} />
     </span>
   );
 }
@@ -219,9 +228,7 @@ function AddCorner({ entry, onAdd }: { entry: Entry; onAdd: (entry: Entry) => vo
         onAdd(entry);
       }}
     >
-      <span className={styles.addDisc}>
-        <Plus size={12} strokeWidth={1.9} absoluteStrokeWidth style={{ transform: "scale(0.8)" }} aria-hidden />
-      </span>
+      <CornerDisc className={styles.addDisc} glyph={PLUS} />
     </span>
   );
 }

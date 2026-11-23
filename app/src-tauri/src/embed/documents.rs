@@ -657,7 +657,7 @@ mod tests {
         let dir = temp_dir("long");
         let path = dir.join("book.txt");
         let paragraph = "word ".repeat(100);
-        fs::write(&path, vec![paragraph.trim(); 10].join("\n\n")).unwrap();
+        fs::write(&path, [paragraph.trim(); 10].join("\n\n")).unwrap();
         let units = collect(|emit| plain(&path, emit, &mut String::new())).unwrap();
         assert_eq!(
             units.len(),

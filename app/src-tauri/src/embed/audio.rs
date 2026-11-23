@@ -551,7 +551,9 @@ mod tests {
             };
             assert_eq!(&bytes[..4], b"RIFF");
             let samples = bytes[44..]
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|b| i16::from_le_bytes([b[0], b[1]]))
                 .collect();
             clips.push((unit.locator, samples));

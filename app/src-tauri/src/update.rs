@@ -55,12 +55,14 @@ pub struct Status {
     pub asks_password: bool,
 }
 
+type TrayMenu = (Menu<Wry>, Option<MenuItem<Wry>>);
+
 pub struct Updates {
     data_dir: PathBuf,
     status: Mutex<Status>,
     looking: AtomicBool,
     found: Mutex<Option<Update>>,
-    menu: Mutex<Option<(Menu<Wry>, Option<MenuItem<Wry>>)>>,
+    menu: Mutex<Option<TrayMenu>>,
 }
 
 pub fn available() -> bool {

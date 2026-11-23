@@ -3,11 +3,11 @@
 //! Two lock files in the data folder decide which copy runs:
 //! 
 //!  - `running.lock` is held by the copy that runs Mesa for as long as it lives. Only that copy
-//!   opens the index, so two copies can never write it at once.
+//!    opens the index, so two copies can never write it at once.
 //! 
 //!  - `starting.lock` is held while a copy starts up. Every launch takes it before looking at
-//!   `running.lock`, and the running copy lets go of it only once it can take the arguments of
-//!   later launches. So a launch that finds Mesa running knows it can hand over straight away.
+//!    `running.lock`, and the running copy lets go of it only once it can take the arguments of
+//!    later launches. So a launch that finds Mesa running knows it can hand over straight away.
 
 use std::{
     fs::{self, File, TryLockError},

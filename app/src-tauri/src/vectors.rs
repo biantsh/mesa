@@ -133,7 +133,9 @@ impl VectorFile {
             .seek(SeekFrom::Start(HEADER_BYTES + slot * RECORD_BYTES as u64))?;
         self.file.read_exact(&mut bytes)?;
         Ok(bytes
-            .chunks_exact(ELEMENT_BYTES)
+            .as_chunks::<ELEMENT_BYTES>()
+            .0
+            .iter()
             .map(|b| f16::from_le_bytes([b[0], b[1]]))
             .collect())
     }
@@ -160,7 +162,7 @@ pub fn record_from(output: &[f32]) -> Option<Record> {
         return None;
     }
     let mut record = [0u8; RECORD_BYTES];
-    for (v, out) in prefix.iter().zip(record.chunks_exact_mut(ELEMENT_BYTES)) {
+    for (v, out) in prefix.iter().zip(record.as_chunks_mut::<ELEMENT_BYTES>().0) {
         out.copy_from_slice(&f16::from_f32(v / length).to_le_bytes());
     }
     Some(record)
@@ -168,7 +170,7 @@ pub fn record_from(output: &[f32]) -> Option<Record> {
 
 pub fn to_floats(record: &Record) -> [f32; DIMS] {
     let mut values = [0f32; DIMS];
-    for (value, bytes) in values.iter_mut().zip(record.chunks_exact(ELEMENT_BYTES)) {
+    for (value, bytes) in values.iter_mut().zip(record.as_chunks::<ELEMENT_BYTES>().0) {
         *value = f16::from_le_bytes([bytes[0], bytes[1]]).to_f32();
     }
     values
@@ -187,7 +189,7 @@ pub fn blend(parts: &[(Record, f32)]) -> Option<Record> {
 pub fn similarity(query: &[f32; DIMS], record: &Record) -> f32 {
     query
         .iter()
-        .zip(record.chunks_exact(ELEMENT_BYTES))
+        .zip(record.as_chunks::<ELEMENT_BYTES>().0)
         .map(|(q, bytes)| q * f16::from_le_bytes([bytes[0], bytes[1]]).to_f32())
         .sum()
 }
@@ -200,7 +202,7 @@ pub fn random_record() -> Record {
     }
     let length = values.iter().map(|v| v * v).sum::<f32>().sqrt();
     let mut record = [0u8; RECORD_BYTES];
-    for (v, out) in values.iter().zip(record.chunks_exact_mut(ELEMENT_BYTES)) {
+    for (v, out) in values.iter().zip(record.as_chunks_mut::<ELEMENT_BYTES>().0) {
         out.copy_from_slice(&f16::from_f32(v / length).to_le_bytes());
     }
     record
@@ -223,7 +225,9 @@ mod tests {
 
     fn values(record: &Record) -> Vec<f32> {
         record
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| f16::from_le_bytes([b[0], b[1]]).to_f32())
             .collect()
     }

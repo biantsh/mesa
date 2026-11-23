@@ -154,11 +154,11 @@ fn top_of(dir: &Path) -> Option<PathBuf> {
             return None;
         }
         let first = parts.next()?;
-        return Some(
+        Some(
             PathBuf::from(prefix.as_os_str())
                 .join(root.as_os_str())
                 .join(first.as_os_str()),
-        );
+        )
     }
     #[cfg(not(windows))]
     {

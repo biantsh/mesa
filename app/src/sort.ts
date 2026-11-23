@@ -21,16 +21,18 @@ export function nextSort(current: Sort, column: SortColumn): Sort {
 const STATUS_ORDER = {
   indexed: 0,
   partlyIndexed: 1,
+  partlyCloudOnly: 1,
   indexing: 2,
   paused: 3,
   notIndexed: 4,
-  typeNotIndexed: 5,
-  excluded: 6,
-  unindexable: 7,
+  cloudOnly: 5,
+  typeNotIndexed: 6,
+  excluded: 7,
+  unindexable: 8,
 } as const;
 
 function statusRank(entry: Entry): number {
-  return entry.readable ? STATUS_ORDER[entry.index] : 8;
+  return entry.readable ? STATUS_ORDER[entry.index] : 9;
 }
 
 function compareColumn(a: Entry, b: Entry, column: SortColumn): number | null {

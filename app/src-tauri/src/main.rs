@@ -4,6 +4,7 @@ mod browse;
 #[cfg(target_os = "macos")]
 mod cgimage;
 mod clipboard;
+mod cloud;
 mod clues;
 mod code_scope;
 mod commands;

@@ -39,6 +39,7 @@ const MIGRATIONS: &[&str] = &[
     REDO_CODE_CUT_AGAIN,
     ADD_FILE_NAMES,
     REDO_CODE_BY_OUTLINE,
+    ADD_CLOUD_FILES,
 ];
 
 const WORDS_ID: u32 = 2;
@@ -101,6 +102,15 @@ const ADD_META: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT 
 const ADD_EMBEDDED_WITH: &str = "ALTER TABLE files ADD COLUMN embedded_with INTEGER NOT NULL DEFAULT 0;";
 const ADD_LOCATOR: &str = "ALTER TABLE embeddings ADD COLUMN locator INTEGER NOT NULL DEFAULT 0;";
 const ADD_EXCLUSIONS: &str = "CREATE TABLE exclusions (path TEXT PRIMARY KEY) WITHOUT ROWID;";
+
+const ADD_CLOUD_FILES: &str = "
+CREATE TABLE cloud_files (
+    dir_id   INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
+    name     TEXT NOT NULL,
+    category INTEGER NOT NULL,
+    PRIMARY KEY (dir_id, name)
+) WITHOUT ROWID;
+";
 const DROP_RULES_INDEXED: &str = "DELETE FROM rules WHERE indexed = 0; ALTER TABLE rules DROP COLUMN indexed;";
 
 const ADD_FILE_COUNT: &str = "
@@ -268,8 +278,37 @@ pub enum WordsMatch {
 pub struct ScannedDir {
     pub path: PathBuf,
     pub files: Vec<ScannedFile>,
+    pub cloud: Vec<(String, Category)>,
     pub complete: bool,
     pub subfolders: Option<Vec<String>>,
+}
+
+impl ScannedDir {
+    pub fn cloud_part(&self) -> Option<ScannedDir> {
+        (!self.cloud.is_empty()).then(|| ScannedDir {
+            path: self.path.clone(),
+            files: Vec::new(),
+            cloud: self.cloud.clone(),
+            complete: false,
+            subfolders: None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloudOnly {
+    Not,
+    Partly,
+    Wholly,
+}
+
+const CLOUD_CACHED: usize = 256;
+
+#[derive(Default)]
+struct CloudCache {
+    any: Option<bool>,
+    folders: HashMap<PathBuf, HashMap<String, CloudOnly>>,
+    paths: HashMap<PathBuf, CloudOnly>,
 }
 
 pub struct Store {
@@ -278,6 +317,7 @@ pub struct Store {
     counts: Arc<Counts>,
     files: i64,
     reading_pictures: Box<dyn Fn() -> bool + Send>,
+    cloud: CloudCache,
 }
 
 #[derive(Default)]
@@ -330,6 +370,7 @@ impl Store {
             counts: Arc::default(),
             files: 0,
             reading_pictures: Box::new(|| true),
+            cloud: CloudCache::default(),
         };
         store.publish_counts(0);
         Ok(store)
@@ -465,10 +506,11 @@ impl Store {
 
     pub fn write_scans(&mut self, scans: &[ScannedDir], wanted: &dyn Fn(&Path) -> bool, made: u64) -> Result<()> {
         let result = self.write_scans_inner(scans, wanted);
-        if result.is_err() {
-            if let Ok(slots) = extent(&self.conn) {
-                let _ = self.vectors.truncate_to(slots);
-            }
+        self.cloud = CloudCache::default();
+        if result.is_err()
+            && let Ok(slots) = extent(&self.conn)
+        {
+            let _ = self.vectors.truncate_to(slots);
         }
         self.publish_counts(made);
         result
@@ -562,6 +604,7 @@ impl Store {
                     forget_missing_folders(&tx, dir, present)?;
                 }
             }
+            write_cloud(&tx, &mut dir_id, scan, wanted)?;
         }
 
         if !writes.is_empty() {
@@ -619,6 +662,50 @@ impl Store {
             .conn
             .prepare_cached("SELECT COUNT(*) FROM files WHERE dir_id = ?1 AND name = ?2 AND embedded_with = ?3")?
             .query_row(params![dir, name, CONFIG_ID], |r| r.get(0))?)
+    }
+
+    pub fn cloud_in(&mut self, folder: &Path) -> Result<HashMap<String, CloudOnly>> {
+        if !self.any_cloud()? {
+            return Ok(HashMap::new());
+        }
+        if let Some(found) = self.cloud.folders.get(folder) {
+            return Ok(found.clone());
+        }
+        let found = match find_dir(&self.conn, folder)? {
+            Some(dir) => cloud_children(&self.conn, dir)?,
+            None => HashMap::new(),
+        };
+        if self.cloud.folders.len() >= CLOUD_CACHED {
+            self.cloud.folders.clear();
+        }
+        self.cloud.folders.insert(folder.to_owned(), found.clone());
+        Ok(found)
+    }
+
+    pub fn cloud_of(&mut self, path: &Path) -> Result<CloudOnly> {
+        if !self.any_cloud()? {
+            return Ok(CloudOnly::Not);
+        }
+        if let Some(&found) = self.cloud.paths.get(path) {
+            return Ok(found);
+        }
+        let found = cloud_of(&self.conn, path)?;
+        if self.cloud.paths.len() >= CLOUD_CACHED {
+            self.cloud.paths.clear();
+        }
+        self.cloud.paths.insert(path.to_owned(), found);
+        Ok(found)
+    }
+
+    fn any_cloud(&mut self) -> Result<bool> {
+        if let Some(any) = self.cloud.any {
+            return Ok(any);
+        }
+        let any = self
+            .conn
+            .query_row("SELECT EXISTS (SELECT 1 FROM cloud_files)", [], |r| r.get(0))?;
+        self.cloud.any = Some(any);
+        Ok(any)
     }
 
     pub fn has_stale_files(&self) -> Result<bool> {
@@ -689,6 +776,7 @@ impl Store {
                 params![parent, to_name, id],
             )?;
             tx.commit()?;
+            self.cloud = CloudCache::default();
             self.publish_counts(0);
             return Ok(true);
         }
@@ -724,6 +812,7 @@ impl Store {
             }
         }
         tx.commit()?;
+        self.cloud = CloudCache::default();
         self.publish_counts(0);
         Ok(true)
     }
@@ -741,8 +830,10 @@ impl Store {
         let tx = self.conn.transaction()?;
         for &category in categories {
             tx.execute("DELETE FROM files WHERE category = ?1", [category_code(category)])?;
+            tx.execute("DELETE FROM cloud_files WHERE category = ?1", [category_code(category)])?;
         }
         tx.commit()?;
+        self.cloud = CloudCache::default();
         self.publish_counts(0);
         Ok(())
     }
@@ -787,9 +878,14 @@ impl Store {
                 let names = serde_json::to_string(some).map_err(|e| Error::Io(io::Error::other(e)))?;
                 tx.prepare_cached("DELETE FROM files WHERE dir_id = ?1 AND name IN (SELECT value FROM json_each(?2))")?
                     .execute(params![dir, names])?;
+                tx.prepare_cached(
+                    "DELETE FROM cloud_files WHERE dir_id = ?1 AND name IN (SELECT value FROM json_each(?2))",
+                )?
+                .execute(params![dir, names])?;
             }
         }
         tx.commit()?;
+        self.cloud = CloudCache::default();
         self.publish_counts(0);
         Ok(())
     }
@@ -1076,8 +1172,8 @@ impl Store {
             let Some(category) = category_from_code(category) else {
                 continue;
             };
-            if !folders.contains_key(&dir_id) {
-                folders.insert(dir_id, dir_path(&self.conn, dir_id)?);
+            if let std::collections::hash_map::Entry::Vacant(e) = folders.entry(dir_id) {
+                e.insert(dir_path(&self.conn, dir_id)?);
             }
             let dir = &folders[&dir_id];
             let folder = dir
@@ -1616,6 +1712,111 @@ fn ensure_dir(conn: &Connection, path: &Path) -> Result<i64> {
     Ok(id)
 }
 
+fn write_cloud(
+    tx: &Transaction,
+    dir_id: &mut Option<i64>,
+    scan: &ScannedDir,
+    wanted: &dyn Fn(&Path) -> bool,
+) -> Result<()> {
+    let cloud: Vec<&(String, Category)> = scan
+        .cloud
+        .iter()
+        .filter(|(name, _)| wanted(&scan.path.join(name)))
+        .collect();
+    if dir_id.is_none() && !cloud.is_empty() {
+        *dir_id = Some(ensure_dir(tx, &scan.path)?);
+    }
+    let Some(dir) = *dir_id else {
+        return Ok(());
+    };
+    if scan.complete {
+        tx.prepare_cached("DELETE FROM cloud_files WHERE dir_id = ?1")?
+            .execute([dir])?;
+    } else {
+        for file in &scan.files {
+            tx.prepare_cached("DELETE FROM cloud_files WHERE dir_id = ?1 AND name = ?2")?
+                .execute(params![dir, file.name])?;
+        }
+        for (name, _) in &cloud {
+            tx.prepare_cached("DELETE FROM files WHERE dir_id = ?1 AND name = ?2")?
+                .execute(params![dir, name])?;
+        }
+    }
+    for (name, category) in cloud {
+        tx.prepare_cached("INSERT OR REPLACE INTO cloud_files (dir_id, name, category) VALUES (?1, ?2, ?3)")?
+            .execute(params![dir, name, category_code(*category)])?;
+    }
+    Ok(())
+}
+
+const CLOUD_CHILDREN: &str = "
+WITH RECURSIVE up(id, child) AS (
+    SELECT DISTINCT dir_id, dir_id FROM cloud_files
+    UNION
+    SELECT d.parent_id, up.id FROM up JOIN dirs d ON d.id = up.id WHERE up.id != ?1 AND d.id != d.parent_id
+)
+SELECT dirs.id, dirs.name FROM up JOIN dirs ON dirs.id = up.child WHERE up.id = ?1 AND up.child != ?1";
+
+fn cloud_children(conn: &Connection, dir: i64) -> Result<HashMap<String, CloudOnly>> {
+    let mut found: HashMap<String, CloudOnly> = conn
+        .prepare_cached("SELECT name FROM cloud_files WHERE dir_id = ?1")?
+        .query_map([dir], |r| Ok((r.get(0)?, CloudOnly::Wholly)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let holding: Vec<(i64, String)> = conn
+        .prepare_cached(CLOUD_CHILDREN)?
+        .query_map([dir], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (child, name) in holding {
+        let cloud = if has_files_below(conn, child)? {
+            CloudOnly::Partly
+        } else {
+            CloudOnly::Wholly
+        };
+        found.insert(name, cloud);
+    }
+    Ok(found)
+}
+
+fn cloud_of(conn: &Connection, path: &Path) -> Result<CloudOnly> {
+    if let Some(dir) = find_dir(conn, path)? {
+        let below: bool = conn
+            .prepare_cached(
+                "WITH RECURSIVE up(id) AS (
+                     SELECT dir_id FROM cloud_files
+                     UNION SELECT d.parent_id FROM up JOIN dirs d ON d.id = up.id WHERE d.id != d.parent_id
+                 )
+                 SELECT EXISTS (SELECT 1 FROM up WHERE id = ?1)",
+            )?
+            .query_row([dir], |r| r.get(0))?;
+        return Ok(match (below, below && has_files_below(conn, dir)?) {
+            (false, _) => CloudOnly::Not,
+            (true, true) => CloudOnly::Partly,
+            (true, false) => CloudOnly::Wholly,
+        });
+    }
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Ok(CloudOnly::Not);
+    };
+    let Some(dir) = find_dir(conn, parent)? else {
+        return Ok(CloudOnly::Not);
+    };
+    let cloud: bool = conn
+        .prepare_cached("SELECT EXISTS (SELECT 1 FROM cloud_files WHERE dir_id = ?1 AND name = ?2)")?
+        .query_row(params![dir, name.to_string_lossy()], |r| r.get(0))?;
+    Ok(if cloud { CloudOnly::Wholly } else { CloudOnly::Not })
+}
+
+fn has_files_below(conn: &Connection, dir: i64) -> Result<bool> {
+    Ok(conn
+        .prepare_cached(
+            "WITH RECURSIVE below(id) AS (
+                 SELECT ?1 UNION ALL SELECT d.id FROM dirs d JOIN below ON d.parent_id = below.id WHERE d.id != d.parent_id
+             )
+             SELECT EXISTS (SELECT 1 FROM below JOIN files ON files.dir_id = below.id)",
+        )?
+        .query_row([dir], |r| r.get(0))?)
+}
+
 fn forget_missing_folders(tx: &Transaction, parent: i64, present: &[String]) -> Result<()> {
     let stored: Vec<(i64, String)> = tx
         .prepare_cached("SELECT id, name FROM dirs WHERE parent_id = ?1 AND id != ?1")?
@@ -1863,6 +2064,7 @@ mod tests {
 
     fn scan(name: &str, files: Vec<ScannedFile>) -> ScannedDir {
         ScannedDir {
+            cloud: Vec::new(),
             path: folder(name),
             files,
             complete: true,

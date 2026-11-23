@@ -23,7 +23,7 @@ use crate::{
     progress::{Progress, ProgressState},
     relevance::Ranked,
     rules::{self, Rules, covered, effective},
-    store::{self, Counts, Filter, Hit, Store},
+    store::{self, CloudOnly, Counts, Filter, Hit, Store},
     unindexable,
 };
 
@@ -71,6 +71,8 @@ pub enum IndexStatus {
     Unindexable,
     Excluded,
     TypeNotIndexed,
+    CloudOnly,
+    PartlyCloudOnly,
 }
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1306,6 +1308,7 @@ trait Facts {
     fn pending(&self, path: &Path) -> bool;
     fn queued(&self, path: &Path) -> bool;
     fn paused(&self) -> bool;
+    fn cloud(&self, path: &Path) -> CloudOnly;
 }
 
 fn looks_like_a_name(text: &str) -> bool {
@@ -1419,7 +1422,11 @@ fn status_of(facts: &impl Facts, path: &Path, is_file: Option<bool>) -> IndexSta
         };
     }
     if !facts.pending(path) {
-        IndexStatus::Indexed
+        match facts.cloud(path) {
+            CloudOnly::Not => IndexStatus::Indexed,
+            CloudOnly::Partly => IndexStatus::PartlyCloudOnly,
+            CloudOnly::Wholly => IndexStatus::CloudOnly,
+        }
     } else if facts.paused() {
         IndexStatus::Paused
     } else {
@@ -1431,7 +1438,11 @@ fn state_of(facts: &impl Facts, path: &Path, is_file: Option<bool>) -> IndexStat
     let status = status_of(facts, path, is_file);
     let queued = facts.queued(path);
     let removable = match status {
-        IndexStatus::Indexed | IndexStatus::Indexing | IndexStatus::Paused => queued || !facts.covered(path),
+        IndexStatus::Indexed
+        | IndexStatus::CloudOnly
+        | IndexStatus::PartlyCloudOnly
+        | IndexStatus::Indexing
+        | IndexStatus::Paused => queued || !facts.covered(path),
         IndexStatus::PartlyIndexed => true,
         _ => false,
     };
@@ -1476,6 +1487,9 @@ impl Facts for Asked<'_> {
     fn paused(&self) -> bool {
         self.0.control.is_paused()
     }
+    fn cloud(&self, path: &Path) -> CloudOnly {
+        lock(&self.0.store).cloud_of(path).unwrap_or(CloudOnly::Not)
+    }
 }
 
 #[derive(PartialEq)]
@@ -1492,6 +1506,7 @@ struct Children {
     pending: HashSet<OsString>,
     job_roots: HashSet<OsString>,
     paused: bool,
+    cloud: HashMap<OsString, CloudOnly>,
 }
 
 #[derive(PartialEq)]
@@ -1506,6 +1521,12 @@ impl FolderStates {
 impl Children {
     fn of(index: &Index, folder: &Path) -> Self {
         let shared = &index.shared;
+        let cloud = lock(&shared.store)
+            .cloud_in(folder)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, cloud)| (OsString::from(name), cloud))
+            .collect();
         let unindexable = unindexable::is_unindexable(folder);
         let excluded_above = shared.is_excluded(folder);
         let excluded = names_in(inside(&lock(&shared.excluded), folder), folder);
@@ -1538,6 +1559,7 @@ impl Children {
             pending,
             job_roots,
             paused: shared.control.is_paused(),
+            cloud,
         }
     }
 
@@ -1576,6 +1598,9 @@ impl Facts for Children {
     }
     fn paused(&self) -> bool {
         self.paused
+    }
+    fn cloud(&self, path: &Path) -> CloudOnly {
+        self.cloud.get(Self::name(path)).copied().unwrap_or(CloudOnly::Not)
     }
 }
 
@@ -1894,6 +1919,7 @@ mod tests {
         let scan = ScannedDir {
             path: photos.clone(),
             files: vec![a],
+            cloud: Vec::new(),
             complete: false,
             subfolders: None,
         };
@@ -1955,7 +1981,7 @@ mod tests {
     fn exclusions_survive_restart() {
         let f = Fixture::new("exclusion-persists");
         let sub = f.photos.join("sub");
-        f.index.exclude_many(&[sub.clone()]).unwrap();
+        f.index.exclude_many(std::slice::from_ref(&sub)).unwrap();
 
         let reopened = Index::open(&f.data, embedder()).unwrap();
         assert_eq!(reopened.status(&sub), IndexStatus::Excluded);
@@ -2018,5 +2044,69 @@ mod tests {
         wait_until("the check", || f.count("files") == 0);
         assert_eq!(f.count("embeddings"), 0);
         assert_eq!(f.count("free_slots"), 4);
+    }
+
+    #[cfg(windows)]
+    fn set_cloud_only(path: &Path, cloud: bool) {
+        use windows::{
+            Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE, SetFileAttributesW},
+            core::HSTRING,
+        };
+        let attributes = if cloud {
+            FILE_ATTRIBUTE_OFFLINE
+        } else {
+            FILE_ATTRIBUTE_NORMAL
+        };
+        unsafe { SetFileAttributesW(&HSTRING::from(path), attributes) }.unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn leaves_cloud_only_files_unread_and_marks_them() {
+        let f = Fixture::new("cloud-only");
+        let sub = f.photos.join("sub");
+        let (a, b, c) = (f.photos.join("a.jpg"), f.photos.join("b.png"), sub.join("c.jpg"));
+        set_cloud_only(&a, true);
+        set_cloud_only(&c, true);
+        f.index.set(&f.photos, true).unwrap();
+        f.settle();
+
+        assert_eq!(f.count("files"), 2);
+        assert_eq!(f.count("embeddings"), 2);
+        assert_eq!(f.count("cloud_files"), 2);
+        assert_eq!(f.index.status(&a), IndexStatus::CloudOnly);
+        assert_eq!(f.index.status(&b), IndexStatus::Indexed);
+        assert_eq!(f.index.status(&sub), IndexStatus::CloudOnly);
+        assert_eq!(f.index.status(&f.photos), IndexStatus::PartlyCloudOnly);
+        assert!(f.index.state(&f.photos).removable);
+        let listed = f.index.folder_states(&f.photos);
+        assert_eq!(listed.state(&a, Some(true)).status, IndexStatus::CloudOnly);
+        assert_eq!(listed.state(&b, Some(true)).status, IndexStatus::Indexed);
+        assert_eq!(listed.state(&sub, Some(false)).status, IndexStatus::CloudOnly);
+
+        set_cloud_only(&a, false);
+        f.index.check_for_changes();
+        wait_until("a.jpg is read once downloaded", || {
+            f.index.status(&a) == IndexStatus::Indexed && f.count("files") == 3
+        });
+        assert_eq!(f.count("cloud_files"), 1);
+
+        set_cloud_only(&b, true);
+        f.index.chores().check_later([b.clone()]);
+        wait_until("b.png is forgotten once freed up", || {
+            f.index.status(&b) == IndexStatus::CloudOnly && f.count("files") == 2
+        });
+
+        set_cloud_only(&c, false);
+        f.index.chores().check_later([c.clone()]);
+        wait_until("c.jpg is read once downloaded", || {
+            f.index.status(&sub) == IndexStatus::Indexed
+        });
+        assert_eq!(f.index.status(&f.photos), IndexStatus::PartlyCloudOnly);
+
+        f.index.set(&f.photos, false).unwrap();
+        f.settle();
+        assert_eq!(f.count("cloud_files"), 0);
+        assert_eq!(f.index.status(&b), IndexStatus::NotIndexed);
     }
 }

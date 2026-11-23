@@ -338,7 +338,8 @@ impl Caches {
 
 fn make(caches: &Caches, disk: Option<&Disk>, key: &Key, keep_whole: bool) -> Option<Vec<u8>> {
     if let Shape::Large { size, page } = key.2 {
-        let drawn = page > 1 || crate::document_preview::draws_every_page(&key.0);
+        let drawn = (page > 1 || crate::document_preview::draws_every_page(&key.0))
+            && !crate::cloud::is_cloud_only_path(Path::new(&key.0));
         let made = drawn
             .then(|| crate::document_preview::render_page(&key.0, size, page))
             .flatten()
@@ -532,10 +533,12 @@ fn boxed(png: &[u8], width: u32, height: u32, fit: Fit) -> Option<Vec<u8>> {
     let rgba = target.into_vec();
 
     let mut out = Vec::new();
-    let opaque = rgba.chunks_exact(4).all(|pixel| pixel[3] == 255);
+    let opaque = rgba.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255);
     if fit == Fit::Cover && opaque {
         let rgb: Vec<u8> = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|pixel| [pixel[0], pixel[1], pixel[2]])
             .collect();
         JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY)
@@ -711,9 +714,24 @@ fn response(png: Option<Vec<u8>>) -> Response<Vec<u8>> {
 }
 
 pub fn render(path: &str, size: u32) -> Option<Vec<u8>> {
+    if crate::cloud::is_cloud_only_path(Path::new(path)) {
+        return cloud_preview(path, size);
+    }
     crate::document_preview::render_before_system(path, size)
         .or_else(|| system_preview(path, size))
         .or_else(|| crate::document_preview::render_after_system(path, size))
+}
+
+fn cloud_preview(path: &str, size: u32) -> Option<Vec<u8>> {
+    #[cfg(windows)]
+    {
+        shell::render(path, size)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (path, size);
+        None
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1135,8 +1153,8 @@ mod shell {
     }
 
     fn bgra_to_rgba(pixels: &mut [u8]) {
-        let has_alpha = pixels.chunks_exact(4).any(|px| px[3] != 0);
-        for px in pixels.chunks_exact_mut(4) {
+        let has_alpha = pixels.as_chunks::<4>().0.iter().any(|px| px[3] != 0);
+        for px in pixels.as_chunks_mut::<4>().0 {
             let (b, g, r, a) = (px[0], px[1], px[2], px[3]);
             let unpremultiply = |c: u8| ((c as u32 * 255 + a as u32 / 2) / a as u32).min(255) as u8;
             let rgba = match (has_alpha, a) {

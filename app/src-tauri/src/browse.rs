@@ -134,6 +134,8 @@ pub struct Entry {
     pub size: Option<u64>,
     pub modified: Option<i64>,
     pub privacy: Option<crate::folder_access::Pane>,
+    #[serde(skip)]
+    pub cloud: bool,
 }
 
 impl Entry {
@@ -152,6 +154,7 @@ impl Entry {
             size: None,
             modified: None,
             privacy: None,
+            cloud: false,
         }
     }
 
@@ -349,27 +352,30 @@ fn mount_points() -> Vec<PathBuf> {
 fn mount_points_in(list: &str) -> Vec<PathBuf> {
     list.lines()
         .filter_map(|line| line.split_whitespace().nth(1))
-        .map(|written| {
-            let (mut bytes, raw) = (Vec::with_capacity(written.len()), written.as_bytes());
-            let mut at = 0;
-            while at < raw.len() {
-                let escape = raw
-                    .get(at + 1..at + 4)
-                    .filter(|digits| raw[at] == b'\\' && digits.iter().all(|d| (b'0'..=b'7').contains(d)));
-                match escape {
-                    Some(digits) => {
-                        bytes.push(digits.iter().fold(0u8, |n, d| n.wrapping_mul(8) + (d - b'0')));
-                        at += 4;
-                    }
-                    None => {
-                        bytes.push(raw[at]);
-                        at += 1;
-                    }
-                }
-            }
-            PathBuf::from(String::from_utf8_lossy(&bytes).into_owned())
-        })
+        .map(unescape_mount_point)
         .collect()
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub fn unescape_mount_point(written: &str) -> PathBuf {
+    let (mut bytes, raw) = (Vec::with_capacity(written.len()), written.as_bytes());
+    let mut at = 0;
+    while at < raw.len() {
+        let escape = raw
+            .get(at + 1..at + 4)
+            .filter(|digits| raw[at] == b'\\' && digits.iter().all(|d| (b'0'..=b'7').contains(d)));
+        match escape {
+            Some(digits) => {
+                bytes.push(digits.iter().fold(0u8, |n, d| n.wrapping_mul(8) + (d - b'0')));
+                at += 4;
+            }
+            None => {
+                bytes.push(raw[at]);
+                at += 1;
+            }
+        }
+    }
+    PathBuf::from(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 #[cfg(target_os = "linux")]
@@ -552,6 +558,11 @@ fn entry_of(item: &fs::DirEntry) -> Option<Entry> {
         Shown::File(category) => Entry {
             modified,
             size: facts.map(|(_, size)| size),
+            cloud: crate::cloud::is_remote(&path)
+                || followed
+                    .as_ref()
+                    .or(own.as_ref())
+                    .is_some_and(crate::cloud::is_cloud_only),
             ..Entry::file(name, &path, category)
         },
     })
@@ -659,6 +670,9 @@ pub fn is_what_it_is_named(path: &Path) -> bool {
     }
     if path.is_dir() {
         return is_package(path);
+    }
+    if crate::cloud::is_cloud_only_path(path) {
+        return true;
     }
     let mut start = [0u8; 4];
     fs::File::open(path)
@@ -863,5 +877,23 @@ mod tests {
         assert_eq!(category_of("scan.tif"), Some(Category::Image));
         assert_eq!(category_of("book.m4b"), Some(Category::Audio));
         assert_eq!(category_of("archive.zip"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn marks_cloud_only_files() {
+        use windows::{
+            Win32::Storage::FileSystem::{FILE_ATTRIBUTE_OFFLINE, SetFileAttributesW},
+            core::HSTRING,
+        };
+        let dir = temp_dir("cloud-listing");
+        fs::write(dir.join("here.png"), "x").unwrap();
+        fs::write(dir.join("away.png"), "x").unwrap();
+        unsafe { SetFileAttributesW(&HSTRING::from(dir.join("away.png").as_path()), FILE_ATTRIBUTE_OFFLINE) }.unwrap();
+        let listing = list(&dir.to_string_lossy()).unwrap();
+        let cloud = |name: &str| listing.entries.iter().find(|entry| entry.name == name).unwrap().cloud;
+        assert!(cloud("away.png"));
+        assert!(!cloud("here.png"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

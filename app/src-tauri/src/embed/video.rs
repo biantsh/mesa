@@ -225,7 +225,9 @@ fn read_sound(
                 };
                 mono.extend(bytes.chunks_exact(4 * channels).skip(early).map(|frame| {
                     frame
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .map(|four| f32::from_le_bytes([four[0], four[1], four[2], four[3]]))
                         .sum::<f32>()
                         / channels as f32
@@ -432,7 +434,7 @@ mod tests {
     const WHITE: [u8; 3] = [255, 255, 255];
 
     fn pixels(rgb: &[u8]) -> Vec<[u8; 3]> {
-        rgb.chunks_exact(3).map(|p| [p[0], p[1], p[2]]).collect()
+        rgb.as_chunks::<3>().0.iter().map(|p| [p[0], p[1], p[2]]).collect()
     }
 
     #[test]

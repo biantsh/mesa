@@ -143,41 +143,50 @@
 }
 
 .addDisc {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  background: transparent;
-  background-clip: padding-box;
   color: transparent;
+  transition: color 120ms ease;
+}
+
+.addDisc circle {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 2;
   transition:
-    background-color 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
+    fill 120ms ease,
+    stroke 120ms ease;
+}
+
+.addDisc path {
+  stroke: currentColor;
+  stroke-width: 1.52;
 }
 
 .tile:hover .addDisc {
-  background: var(--color-primary);
-  background-clip: padding-box;
   color: var(--color-on-primary);
-  border-color: var(--color-on-primary);
 }
 
-.tile:hover .add:hover .addDisc {
-  background-color: var(--color-primary-hover);
+.tile:hover .addDisc circle {
+  fill: var(--color-primary);
+  stroke: var(--color-on-primary);
 }
 
-.addDisc {
+.tile:hover .add:hover .addDisc circle {
+  fill: var(--color-primary-hover);
+}
+
+.addDisc,
+.addDisc circle {
   animation: addComes 120ms ease;
 }
 
 @keyframes addComes {
   from {
-    background-color: transparent;
     color: transparent;
-    border-color: transparent;
+    fill: transparent;
+    stroke: transparent;
   }
 }
 
@@ -185,9 +194,9 @@
   cursor: default;
 }
 
-.tile:hover .addOff .addDisc,
-.tile:hover .addOff:hover .addDisc {
-  background-color: var(--color-paused);
+.tile:hover .addOff .addDisc circle,
+.tile:hover .addOff:hover .addDisc circle {
+  fill: var(--color-paused);
 }
 
 .stoppable {
@@ -227,19 +236,25 @@
 }
 
 .stopDisc {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
-  border: 2px solid var(--color-on-primary);
-  background: var(--color-danger);
-  background-clip: padding-box;
   color: var(--color-on-danger);
 }
 
-.stop:hover .stopDisc {
-  background-color: var(--color-danger-hover);
+.stopDisc circle {
+  fill: var(--color-danger);
+  stroke: var(--color-on-primary);
+  stroke-width: 2;
+}
+
+.stopDisc path {
+  stroke: currentColor;
+  stroke-width: 1.2;
+}
+
+.stop:hover .stopDisc circle {
+  fill: var(--color-danger-hover);
 }
 
 .stoppable:hover .stop {
@@ -259,13 +274,13 @@
   transition: none;
 }
 
-.engaged .stopDisc {
+.engaged .stopDisc circle {
   animation: fromPlus 200ms ease-out backwards;
 }
 
 @keyframes fromPlus {
   from {
-    background-color: var(--color-primary);
+    fill: var(--color-primary);
   }
 }
 

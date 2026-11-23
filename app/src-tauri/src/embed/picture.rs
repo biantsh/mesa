@@ -101,7 +101,7 @@ fn bitmap(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {
     file.extend_from_slice(&(pixels as u32).to_le_bytes());
     file.extend_from_slice(&[0; 16]);
     for line in rgb.chunks_exact(row).rev() {
-        for pixel in line.chunks_exact(3) {
+        for pixel in line.as_chunks::<3>().0 {
             file.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
         }
         file.resize(file.len() + (padded - row), 0);

@@ -24,6 +24,7 @@ struct Row {
     size: Option<u64>,
     modified: Option<i64>,
     privacy: Option<Pane>,
+    cloud: bool,
     state: IndexState,
 }
 
@@ -38,6 +39,7 @@ impl Row {
             size: entry.size,
             modified: entry.modified,
             privacy: entry.privacy,
+            cloud: entry.cloud,
             state: IndexState {
                 status: entry.index,
                 queued: entry.queued,
@@ -126,7 +128,7 @@ impl Default for Legend {
 const LETTERS: &[u8; 32] = b"0123456789abcdefghijklmnopqrstuv";
 const KINDS: [Kind; 3] = [Kind::Drive, Kind::Folder, Kind::File];
 const CATEGORIES: [Category; 5] = browse::CATEGORIES;
-const STATUSES: [IndexStatus; 8] = [
+const STATUSES: [IndexStatus; 10] = [
     IndexStatus::NotIndexed,
     IndexStatus::Indexing,
     IndexStatus::Paused,
@@ -135,6 +137,8 @@ const STATUSES: [IndexStatus; 8] = [
     IndexStatus::Unindexable,
     IndexStatus::Excluded,
     IndexStatus::TypeNotIndexed,
+    IndexStatus::CloudOnly,
+    IndexStatus::PartlyCloudOnly,
 ];
 const FLAG_READABLE: u8 = 1;
 const FLAG_HAS_CONTENTS: u8 = 2;
@@ -152,6 +156,8 @@ fn status_code(status: IndexStatus) -> usize {
         IndexStatus::Unindexable => 5,
         IndexStatus::Excluded => 6,
         IndexStatus::TypeNotIndexed => 7,
+        IndexStatus::CloudOnly => 8,
+        IndexStatus::PartlyCloudOnly => 9,
     }
 }
 
@@ -367,7 +373,10 @@ impl ShownListing {
         if !unchanged {
             let states: Vec<IndexState> = match &looked {
                 Some((states, _)) => (0..held.rows.len())
-                    .map(|at| states.state(Path::new(&held.path_of(at)), Some(held.rows[at].kind == Kind::File)))
+                    .map(|at| {
+                        let state = states.state(Path::new(&held.path_of(at)), Some(held.rows[at].kind == Kind::File));
+                        as_shown(state, held.rows[at].cloud)
+                    })
                     .collect(),
                 None => {
                     let paths: Vec<PathBuf> = (0..held.rows.len()).map(|at| PathBuf::from(held.path_of(at))).collect();
@@ -376,7 +385,12 @@ impl ShownListing {
                         .zip(&held.rows)
                         .map(|(path, row)| (path.as_path(), Some(row.kind == Kind::File)))
                         .collect();
-                    index.states_of(&asked)
+                    index
+                        .states_of(&asked)
+                        .into_iter()
+                        .zip(&held.rows)
+                        .map(|(state, row)| as_shown(state, row.cloud))
+                        .collect()
                 }
             };
             for (at, (row, state)) in held.rows.iter_mut().zip(states).enumerate() {
@@ -434,7 +448,7 @@ fn rows_of(listing: &Listing, index: &Index, access: &FolderAccess) -> (Vec<Row>
         .iter()
         .zip(states)
         .map(|(entry, state)| Row {
-            state,
+            state: as_shown(state, entry.cloud),
             privacy: if entry.readable {
                 None
             } else {
@@ -445,6 +459,16 @@ fn rows_of(listing: &Listing, index: &Index, access: &FolderAccess) -> (Vec<Row>
         .collect();
     let (prefix, paths) = prefix_or_paths(&listing.entries, |entry| &entry.name, |entry| &entry.path);
     (rows, prefix, paths)
+}
+
+fn as_shown(state: IndexState, cloud: bool) -> IndexState {
+    match state.status {
+        IndexStatus::NotIndexed | IndexStatus::Indexed if cloud => IndexState {
+            status: IndexStatus::CloudOnly,
+            ..state
+        },
+        _ => state,
+    }
 }
 
 fn changes(
@@ -480,4 +504,35 @@ fn changes(
         }
     }
     (runs, fresh, same_shape)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(status: IndexStatus) -> IndexState {
+        IndexState {
+            status,
+            queued: false,
+            excluded_here: false,
+            removable: false,
+        }
+    }
+
+    #[test]
+    fn cloud_only_files_show_as_such_unless_a_rule_says_otherwise() {
+        for status in [IndexStatus::NotIndexed, IndexStatus::Indexed] {
+            assert_eq!(as_shown(state(status), true).status, IndexStatus::CloudOnly);
+            assert_eq!(as_shown(state(status), false).status, status);
+        }
+        for status in [
+            IndexStatus::Excluded,
+            IndexStatus::Unindexable,
+            IndexStatus::TypeNotIndexed,
+            IndexStatus::Indexing,
+            IndexStatus::Paused,
+        ] {
+            assert_eq!(as_shown(state(status), true).status, status);
+        }
+    }
 }

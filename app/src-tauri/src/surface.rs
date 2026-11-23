@@ -164,7 +164,7 @@ fn grouped(n: u64) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, digit) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(digit);
@@ -235,7 +235,7 @@ fn platform(_: &AppHandle, _: &Path, _: Arc<dyn Fn(Action) + Send + Sync>) -> Bo
     Box::new(Nowhere)
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux", test))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn menu_bar_text(progress: &Progress) -> (String, String, &'static str) {
     let said = lines(progress);
     let beside_icon = match (progress.paused, said.fraction) {
