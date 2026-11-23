@@ -1,6 +1,7 @@
 import { defineConfig } from "astro/config";
 import react from "@astrojs/react";
 import { fileURLToPath } from "node:url";
+import { release } from "./src/release.ts";
 
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 
@@ -9,6 +10,7 @@ export default defineConfig({
   devToolbar: { enabled: false },
   integrations: [react()],
   vite: {
+    define: { __MESA_VERSION__: JSON.stringify(release.version) },
     server: { fs: { allow: [".."] } },
     plugins: [
       {

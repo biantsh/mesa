@@ -4334,7 +4334,7 @@ dependencies = [
 
 [[package]]
 name = "mesa-app"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "ash",
  "base64 0.22.1",
@@ -4396,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "mesa-ocr"
-version = "0.1.0"
+version = "0.0.0"
 dependencies = [
  "fast_image_resize",
  "ort",

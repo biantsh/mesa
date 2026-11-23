@@ -12,8 +12,8 @@ function git(...args: string[]): string {
 
 function latest(): Release {
   try {
-    const [line] = git("for-each-ref", "--sort=-v:refname", "--count=1", "--format=%(refname:short) %(creatordate:iso-strict)", "refs/tags/v[0-9]*").split("\n");
-    const [tag, date] = line.split(" ");
+    const lines = git("for-each-ref", "--sort=-v:refname", "--format=%(refname:short) %(creatordate:iso-strict)", "refs/tags/v[0-9]*").split("\n");
+    const [tag, date] = (lines.find((line) => !line.split(" ")[0].includes("-")) ?? "").split(" ");
     if (tag && date) return { version: tag.slice(1), date: new Date(date) };
   } catch {
   }
