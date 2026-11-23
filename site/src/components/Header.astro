@@ -1,21 +1,61 @@
 ---
 import logo from "../../../app/src-tauri/icons/mesa.svg";
+import segmented from "../../../app/src/components/Segmented.module.css";
 import github from "../assets/github.svg?raw";
-import { CHANGELOG, GITHUB } from "../links";
+import { GITHUB } from "../links";
+
+const THEMES = [
+  {
+    value: "light",
+    label: "Light",
+    size: 16,
+    icon: `<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>`,
+  },
+  {
+    value: "dark",
+    label: "Dark",
+    size: 14,
+    icon: `<path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/>`,
+  },
+];
 ---
 
 <header class="header">
-  <div class="container inner">
+  <div class="inner">
     <a class="brand" href="/">
       <img src={logo.src} alt="" width="30" height="26" />
       <span>Mesa</span>
     </a>
     <nav aria-label="Main">
-      <a href={CHANGELOG}>Changelog</a>
       <a class="github" href={GITHUB}><span class="mark" aria-hidden="true" set:html={github} />GitHub</a>
+      <div class:list={[segmented.group, segmented.sliding, "theme"]} role="radiogroup" aria-label="Theme">
+        <span class:list={[segmented.thumb, "thumb"]} data-thumb aria-hidden="true"></span>
+        {
+          THEMES.map((theme) => (
+            <button
+              type="button"
+              role="radio"
+              class:list={[segmented.segment, "option"]}
+              data-theme-option={theme.value}
+              data-tooltip={theme.label}
+              aria-label={theme.label}
+              aria-checked="false"
+              tabindex="-1"
+            >
+              <svg width={theme.size} height={theme.size} viewBox="0 0 24 24" aria-hidden="true" set:html={theme.icon} />
+            </button>
+          ))
+        }
+      </div>
     </nav>
   </div>
 </header>
+
+<script>
+  import { installTooltips } from "../../../app/src/tooltip";
+
+  installTooltips();
+</script>
 
 <style>
   .header {
@@ -31,7 +71,9 @@ import { CHANGELOG, GITHUB } from "../links";
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+    width: var(--header-width);
     height: 64px;
+    margin-inline: auto;
   }
 
   .brand {
@@ -76,5 +118,39 @@ import { CHANGELOG, GITHUB } from "../links";
   .mark :global(svg) {
     width: 18px;
     height: 18px;
+  }
+
+  nav .theme {
+    --slide: var(--theme-fade);
+    --option: 30px;
+  }
+
+  .theme .option {
+    justify-content: center;
+    width: var(--option);
+    padding: 0;
+  }
+
+  .theme .option svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .theme .thumb {
+    left: -1px;
+    width: calc(var(--option) + 1px);
+  }
+
+  :global(:root[data-theme="dark"]) .theme .thumb {
+    left: var(--option);
+  }
+
+  :global(:root:not([data-theme="dark"])) .theme [data-theme-option="light"],
+  :global(:root[data-theme="dark"]) .theme [data-theme-option="dark"] {
+    color: var(--color-text);
+    cursor: default;
   }
 </style>

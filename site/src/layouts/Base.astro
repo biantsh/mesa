@@ -25,13 +25,64 @@ const { title, description } = Astro.props;
     <link rel="preload" href={interLatin} as="font" type="font/woff2" crossorigin />
     <script is:inline>
       (() => {
+        const KEY = "mesa.theme";
+        const root = document.documentElement;
         const dark = window.matchMedia("(prefers-color-scheme: dark)");
-        const apply = () => {
-          if (dark.matches) document.documentElement.dataset.theme = "dark";
-          else delete document.documentElement.dataset.theme;
+        const kept = () => {
+          try {
+            const theme = localStorage.getItem(KEY);
+            return theme === "light" || theme === "dark" ? theme : null;
+          } catch {
+            return null;
+          }
         };
-        apply();
-        dark.addEventListener("change", apply);
+        const system = () => (dark.matches ? "dark" : "light");
+        const mark = () => {
+          const now = root.dataset.theme || "light";
+          for (const option of document.querySelectorAll("[data-theme-option]")) {
+            const on = option.dataset.themeOption === now;
+            option.setAttribute("aria-checked", String(on));
+            option.tabIndex = on ? 0 : -1;
+          }
+        };
+        let settling;
+        const apply = (theme, quietly) => {
+          if ((root.dataset.theme || "light") !== theme) {
+            if (quietly) {
+              root.dataset.themeChanging = "";
+              clearTimeout(settling);
+              settling = setTimeout(() => delete root.dataset.themeChanging, 350);
+            }
+            if (theme === "dark") root.dataset.theme = "dark";
+            else delete root.dataset.theme;
+          }
+          mark();
+        };
+        const pick = (theme) => {
+          try {
+            localStorage.setItem(KEY, theme);
+          } catch {}
+          apply(theme, true);
+        };
+        apply(kept() || system(), false);
+        document.addEventListener("DOMContentLoaded", mark);
+        dark.addEventListener("change", () => {
+          if (!kept()) apply(system(), true);
+        });
+        document.addEventListener("click", (event) => {
+          const option = event.target instanceof Element && event.target.closest("[data-theme-option]");
+          if (option) pick(option.dataset.themeOption);
+        });
+        document.addEventListener("keydown", (event) => {
+          const option = event.target instanceof Element && event.target.closest("[data-theme-option]");
+          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+          if (!option || !step) return;
+          event.preventDefault();
+          const options = [...option.parentElement.querySelectorAll("[data-theme-option]")];
+          const next = options[(options.indexOf(option) + step + options.length) % options.length];
+          pick(next.dataset.themeOption);
+          next.focus();
+        });
       })();
     </script>
     <script is:inline>

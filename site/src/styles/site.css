@@ -54,6 +54,12 @@ body {
   color: #ffffff;
 }
 
+:root[data-theme-changing] *:not([data-thumb]),
+:root[data-theme-changing] *::before,
+:root[data-theme-changing] *::after {
+  transition: none !important;
+}
+
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
@@ -88,7 +94,9 @@ p {
 
 :root {
   --header-height: 65px;
-  --content-width: min(1120px, 100% - 2 * clamp(16px, 5vw, 40px));
+  --gutter: clamp(16px, 5vw, 40px);
+  --content-width: min(1120px, 100% - 2 * var(--gutter));
+  --header-width: min(1280px, 100% - 2 * var(--gutter));
   --section-space: clamp(48px, 7vw, 80px);
   --primary-tint-hover: rgba(120, 20, 0, 0.15);
   --primary-tint-active: rgba(120, 20, 0, 0.35);

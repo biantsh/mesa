@@ -138,7 +138,7 @@ function ThemeRow() {
     <Row
       title="Theme"
       description="“System” matches your computer."
-      control={(ids) => <Segmented segments={THEMES} value={theme} onChange={setTheme} {...ids} />}
+      control={(ids) => <Segmented segments={THEMES} value={theme} onChange={setTheme} slide="var(--theme-fade)" {...ids} />}
     />
   );
 }

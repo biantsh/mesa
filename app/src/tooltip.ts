@@ -1,3 +1,4 @@
+import "./styles/tooltip.css";
 import { prefersReducedMotion } from "./motion";
 import { isResizing } from "./resizing";
 

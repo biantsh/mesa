@@ -7,7 +7,7 @@ import SearchDemo from "../components/SearchDemo.astro";
 import DemoScenarios from "../components/DemoScenarios";
 import Icon, { type IconName } from "../components/Icon.astro";
 import { releaseLine } from "../release";
-import { LICENSE, LICENSE_NAME } from "../links";
+import { CHANGELOG, LICENSE, LICENSE_NAME } from "../links";
 
 const FEATURES: { icon: IconName; title: string; text: string }[] = [
   {
@@ -120,7 +120,7 @@ const description = "Find anything in your files using any combination of clues:
         <h2 class="section-title">Download</h2>
         <Platforms />
         <p class="release">
-          <a class="license" href={LICENSE}>{LICENSE_NAME}</a><span class="separator" aria-hidden="true"></span>{releaseLine()}
+          <a class="quiet" href={LICENSE}>{LICENSE_NAME}</a><span class="separator" aria-hidden="true"></span><a class="quiet" href={CHANGELOG}>{releaseLine()}</a>
         </p>
       </div>
     </section>
@@ -523,7 +523,7 @@ const description = "Find anything in your files using any combination of clues:
     text-box: trim-both cap alphabetic;
   }
 
-  .license {
+  .quiet {
     color: inherit;
     text-decoration: underline;
     text-decoration-color: transparent;
@@ -531,7 +531,7 @@ const description = "Find anything in your files using any combination of clues:
     transition: text-decoration-color 150ms ease;
   }
 
-  .license:hover {
+  .quiet:hover {
     text-decoration-color: currentColor;
   }
 </style>

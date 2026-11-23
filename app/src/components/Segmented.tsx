@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { cx } from "../cx";
 import styles from "./Segmented.module.css";
 
@@ -14,6 +14,7 @@ interface Props<T extends string> {
   onChange: (value: T) => void;
   labelledBy: string;
   describedBy?: string;
+  slide?: string;
 }
 
 interface Place {
@@ -21,7 +22,7 @@ interface Place {
   width: number;
 }
 
-export function Segmented<T extends string>({ segments, value, onChange, labelledBy, describedBy }: Props<T>) {
+export function Segmented<T extends string>({ segments, value, onChange, labelledBy, describedBy, slide }: Props<T>) {
   const group = useRef<HTMLDivElement>(null);
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const [place, setPlace] = useState<Place | null>(null);
@@ -67,8 +68,9 @@ export function Segmented<T extends string>({ segments, value, onChange, labelle
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
       className={cx(styles.group, sliding && styles.sliding)}
+      style={slide ? ({ "--slide": slide } as CSSProperties) : undefined}
     >
-      {place && <span className={styles.thumb} style={{ left: place.left, width: place.width }} aria-hidden />}
+      {place && <span className={styles.thumb} style={{ left: place.left, width: place.width }} data-thumb aria-hidden />}
       {segments.map((segment, i) => {
         const isChosen = i === chosen;
         return (
