@@ -97,7 +97,7 @@ button {
   outline-offset: 2px;
 }
 
-:root[data-theme-changing] *:not([role="switch"], [role="switch"] *, [data-thumb]),
+:root[data-theme-changing] *:not([role="switch"] *, [data-thumb]),
 :root[data-theme-changing] *::before,
 :root[data-theme-changing] *::after {
   transition: none !important;

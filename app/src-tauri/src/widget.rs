@@ -6,6 +6,12 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "macos")]
+use objc2::MainThreadOnly;
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSPanel, NSResponder, NSWindow};
+#[cfg(target_os = "macos")]
+use objc2_foundation::NSObject;
 #[cfg(not(target_os = "macos"))]
 use tauri::PhysicalPosition;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
@@ -141,9 +147,16 @@ pub fn float_over_everything(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(LABEL) {
         let on_window = window.clone();
         let _ = window.run_on_main_thread(move || {
-            use objc2_app_kit::{NSStatusWindowLevel, NSWindow, NSWindowCollectionBehavior};
+            use objc2::{ClassType, runtime::AnyObject};
+            use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior, NSWindowStyleMask};
             let Ok(pointer) = on_window.ns_window() else { return };
-            let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+            unsafe { AnyObject::set_class(&*pointer.cast::<AnyObject>(), SearchPanel::class()) };
+            let panel = unsafe { &*pointer.cast::<NSPanel>() };
+            panel.setStyleMask(panel.styleMask() | NSWindowStyleMask::NonactivatingPanel);
+            panel.setFloatingPanel(true);
+            panel.setBecomesKeyOnlyIfNeeded(false);
+            panel.setHidesOnDeactivate(false);
+            let ns_window: &NSWindow = panel;
             ns_window.setCollectionBehavior(
                 NSWindowCollectionBehavior::CanJoinAllSpaces
                     | NSWindowCollectionBehavior::FullScreenAuxiliary
@@ -154,6 +167,40 @@ pub fn float_over_everything(app: &AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = app;
+}
+
+#[cfg(target_os = "macos")]
+objc2::define_class!(
+    #[unsafe(super(NSPanel, NSWindow, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "MesaSearchPanel"]
+    struct SearchPanel;
+
+    impl SearchPanel {
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key_window(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(canBecomeMainWindow))]
+        fn can_become_main_window(&self) -> bool {
+            false
+        }
+    }
+);
+
+fn take_keyboard(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        let on_window = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            let Ok(pointer) = on_window.ns_window() else { return };
+            let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+            ns_window.makeKeyAndOrderFront(None);
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window.set_focus();
 }
 
 pub fn toggle(app: &AppHandle) {
@@ -213,7 +260,7 @@ pub fn show(app: &AppHandle) {
     #[cfg(target_os = "linux")]
     input_region(&window, None);
     let _ = window.show();
-    let _ = window.set_focus();
+    take_keyboard(&window);
     let _ = app.emit_to(LABEL, SHOWN_EVENT, ());
     let watch = WATCH.fetch_add(1, Ordering::SeqCst) + 1;
     #[cfg(not(target_os = "linux"))]
@@ -244,7 +291,7 @@ pub fn set_picking(app: &AppHandle, picking: bool) {
         && SHOWN.load(Ordering::SeqCst)
         && let Some(window) = app.get_webview_window(LABEL)
     {
-        let _ = window.set_focus();
+        take_keyboard(&window);
     }
 }
 
