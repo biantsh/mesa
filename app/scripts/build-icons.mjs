@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,11 +32,12 @@ try {
   if (!problem) problem = makeMacIcon();
   if (!problem) problem = makeTrayTemplate();
   if (!problem) problem = makeLayeredIcon();
+  if (!problem) problem = makeAssetsCar();
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
 if (problem) fail(problem);
-console.log(`build-icons: wrote ${[...keep, 'tray-template.png', 'Mesa.icon'].join(', ')} to ${iconsDir}`);
+console.log(`build-icons: wrote ${[...keep, 'tray-template.png', 'Mesa.icon', 'Assets.car'].join(', ')} to ${iconsDir}`);
 
 function makeMacIcon() {
   const logo = readFileSync(source, 'utf8');
@@ -145,7 +146,7 @@ function makeLayeredIcon() {
   const icon = {
     fill: { 'automatic-gradient': `srgb:${brown},1.00000` },
     groups: [{ layers, shadow: { kind: 'neutral', opacity: 0.5 }, translucency: { enabled: false, value: 0 } }],
-    'supported-platforms': { squares: 'shared' },
+    'supported-platforms': { squares: ['macOS'] },
   };
   writeFileSync(join(folder, 'icon.json'), `${JSON.stringify(icon, null, 2)}\n`);
   return '';
@@ -178,4 +179,43 @@ function makeTrayTemplate() {
 function fail(message) {
   console.error(`\nbuild-icons: ${message}\n`);
   process.exit(1);
+}
+
+function makeAssetsCar() {
+  if (process.platform !== 'darwin') return 'Assets.car can only be made on a Mac, with Xcode 26 or later';
+  const env = { ...process.env };
+  const actool = (args) => spawnSync('xcrun', ['actool', ...args], { encoding: 'utf8', env });
+  const version = () => /short-bundle-version:\s*(\d+)/.exec(actool(['--version', '--output-format', 'human-readable-text']).stdout ?? '')?.[1];
+  const xcode = '/Applications/Xcode.app/Contents/Developer';
+  if (!version() && existsSync(xcode)) env.DEVELOPER_DIR = xcode;
+  const major = Number(version());
+  if (!major) return 'making Assets.car needs Xcode 26 or later, and actool wasn\'t found';
+  if (major < 26) return `making Assets.car needs Xcode 26 or later, but actool is from Xcode ${major}`;
+  const folder = mkdtempSync(join(tmpdir(), 'mesa-assets-car-'));
+  try {
+    const icon = join(folder, 'Icon.icon');
+    const out = join(folder, 'out');
+    cpSync(join(iconsDir, 'Mesa.icon'), icon, { recursive: true });
+    mkdirSync(out);
+    const result = actool([
+      icon,
+      '--compile', out,
+      '--output-format', 'human-readable-text',
+      '--output-partial-info-plist', join(out, 'assetcatalog_generated_info.plist'),
+      '--app-icon', 'Icon',
+      '--include-all-app-icons',
+      '--enable-on-demand-resources', 'NO',
+      '--development-region', 'en',
+      '--target-device', 'mac',
+      '--minimum-deployment-target', '26.0',
+      '--platform', 'macosx',
+    ]);
+    if (result.status !== 0 || !existsSync(join(out, 'Assets.car'))) {
+      return `actool couldn't compile Mesa.icon:\n${result.stdout ?? ''}${result.stderr ?? ''}`;
+    }
+    copyFileSync(join(out, 'Assets.car'), join(iconsDir, 'Assets.car'));
+    return '';
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 }
