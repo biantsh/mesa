@@ -48,7 +48,12 @@ pub fn set_visible_boxes(window: &WebviewWindow, boxes: Vec<[f64; 4]>) {
 #[cfg(target_os = "linux")]
 fn input_region(window: &WebviewWindow, boxes: Option<Vec<[f64; 4]>>) {
     let scale = crate::page_scale::factor();
-    let boxes = boxes.map(|boxes| boxes.into_iter().map(|box_| box_.map(|side| side * scale)).collect::<Vec<_>>());
+    let boxes = boxes.map(|boxes| {
+        boxes
+            .into_iter()
+            .map(|box_| box_.map(|side| side * scale))
+            .collect::<Vec<_>>()
+    });
     let on_window = window.clone();
     let _ = window.run_on_main_thread(move || {
         use gtk::{

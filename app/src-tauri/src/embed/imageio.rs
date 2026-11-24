@@ -33,7 +33,7 @@ pub fn decode(path: &Path) -> Result<(Vec<u8>, u32, u32), String> {
     };
     let (rgba, width, height) = cgimage::pixels(&image).ok_or("the picture is empty")?;
     let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
-    for pixel in rgba.chunks_exact(4) {
+    for pixel in rgba.as_chunks::<4>().0 {
         rgb.extend_from_slice(&pixel[..3]);
     }
     Ok((rgb, width, height))

@@ -843,7 +843,9 @@ fn free_space(dir: &Path) -> Option<u64> {
             return None;
         }
         let stats = unsafe { stats.assume_init() };
-        Some(u64::from(stats.f_bavail).saturating_mul(u64::from(stats.f_frsize)))
+        #[allow(clippy::useless_conversion)]
+        let free = u64::from(stats.f_bavail).saturating_mul(u64::from(stats.f_frsize));
+        Some(free)
     }
 }
 

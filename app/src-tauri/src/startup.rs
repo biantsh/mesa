@@ -7,8 +7,6 @@ use tauri_plugin_autostart::ManagerExt;
 use crate::settings::{Settings, SettingsStore};
 
 pub const BACKGROUND_ARG: &str = "--background";
-// Temporary: macOS kills an ad-hoc signed app's sign-in entry after every update, so starting at sign-in stays off on macOS until Mesa is signed with a Developer ID.
-const AVAILABLE: bool = !cfg!(target_os = "macos");
 pub const SEARCH_ARG: &str = "--search";
 
 pub fn data_dir(identifier: &str) -> Option<PathBuf> {
@@ -98,13 +96,9 @@ fn at_start_does(made: bool, kept: bool, system: Option<bool>) -> AtStart {
 }
 
 pub fn at_start(app: &AppHandle, settings: &SettingsStore) {
-    if !AVAILABLE {
-        #[cfg(target_os = "macos")]
-        if can_change() {
-            let _ = app.autolaunch().disable();
-            macos::remove_entries();
-        }
-        return;
+    #[cfg(target_os = "macos")]
+    if can_change() {
+        macos::remove_old_entry();
     }
     let kept = settings.get();
     let does = at_start_does(kept.sign_in_entry_made, kept.start_at_sign_in, system_says(app));
@@ -146,9 +140,6 @@ pub fn current(app: &AppHandle, settings: &SettingsStore) -> Settings {
 }
 
 pub fn set(app: &AppHandle, settings: &SettingsStore, on: bool) -> Result<(), String> {
-    if !AVAILABLE {
-        return Err("Currently not available on macOS.".into());
-    }
     let changes = can_change();
     if changes {
         if on { register(app, true)? } else { unregister(app)? }
@@ -207,18 +198,15 @@ mod macos {
     const AGENT_PLIST: &str = "com.mesa.desktop.agent.plist";
 
     fn service() -> AppService {
-        AppService::new(ServiceType::Agent { plist_name: AGENT_PLIST })
+        AppService::new(ServiceType::Agent {
+            plist_name: AGENT_PLIST,
+        })
     }
 
-    pub fn remove_entries() {
+    pub fn remove_old_entry() {
         let old = AppService::new(ServiceType::MainApp);
         if old.status() == ServiceStatus::Enabled {
             let _ = old.unregister();
-        }
-        if is_on()
-            && let Err(e) = unregister()
-        {
-            eprintln!("Mesa: {e}");
         }
     }
 

@@ -177,8 +177,9 @@ fn main() {
 
     let builder = tauri::Builder::default();
     #[cfg(not(target_os = "macos"))]
-    let builder =
-        builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| startup::another_launch(app, &args)));
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        startup::another_launch(app, &args)
+    }));
     builder
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()

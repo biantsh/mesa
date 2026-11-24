@@ -41,6 +41,7 @@ pub fn is_wholly_unindexable(path: &Path) -> bool {
     is_unindexable(path) && !locked().exceptions.iter().any(|exception| is_inside(exception, path))
 }
 
+#[cfg(any(windows, target_os = "macos"))]
 pub fn is_app_data(path: &Path) -> bool {
     locked()
         .app_data
@@ -90,6 +91,7 @@ fn same(a: &OsStr, b: &OsStr) -> bool {
 struct Locked {
     folders: Vec<PathBuf>,
     exceptions: Vec<PathBuf>,
+    #[cfg(any(windows, target_os = "macos"))]
     app_data: Option<PathBuf>,
 }
 
@@ -147,7 +149,6 @@ impl Locked {
         Self {
             folders: LINUX_FOLDERS.iter().map(PathBuf::from).collect(),
             exceptions: LINUX_EXCEPTIONS.iter().map(PathBuf::from).collect(),
-            app_data: None,
         }
     }
 

@@ -275,7 +275,17 @@ fn is_network_drive(root: &Path) -> bool {
     unsafe { windows::Win32::Storage::FileSystem::GetDriveTypeW(&root) == DRIVE_REMOTE }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn is_network_drive(root: &Path) -> bool {
+    mounts().iter().any(|mount| mount.network && mount.path == root)
+}
+
+#[cfg(target_os = "linux")]
+fn is_network_drive(root: &Path) -> bool {
+    fs::read_to_string("/proc/self/mounts").is_ok_and(|list| network_mounts_in(&list).iter().any(|point| point == root))
+}
+
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn is_network_drive(_: &Path) -> bool {
     false
 }
@@ -289,12 +299,52 @@ pub fn roots() -> Vec<PathBuf> {
 
 #[cfg(target_os = "macos")]
 fn external_volumes() -> Vec<PathBuf> {
-    let mut volumes: Vec<PathBuf> = fs::read_dir("/Volumes")
-        .map(|volumes| volumes.flatten().map(|volume| volume.path()).collect())
-        .unwrap_or_default();
-    volumes.retain(|volume| volume.is_dir() && fs::canonicalize(volume).is_ok_and(|real| real != Path::new("/")));
+    let mut volumes: Vec<PathBuf> = mounts()
+        .into_iter()
+        .filter(|mount| !mount.hidden && is_external_volume(&mount.path))
+        .map(|mount| mount.path)
+        .collect();
     volumes.sort();
+    volumes.dedup();
     volumes
+}
+
+#[cfg(target_os = "macos")]
+struct Mount {
+    path: PathBuf,
+    network: bool,
+    hidden: bool,
+}
+
+#[cfg(target_os = "macos")]
+fn mounts() -> Vec<Mount> {
+    use std::{
+        ffi::{CStr, OsStr},
+        os::unix::ffi::OsStrExt,
+    };
+    let known = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+    let Ok(known) = usize::try_from(known) else {
+        return Vec::new();
+    };
+    let mut stats: Vec<libc::statfs> = Vec::with_capacity(known + 4);
+    let Ok(bytes) = libc::c_int::try_from(stats.capacity() * std::mem::size_of::<libc::statfs>()) else {
+        return Vec::new();
+    };
+    let filled = unsafe { libc::getfsstat(stats.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+    let Ok(filled) = usize::try_from(filled) else {
+        return Vec::new();
+    };
+    unsafe { stats.set_len(filled.min(stats.capacity())) };
+    stats
+        .iter()
+        .map(|stat| Mount {
+            path: PathBuf::from(OsStr::from_bytes(
+                unsafe { CStr::from_ptr(stat.f_mntonname.as_ptr()) }.to_bytes(),
+            )),
+            network: stat.f_flags & libc::MNT_LOCAL as u32 == 0,
+            hidden: stat.f_flags & libc::MNT_DONTBROWSE as u32 != 0,
+        })
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
@@ -302,7 +352,10 @@ fn startup_disk_name() -> Option<String> {
     fs::read_dir("/Volumes")
         .ok()?
         .flatten()
-        .find(|volume| fs::canonicalize(volume.path()).is_ok_and(|real| real == Path::new("/")))
+        .find(|volume| {
+            volume.file_type().is_ok_and(|kind| kind.is_symlink())
+                && fs::read_link(volume.path()).is_ok_and(|target| target == Path::new("/"))
+        })
         .map(|volume| volume.file_name().to_string_lossy().into_owned())
 }
 
@@ -371,6 +424,38 @@ fn mount_points_in(list: &str) -> Vec<PathBuf> {
     list.lines()
         .filter_map(|line| line.split_whitespace().nth(1))
         .map(unescape_mount_point)
+        .collect()
+}
+
+#[cfg(any(target_os = "linux", test))]
+const NETWORK_FILE_SYSTEMS: &[&str] = &[
+    "nfs",
+    "nfs4",
+    "cifs",
+    "smb3",
+    "smbfs",
+    "ncpfs",
+    "afs",
+    "ceph",
+    "glusterfs",
+    "lustre",
+    "davfs",
+    "fuse.sshfs",
+    "fuse.rclone",
+    "fuse.s3fs",
+];
+
+#[cfg(any(target_os = "linux", test))]
+fn network_mounts_in(list: &str) -> Vec<PathBuf> {
+    list.lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace().skip(1);
+            let point = fields.next()?;
+            let kind = fields.next()?;
+            NETWORK_FILE_SYSTEMS
+                .contains(&kind)
+                .then(|| unescape_mount_point(point))
+        })
         .collect()
 }
 
@@ -908,6 +993,40 @@ mod tests {
                 PathBuf::from("/mnt/back\\slash")
             ],
         );
+    }
+
+    #[test]
+    fn finds_network_shares_in_the_mount_list() {
+        let list = "/dev/nvme0n1p2 / ext4 rw,relatime 0 0\n\
+            /dev/sda1 /media/me/USB\\040Stick vfat rw 0 0\n\
+            server:/share /mnt/back\\134slash nfs rw 0 0\n\
+            //nas/photos /media/me/Photos cifs rw 0 0\n\
+            me@host:/ /mnt/remote fuse.sshfs rw 0 0\n";
+        assert_eq!(
+            network_mounts_in(list),
+            [
+                PathBuf::from("/mnt/back\\slash"),
+                PathBuf::from("/media/me/Photos"),
+                PathBuf::from("/mnt/remote")
+            ],
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_startup_disk_is_local_and_not_an_external_volume() {
+        assert!(
+            mounts()
+                .iter()
+                .any(|mount| mount.path == Path::new("/") && !mount.network)
+        );
+        assert!(!is_network_drive(Path::new("/")));
+        assert!(
+            external_volumes()
+                .iter()
+                .all(|volume| volume.parent() == Some(Path::new("/Volumes")))
+        );
+        assert!(startup_disk_name().is_some());
     }
 
     #[test]

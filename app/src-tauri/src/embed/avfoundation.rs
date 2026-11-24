@@ -61,7 +61,7 @@ fn read(path: &Path, times: &dyn Fn(f64) -> Vec<f64>, emit: &mut dyn FnMut(Unit)
                 continue;
             };
             let mut rgb = Vec::with_capacity(rgba.len() / 4 * 3);
-            for pixel in rgba.chunks_exact(4) {
+            for pixel in rgba.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&pixel[..3]);
             }
             let bitmap = picture::from_rgb(&rgb, width, height)?;
@@ -187,7 +187,7 @@ pub fn sound_length(path: &Path) -> Option<f64> {
 }
 
 fn frame_times(duration: f64) -> Vec<f64> {
-    if !(duration > 0.0) {
+    if duration.is_nan() || duration <= 0.0 {
         return vec![0.0];
     }
     let every = FRAME_EVERY.max(duration / MAX_FRAMES as f64);

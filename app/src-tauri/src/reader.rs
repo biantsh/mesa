@@ -731,6 +731,7 @@ pub mod tests {
                 Trial::Allocate(_) => {
                     let big = vec![1u8; (lock_down::MOST_MEMORY + (1 << 30)) as usize];
                     std::hint::black_box(&big);
+                    thread::sleep(Duration::from_secs(2));
                     Ok(())
                 }
             })

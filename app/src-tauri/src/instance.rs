@@ -1,10 +1,10 @@
 //! Keeps one copy of Mesa running per data folder.
 //!
 //! Two lock files in the data folder decide which copy runs:
-//! 
+//!
 //!  - `running.lock` is held by the copy that runs Mesa for as long as it lives. Only that copy
 //!    opens the index, so two copies can never write it at once.
-//! 
+//!
 //!  - `starting.lock` is held while a copy starts up. Every launch takes it before looking at
 //!    `running.lock`, and the running copy lets go of it only once it can take the arguments of
 //!    later launches. So a launch that finds Mesa running knows it can hand over straight away.
@@ -88,7 +88,12 @@ fn claim_within(dir: &Path, wait: Duration) -> io::Result<Launch> {
 }
 
 fn lock_file(path: &Path) -> io::Result<File> {
-    File::options().read(true).write(true).create(true).truncate(false).open(path)
+    File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
 }
 
 impl Claim {
@@ -146,7 +151,9 @@ mod handoff {
         let mut buf = [0 as libc::c_char; 1024];
         let len = unsafe { libc::confstr(libc::_CS_DARWIN_USER_TEMP_DIR, buf.as_mut_ptr(), buf.len()) };
         if len == 0 || len > buf.len() {
-            return Err(io::Error::other("macOS didn't say where the user's temporary folder is"));
+            return Err(io::Error::other(
+                "macOS didn't say where the user's temporary folder is",
+            ));
         }
         let temp = unsafe { CStr::from_ptr(buf.as_ptr()) };
         let name = format!("mesa-{:016x}.sock", fnv1a(dir.as_os_str().as_bytes()));
@@ -156,9 +163,9 @@ mod handoff {
     /// Stable across Rust versions, unlike `DefaultHasher`, so a copy of Mesa built with another
     /// compiler finds the same socket.
     fn fnv1a(bytes: &[u8]) -> u64 {
-        bytes
-            .iter()
-            .fold(0xcbf2_9ce4_8422_2325, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+        bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| {
+            (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        })
     }
 
     /// Only the copy holding the running lock calls this, so any socket already there is left
@@ -167,16 +174,18 @@ mod handoff {
         let path = socket_path(dir)?;
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path)?;
-        std::thread::Builder::new().name("later-launches".into()).spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-                let mut text = String::new();
-                if stream.read_to_string(&mut text).is_ok() {
-                    on_launch(text.split('\0').map(String::from).collect());
+        std::thread::Builder::new()
+            .name("later-launches".into())
+            .spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { continue };
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                    let mut text = String::new();
+                    if stream.read_to_string(&mut text).is_ok() {
+                        on_launch(text.split('\0').map(String::from).collect());
+                    }
                 }
-            }
-        })?;
+            })?;
         Ok(path)
     }
 
@@ -207,7 +216,10 @@ mod handoff {
 
         #[test]
         fn each_data_folder_has_its_own_socket() {
-            assert_ne!(socket_path(Path::new("/a")).unwrap(), socket_path(Path::new("/b")).unwrap());
+            assert_ne!(
+                socket_path(Path::new("/a")).unwrap(),
+                socket_path(Path::new("/b")).unwrap()
+            );
         }
     }
 }
@@ -243,7 +255,10 @@ mod tests {
             thread::spawn(move || claim_within(&dir, Duration::from_secs(10)).unwrap())
         };
         thread::sleep(Duration::from_millis(300));
-        assert!(!later.is_finished(), "the later launch should wait while the first starts up");
+        assert!(
+            !later.is_finished(),
+            "the later launch should wait while the first starts up"
+        );
         let _running = running(claim);
         assert!(matches!(later.join().unwrap(), Launch::Later));
     }
@@ -252,7 +267,10 @@ mod tests {
     fn a_later_launch_gives_up_on_a_copy_stuck_starting() {
         let dir = temp_dir("stuck");
         let _claim = first(claim_within(&dir, Duration::from_secs(10)).unwrap());
-        assert!(matches!(claim_within(&dir, Duration::from_millis(200)).unwrap(), Launch::Later));
+        assert!(matches!(
+            claim_within(&dir, Duration::from_millis(200)).unwrap(),
+            Launch::Later
+        ));
     }
 
     #[test]
