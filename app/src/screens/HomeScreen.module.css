@@ -233,6 +233,21 @@
   transform: translateY(calc(-1 * (var(--lift, 0px) + var(--top-gap, 20px) + var(--open-height) + 28px)));
 }
 
+:global(:root[data-platform="mac"]) .row {
+  top: 0;
+  transition: top var(--focus-time) var(--focus-ease);
+}
+
+:global(:root[data-platform="mac"]) .engaged .row {
+  transform: none;
+  top: calc(-1 * var(--lift, 0px));
+}
+
+:global(:root[data-platform="mac"]) .stowed .row {
+  transform: none;
+  top: calc(-1 * (var(--lift, 0px) + var(--top-gap, 20px) + var(--open-height) + 28px));
+}
+
 .field,
 .tagsBox {
   --slab-top: 0px;
