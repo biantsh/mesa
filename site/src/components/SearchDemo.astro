@@ -246,7 +246,7 @@ const HEIGHT = 635;
   }
 
   :global(:root[data-os="mac"]) .frame {
-    border-radius: 12px;
+    border-radius: calc(12px * var(--scale, 1));
     outline: 1px solid var(--color-border-strong);
     outline-offset: -1px;
   }
