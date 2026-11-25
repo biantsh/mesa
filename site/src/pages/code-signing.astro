@@ -1,0 +1,246 @@
+---
+import Base from "../layouts/Base.astro";
+import Header from "../components/Header.astro";
+import Icon from "../components/Icon.astro";
+import windows from "../assets/os/windows.svg?raw";
+import apple from "../assets/os/apple.svg?raw";
+
+const MAINTAINER = "https://github.com/biantsh";
+const description = "How Mesa's installers are signed, who approves each release, and what Mesa sends over the internet.";
+---
+
+<Base title="Code signing policy · Mesa" description={description}>
+  <Header />
+
+  <main class="policy container">
+    <a class="back quiet" href="/">← Mesa</a>
+    <h1>Code signing policy</h1>
+    <p class="lead">
+      Mesa’s installers are signed so your computer can confirm they come from this project and haven’t been changed since
+      they were built.
+    </p>
+
+    <ul class="signers">
+      <li class="signer">
+        <span class="os-icon" set:html={windows} />
+        <p>
+          <strong>Windows:</strong> Free code signing provided by <a href="https://about.signpath.io">SignPath.io</a>,
+          certificate by <a href="https://signpath.org">SignPath Foundation</a>
+        </p>
+      </li>
+      <li class="signer muted">
+        <span class="os-icon" set:html={apple} />
+        <p><strong>macOS:</strong> signed with an Apple Developer ID and notarized by Apple</p>
+      </li>
+    </ul>
+
+    <div class="panels">
+      <section class="panel">
+        <h2>Team</h2>
+        <dl class="roles">
+          <div class="role">
+            <dt>Committers and reviewers</dt>
+            <dd><a href={MAINTAINER}>biantsh</a></dd>
+          </div>
+          <div class="role">
+            <dt>Approvers</dt>
+            <dd><a href={MAINTAINER}>biantsh</a></dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="panel" id="privacy">
+        <h2>Privacy</h2>
+        <p class="intro">
+          Mesa runs on your own computer. There’s no account and no telemetry, and your files, searches and index never leave
+          it. It connects to the internet only to:
+        </p>
+        <ul class="uses">
+          <li>
+            <span class="use-icon"><Icon name="cloudDownload" size={16} /></span>
+            <p><strong>Download its models</strong> from Hugging Face, once on first start, and again only if they go missing.</p>
+          </li>
+          <li>
+            <span class="use-icon"><Icon name="refresh" size={16} /></span>
+            <p><strong>Check GitHub for updates.</strong> Nothing about you or your files is sent, and you can turn it off in Settings.</p>
+          </li>
+        </ul>
+        <p class="note">
+          <Icon name="laptop" size={14} />
+          <span>Links you click, such as to this website or GitHub, open in your browser.</span>
+        </p>
+      </section>
+    </div>
+  </main>
+</Base>
+
+<style>
+  .policy {
+    padding-top: clamp(20px, 4vh, 56px);
+    padding-bottom: clamp(16px, 3vh, 56px);
+  }
+
+  .quiet {
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    text-underline-offset: 3px;
+    transition: text-decoration-color 150ms ease;
+  }
+
+  .quiet:hover {
+    text-decoration-color: currentColor;
+  }
+
+  .back {
+    display: inline-block;
+    margin-bottom: 16px;
+    color: var(--color-text-muted);
+    font-size: 14px;
+  }
+
+  h1 {
+    font-size: clamp(32px, 4.5vw, 44px);
+  }
+
+  .lead {
+    margin-top: 10px;
+  }
+
+  .signers {
+    display: grid;
+    gap: 12px;
+    margin: 20px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .signer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+  }
+
+  .signer p {
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .muted p {
+    color: var(--color-text-muted);
+  }
+
+  strong {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+
+  .os-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--color-hover-bg);
+    color: var(--color-primary-ink);
+  }
+
+  .os-icon :global(svg) {
+    width: 16px;
+    height: 16px;
+  }
+
+  .panels {
+    display: grid;
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  @media (min-width: 900px) {
+    .panels {
+      grid-template-columns: minmax(260px, 1fr) 2fr;
+    }
+  }
+
+  .panel {
+    padding: 20px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
+  }
+
+  h2 {
+    font-size: 20px;
+  }
+
+  .roles {
+    display: grid;
+    gap: 14px;
+    margin: 16px 0 0;
+  }
+
+  .role dt {
+    color: var(--color-text-muted);
+    font-size: 14px;
+  }
+
+  .role dd {
+    margin: 2px 0 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .intro {
+    margin: 12px 0 0;
+    color: var(--color-text-muted);
+    font-size: 15px;
+  }
+
+  .uses {
+    display: grid;
+    gap: 12px;
+    margin: 16px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .uses li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .uses p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 15px;
+  }
+
+  .use-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md);
+    background: var(--color-hover-bg);
+    color: var(--color-primary-ink);
+  }
+
+  .note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 16px 0 0;
+    color: var(--color-text-muted);
+    font-size: 13px;
+  }
+
+  .note :global(svg) {
+    flex: none;
+  }
+</style>
