@@ -96,10 +96,6 @@ fn at_start_does(made: bool, kept: bool, system: Option<bool>) -> AtStart {
 }
 
 pub fn at_start(app: &AppHandle, settings: &SettingsStore) {
-    #[cfg(target_os = "macos")]
-    if can_change() {
-        macos::remove_old_entry();
-    }
     let kept = settings.get();
     let does = at_start_does(kept.sign_in_entry_made, kept.start_at_sign_in, system_says(app));
     if does == AtStart::Nothing {
@@ -201,13 +197,6 @@ mod macos {
         AppService::new(ServiceType::Agent {
             plist_name: AGENT_PLIST,
         })
-    }
-
-    pub fn remove_old_entry() {
-        let old = AppService::new(ServiceType::MainApp);
-        if old.status() == ServiceStatus::Enabled {
-            let _ = old.unregister();
-        }
     }
 
     pub fn is_on() -> bool {

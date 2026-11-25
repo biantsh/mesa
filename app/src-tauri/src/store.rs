@@ -21,28 +21,11 @@ use crate::{
     words,
 };
 
-const CONFIG_ID: u32 = 3;
+const CONFIG_ID: u32 = 1;
 
-const MIGRATIONS: &[&str] = &[
-    SCHEMA,
-    ADD_META,
-    ADD_EMBEDDED_WITH,
-    ADD_LOCATOR,
-    ADD_EXCLUSIONS,
-    DROP_RULES_INDEXED,
-    ADD_FILE_COUNT,
-    ADD_WORDS,
-    REDO_TINY_DOCUMENTS,
-    ADD_PAGE_TEXTS,
-    REDO_SOUND_VIDEO_AND_DOCUMENTS,
-    REDO_VIDEOS_FOR_THEIR_SOUND,
-    REDO_CODE_CUT_AGAIN,
-    ADD_FILE_NAMES,
-    REDO_CODE_BY_OUTLINE,
-    ADD_CLOUD_FILES,
-];
+const MIGRATIONS: &[&str] = &[SCHEMA];
 
-const WORDS_ID: u32 = 2;
+const WORDS_ID: u32 = 1;
 
 const SCHEMA: &str = "
 CREATE TABLE dirs (
@@ -55,12 +38,14 @@ CREATE TABLE dirs (
 INSERT INTO dirs (id, parent_id, name) VALUES (0, 0, '');
 
 CREATE TABLE files (
-    id          INTEGER PRIMARY KEY,
-    dir_id      INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    category    INTEGER NOT NULL,  -- see `category_code`
-    modified_ms INTEGER NOT NULL,  -- Unix time in milliseconds
-    size        INTEGER NOT NULL,  -- bytes
+    id            INTEGER PRIMARY KEY,
+    dir_id        INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
+    name          TEXT NOT NULL,
+    category      INTEGER NOT NULL,  -- see `category_code`
+    modified_ms   INTEGER NOT NULL,  -- Unix time in milliseconds
+    size          INTEGER NOT NULL,  -- bytes
+    embedded_with INTEGER NOT NULL DEFAULT 0,
+    read_with     INTEGER NOT NULL DEFAULT 0,
     UNIQUE (dir_id, name)
 );
 CREATE INDEX files_by_category_and_date ON files (category, modified_ms);
@@ -77,6 +62,7 @@ CREATE TABLE embeddings (
     config_id INTEGER NOT NULL REFERENCES embedding_configs(id),
     slot      INTEGER NOT NULL,
     file_id   INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    locator   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (config_id, slot)
 ) WITHOUT ROWID;
 CREATE INDEX embeddings_by_file ON embeddings (file_id);
@@ -92,52 +78,34 @@ BEGIN
     INSERT INTO free_slots (config_id, slot) VALUES (old.config_id, old.slot);
 END;
 
-CREATE TABLE rules (path TEXT PRIMARY KEY, indexed INTEGER NOT NULL) WITHOUT ROWID;
+CREATE TABLE rules (path TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TABLE exclusions (path TEXT PRIMARY KEY) WITHOUT ROWID;
 
 -- Indexing that was asked for and hasn't finished, so it can carry on after a restart.
 CREATE TABLE jobs (id INTEGER PRIMARY KEY, path TEXT NOT NULL);
-";
 
-const ADD_META: &str = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;";
-const ADD_EMBEDDED_WITH: &str = "ALTER TABLE files ADD COLUMN embedded_with INTEGER NOT NULL DEFAULT 0;";
-const ADD_LOCATOR: &str = "ALTER TABLE embeddings ADD COLUMN locator INTEGER NOT NULL DEFAULT 0;";
-const ADD_EXCLUSIONS: &str = "CREATE TABLE exclusions (path TEXT PRIMARY KEY) WITHOUT ROWID;";
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID;
 
-const ADD_CLOUD_FILES: &str = "
-CREATE TABLE cloud_files (
-    dir_id   INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
-    name     TEXT NOT NULL,
-    category INTEGER NOT NULL,
-    PRIMARY KEY (dir_id, name)
-) WITHOUT ROWID;
-";
-const DROP_RULES_INDEXED: &str = "DELETE FROM rules WHERE indexed = 0; ALTER TABLE rules DROP COLUMN indexed;";
-
-const ADD_FILE_COUNT: &str = "
 CREATE TABLE file_count (n INTEGER NOT NULL);
-INSERT INTO file_count SELECT COUNT(*) FROM files;
+INSERT INTO file_count (n) VALUES (0);
 CREATE TRIGGER files_counted_in AFTER INSERT ON files BEGIN UPDATE file_count SET n = n + 1; END;
 CREATE TRIGGER files_counted_out AFTER DELETE ON files BEGIN UPDATE file_count SET n = n - 1; END;
-";
 
-const ADD_WORDS: &str = "
-ALTER TABLE files ADD COLUMN read_with INTEGER NOT NULL DEFAULT 0;
 CREATE VIRTUAL TABLE picture_words USING fts5(folded, text UNINDEXED, tokenize = 'trigram remove_diacritics 1');
 CREATE VIRTUAL TABLE document_words USING fts5(folded, content = '', contentless_delete = 1, tokenize = 'trigram remove_diacritics 1');
 CREATE TRIGGER files_words_out AFTER DELETE ON files BEGIN
     DELETE FROM picture_words WHERE rowid = old.id;
     DELETE FROM document_words WHERE rowid = old.id;
 END;
-";
 
-const REDO_TINY_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category = 3 AND size < 1024;";
-const REDO_SOUND_VIDEO_AND_DOCUMENTS: &str = "UPDATE files SET embedded_with = 0 WHERE category IN (1, 2, 3);";
-const REDO_VIDEOS_FOR_THEIR_SOUND: &str = "UPDATE files SET embedded_with = 0 WHERE category = 1;";
-const REDO_CODE_CUT_AGAIN: &str = "UPDATE files SET embedded_with = 0 WHERE category = 4;";
-const REDO_CODE_BY_OUTLINE: &str = "UPDATE files SET embedded_with = 0 WHERE category = 4;";
-const ADD_FILE_NAMES: &str = "
+CREATE TABLE page_texts (
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    page    INTEGER NOT NULL,
+    text    TEXT NOT NULL,
+    PRIMARY KEY (file_id, page)
+) WITHOUT ROWID;
+
 CREATE VIRTUAL TABLE file_names USING fts5(folded, content = '', contentless_delete = 1, tokenize = 'trigram remove_diacritics 1');
-INSERT INTO file_names (rowid, folded) SELECT id, mesa_fold(name) FROM files;
 CREATE TRIGGER file_names_added AFTER INSERT ON files BEGIN
     INSERT INTO file_names (rowid, folded) VALUES (new.id, mesa_fold(new.name));
 END;
@@ -148,16 +116,13 @@ CREATE TRIGGER file_names_renamed AFTER UPDATE OF name ON files BEGIN
     DELETE FROM file_names WHERE rowid = old.id;
     INSERT INTO file_names (rowid, folded) VALUES (new.id, mesa_fold(new.name));
 END;
-";
-const ADD_PAGE_TEXTS: &str = "
-CREATE TABLE page_texts (
-    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-    page    INTEGER NOT NULL,
-    text    TEXT NOT NULL,
-    PRIMARY KEY (file_id, page)
+
+CREATE TABLE cloud_files (
+    dir_id   INTEGER NOT NULL REFERENCES dirs(id) ON DELETE CASCADE,
+    name     TEXT NOT NULL,
+    category INTEGER NOT NULL,
+    PRIMARY KEY (dir_id, name)
 ) WITHOUT ROWID;
-UPDATE files SET embedded_with = 0
-WHERE category = 3 AND lower(name) LIKE '%.pdf' AND NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.file_id = files.id);
 ";
 
 #[derive(Debug)]
