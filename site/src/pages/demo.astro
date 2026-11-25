@@ -64,6 +64,10 @@ const border = `
         const name = navigator.platform || navigator.userAgent;
         const os = (site && site.dataset.os) || (/Mac/i.test(name) ? "mac" : /Linux/i.test(name) ? "linux" : "windows");
         if (os !== "windows") root.dataset.platform = os;
+        const platforms = { mac: "MacIntel", windows: "Win32", linux: "Linux x86_64" };
+        try {
+          Object.defineProperty(navigator, "platform", { value: platforms[os], configurable: true });
+        } catch {}
         const agent = navigator.userAgent;
         if (/Linux/.test(agent) && /AppleWebKit/.test(agent) && !/Chrome|Chromium|Edg\//.test(agent)) root.dataset.engine = "webkitgtk";
       })();

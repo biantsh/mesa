@@ -1,4 +1,3 @@
-import "./os";
 import "./paged";
 import { dragFiles } from "./tauri/webview";
 import { useEffect, useState } from "react";
@@ -90,7 +89,10 @@ const wait = (ms: number) => delay(ms, run);
 async function field(): Promise<HTMLInputElement> {
   for (;;) {
     const input = [...document.querySelectorAll<HTMLInputElement>("input[type='text'], input:not([type])")].find((each) => !each.closest("dialog"));
-    if (input) return input;
+    if (input) {
+      if (matchMedia("(hover: none)").matches) input.inputMode = "none";
+      return input;
+    }
     await wait(100);
   }
 }

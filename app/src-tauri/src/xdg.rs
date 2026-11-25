@@ -41,7 +41,10 @@ pub fn set_up_gstreamer(identifier: &str) {
     if std::env::var_os("GST_REGISTRY_1_0").is_none()
         && let Some(cache) = base_dir("XDG_CACHE_HOME", ".cache")
     {
-        set.push(("GST_REGISTRY_1_0", cache.join(identifier).join("gstreamer-registry.bin")));
+        set.push((
+            "GST_REGISTRY_1_0",
+            cache.join(identifier).join("gstreamer-registry.bin"),
+        ));
     }
     for (variable, value) in set {
         // SAFETY: main calls this before it starts any thread.

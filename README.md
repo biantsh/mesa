@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://mesa.example">Website</a> ·
+  <a href="https://mesa.page">Website</a> ·
   <a href="https://github.com/biantsh/mesa/releases/latest">Download</a> ·
   <a href="#how-it-works">How it works</a>
 </p>
