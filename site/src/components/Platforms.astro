@@ -1,6 +1,7 @@
 ---
 import Icon from "./Icon.astro";
 import { PLATFORMS } from "../platforms";
+import { downloadUrl } from "../downloads";
 ---
 
 <ul class="platforms">
@@ -15,7 +16,7 @@ import { PLATFORMS } from "../platforms";
         <p class="needs">{platform.needs}</p>
         <div class="group">
           {platform.installers.map((kind) => (
-            <button type="button" class="button installer">
+            <a class="button installer" href={downloadUrl(kind)}>
               <Icon name="download" size={16} />
               {platform.installers.length === 1 ? (
                 <span>
@@ -24,7 +25,7 @@ import { PLATFORMS } from "../platforms";
               ) : (
                 <span class="kind">{kind}</span>
               )}
-            </button>
+            </a>
           ))}
         </div>
       </li>

@@ -1,0 +1,84 @@
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - site/**
+      - app/src/**
+      - app/src-tauri/icons/**
+      - app/src-tauri/tauri.conf.json
+      - LICENSE
+      - .github/workflows/site.yml
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            site/package-lock.json
+      - id: pages
+        uses: actions/configure-pages@v6
+      - run: npm ci
+        working-directory: app
+      - run: npm ci
+        working-directory: site
+      - run: npm run build
+        working-directory: site
+        env:
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
+      - name: Check the download links
+        run: |
+          links=$(grep -o 'https://github.com/biantsh/mesa/releases/download/[^"]*' site/dist/index.html | sort -u)
+          if [[ -z $links ]]; then
+            echo "::error::The site has no download links."
+            exit 1
+          fi
+          failed=0
+          for link in $links; do
+            if curl -sfIL -o /dev/null "$link"; then
+              echo "ok $link"
+            else
+              echo "::error::$link doesn't download. Is the release published, and are its files named as in site/src/downloads.ts?"
+              failed=1
+            fi
+          done
+          exit $failed
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

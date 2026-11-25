@@ -1,6 +1,7 @@
 ---
 import Icon from "./Icon.astro";
 import { PLATFORMS } from "../platforms";
+import { downloadUrl } from "../downloads";
 
 interface Props {
   end?: boolean;
@@ -20,17 +21,17 @@ function others(id: string) {
         <div class:list={["group primary", { several: platform.installers.length > 1 }]}>
           {platform.installers.map((kind, i) =>
             i === 0 ? (
-              <button type="button" class="button primary large">
+              <a class="button primary large" href={downloadUrl(kind)}>
                 <Icon name="download" size={18} />
                 <span>
                   Download<span class="for-os"> for {platform.name}</span>
                 </span>
                 <span class="kind">{kind}</span>
-              </button>
+              </a>
             ) : (
-              <button type="button" class="button primary large">
+              <a class="button primary large" href={downloadUrl(kind)}>
                 {kind}
-              </button>
+              </a>
             ),
           )}
         </div>

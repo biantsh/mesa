@@ -6,6 +6,7 @@ import { release } from "./src/release.ts";
 const here = (path) => fileURLToPath(new URL(path, import.meta.url));
 
 export default defineConfig({
+  site: process.env.SITE_URL || undefined,
   server: { port: 4321 },
   devToolbar: { enabled: false },
   integrations: [react()],
