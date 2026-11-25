@@ -13,6 +13,7 @@ import "@fontsource-variable/inter";
 import "../../../app/src/styles/tokens.css";
 import "../../../app/src/styles/global.css";
 import appStyles from "../../../app/src/App.module.css";
+import viewerStyles from "../../../app/src/components/PreviewViewer.module.css";
 
 setTipsAreOnceForTests(true);
 const KEPT: [string, string][] = [
@@ -523,7 +524,7 @@ const pointer = (() => {
   };
 })();
 
-async function searchByItself(pause = 2000, before?: () => Promise<void>) {
+async function searchByItself(pause = 600, before?: () => Promise<void>) {
   try {
     await before?.();
     await doing(pause);
@@ -751,6 +752,11 @@ async function clearSearch(input: HTMLInputElement, pause = 700, aside = true) {
   await wait(pause);
 }
 
+const visitorStyle = document.createElement("style");
+visitorStyle.textContent = `:root[data-visitor] .${viewerStyles.bar} { opacity: 0; transition: opacity 160ms ease-out; }`;
+document.head.append(visitorStyle);
+const markVisitor = (here: boolean) => document.documentElement.toggleAttribute("data-visitor", here);
+
 const visitor = (() => {
   const BACK_AFTER_MS = 450;
   let here = false;
@@ -762,6 +768,7 @@ const visitor = (() => {
     if (here) return;
     here = true;
     held = true;
+    markVisitor(true);
     pointer.away();
   };
 
@@ -769,12 +776,14 @@ const visitor = (() => {
     clearTimeout(back);
     here = false;
     held = false;
+    markVisitor(false);
     pointer.back();
     release();
   };
 
   const goOut = () => {
     if (!here) return;
+    markVisitor(false);
     clearTimeout(back);
     back = window.setTimeout(goOn, waits > 0 && moves === 0 ? 0 : BACK_AFTER_MS);
   };
@@ -801,6 +810,7 @@ const visitor = (() => {
       clearTimeout(back);
       here = false;
       held = false;
+      markVisitor(false);
       switchTo();
     },
     goOnNow() {

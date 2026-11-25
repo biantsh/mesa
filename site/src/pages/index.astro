@@ -58,14 +58,7 @@ const description = "Find anything in your files using any combination of clues:
           <SearchDemo />
           <div class="demo-below">
             <DemoScenarios client:load />
-            <span class="about" data-about>
-              <button class="about-button" type="button" aria-label="About this demo" aria-describedby="demo-about" aria-expanded="false">
-                <Icon name="info" size={18} stroke={1.75} />
-              </button>
-              <span class="about-text" id="demo-about" role="tooltip">
-                <span>This is the app’s actual code, running live<br />in your browser using sample files.</span>
-              </span>
-            </span>
+            <p class="demo-note">This is the app’s actual code, running live in your browser using sample files.</p>
           </div>
         </div>
       </div>
@@ -135,12 +128,19 @@ const description = "Find anything in your files using any combination of clues:
     --text-height: 145px;
     --window-gap: clamp(24px, 2vw, 32px);
     --switches-gap: 18px;
-    --window-height: min(635px, max(381px, 100svh - 324px));
-    --free: calc(100svh - var(--header-height) - var(--text-height) - var(--window-gap) - var(--window-height) - var(--switches-gap) - 32px);
+    --note: 0px;
+    --window-height: min(635px, max(381px, 100svh - 324px - var(--note)));
+    --free: calc(100svh - var(--header-height) - var(--text-height) - var(--window-gap) - var(--window-height) - var(--switches-gap) - 32px - var(--note));
     --room-below: clamp(24px, var(--free) / 2, 56px);
     --room-above: clamp(12px, var(--free) - var(--room-below), 56px);
     padding-top: min(clamp(40px, 4vw, 56px), var(--room-above));
-    padding-bottom: calc(var(--switches-gap) + 32px + var(--room-below));
+    padding-bottom: calc(var(--switches-gap) + 32px + var(--note) + var(--room-below));
+  }
+
+  @media (hover: none) {
+    .hero {
+      --note: 32px;
+    }
   }
 
   @media (min-width: 1080px) and (max-height: 1000px) {
@@ -258,11 +258,6 @@ const description = "Find anything in your files using any combination of clues:
     grid-column: 2;
   }
 
-  .demo-below .about {
-    grid-column: 3;
-    justify-self: start;
-  }
-
   .demo-below :global([role="radiogroup"] > button) {
     height: 30px;
     padding: 0 14px;
@@ -284,77 +279,20 @@ const description = "Find anything in your files using any combination of clues:
 
   }
 
-  .about {
-    position: relative;
-    display: flex;
-  }
-
-  .about-button {
-    display: flex;
-    padding: 2px;
-    margin: -2px;
-    border: 0;
-    border-radius: 50%;
-    background: none;
+  .demo-note {
+    display: none;
+    grid-column: 1 / -1;
+    margin: 0;
     color: var(--color-text-muted);
-    cursor: help;
-    transition: color 150ms ease;
-  }
-
-  .about-button:hover,
-  .about-button:focus-visible,
-  [data-open] > .about-button {
-    color: var(--color-text);
-  }
-
-  .about-text {
-    position: absolute;
-    right: 0;
-    bottom: calc(100% + 10px);
-    z-index: 5;
-    display: grid;
-    gap: 8px;
-    width: max-content;
-    max-width: calc(100vw - 32px);
-    padding: 10px 12px;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-sm);
-    background: var(--color-surface-raised);
-    color: var(--color-text-muted);
-    box-shadow: var(--shadow-menu);
     font-size: 13px;
     line-height: 1.45;
-    white-space: normal;
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(4px) scale(0.97);
-    transform-origin: calc(100% - 7px) bottom;
-    transition:
-      opacity 80ms ease-in,
-      transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
-      visibility 0s 150ms;
-    will-change: transform, opacity;
+    text-align: center;
   }
 
-  @media (min-width: 860px) {
-    .about-text {
-      right: auto;
-      left: 50%;
-      translate: -50% 0;
-      transform-origin: center bottom;
+  @media (hover: none) {
+    .demo-note {
+      display: block;
     }
-  }
-
-  .about:has(.about-button:hover) .about-text,
-  .about:has(.about-button:focus-visible) .about-text,
-  .about[data-open] .about-text {
-    opacity: 1;
-    visibility: visible;
-    transform: none;
-    transition:
-      opacity 150ms ease-out,
-      transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
   }
 
   #features {
@@ -531,18 +469,3 @@ const description = "Find anything in your files using any combination of clues:
     text-decoration-color: currentColor;
   }
 </style>
-
-<script>
-  for (const about of document.querySelectorAll<HTMLElement>("[data-about]")) {
-    const button = about.querySelector("button")!;
-    let touched = false;
-    const set = (open: boolean) => {
-      about.toggleAttribute("data-open", open);
-      button.setAttribute("aria-expanded", String(open));
-    };
-    button.addEventListener("pointerdown", (event) => (touched = event.pointerType !== "mouse"));
-    button.addEventListener("click", () => touched && set(!about.hasAttribute("data-open")));
-    document.addEventListener("pointerdown", (event) => !about.contains(event.target as Node) && set(false));
-    document.addEventListener("keydown", (event) => event.key === "Escape" && set(false));
-  }
-</script>
