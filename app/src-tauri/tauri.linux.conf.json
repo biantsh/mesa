@@ -3,7 +3,8 @@
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "runner": "../scripts/cargo.mjs"
+    "beforeBundleCommand": "node scripts/build-gstreamer.mjs",
+    "runner": "../scripts/cargo.sh"
   },
   "bundle": {
     "targets": [
@@ -20,6 +21,18 @@
     "shortDescription": "Find anything in your files",
     "longDescription": "Find anything in your files using any combination of clues: text, images, sounds, dates, and more.",
     "linux": {
+      "appimage": {
+        "bundleMediaFramework": true,
+        "files": {
+          "/usr/share/doc/gstreamer1.0-plugins-base/copyright": "/usr/share/doc/gstreamer1.0-plugins-base/copyright",
+          "/usr/share/doc/gstreamer1.0-plugins-good/copyright": "/usr/share/doc/gstreamer1.0-plugins-good/copyright",
+          "/usr/share/doc/gstreamer1.0-plugins-bad/copyright": "/usr/share/doc/gstreamer1.0-plugins-bad/copyright",
+          "/usr/share/doc/gstreamer1.0-plugins-ugly/copyright": "/usr/share/doc/gstreamer1.0-plugins-ugly/copyright",
+          "/usr/share/doc/gstreamer1.0-gl/copyright": "/usr/share/doc/gstreamer1.0-gl/copyright",
+          "/usr/share/doc/gstreamer1.0-alsa/copyright": "/usr/share/doc/gstreamer1.0-alsa/copyright",
+          "/usr/share/doc/libgstreamer-plugins-bad1.0-0/copyright": "/usr/share/doc/libgstreamer-plugins-bad1.0-0/copyright"
+        }
+      },
       "deb": {
         "depends": [
           "libheif1",

@@ -11,8 +11,8 @@ const args = process.argv.slice(2);
 const BUILDS = new Set(['build', 'b', 'run', 'r', 'test', 't', 'bench', 'check', 'c', 'clippy', 'doc', 'd', 'rustc', 'install']);
 const command = args.find((a) => !a.startsWith('-') && !a.startsWith('+'));
 
-const env = { ...process.env };
 if (process.platform === 'linux') {
+  const lib = join(app, 'src-tauri', 'runtime', 'onnxruntime', 'lib');
   if (BUILDS.has(command)) {
     try {
       checkSystem();
@@ -23,17 +23,13 @@ if (process.platform === 'linux') {
       const result = spawnSync(process.execPath, [join(app, 'scripts', script)], { stdio: ['inherit', 2, 2] });
       if (result.status !== 0) process.exit(result.status ?? 1);
     }
+    if (!existsSync(join(lib, 'libonnxruntime.so'))) {
+      fail(`ONNX Runtime isn't built in ${lib}: run \`npm run build:runtime\` in app/ (see scripts/build-onnxruntime.mjs)`);
+    }
   }
-  const lib = join(app, 'src-tauri', 'runtime', 'onnxruntime', 'lib');
-  if (BUILDS.has(command) && !existsSync(join(lib, 'libonnxruntime.so'))) {
-    fail(`ONNX Runtime isn't built in ${lib}: run \`npm run build:runtime\` in app/ (see scripts/build-onnxruntime.mjs)`);
-  }
-  env.ORT_LIB_LOCATION = lib;
-  env.ORT_PREFER_DYNAMIC_LINK = '1';
+  console.log(`ORT_LIB_LOCATION=${lib}`);
+  console.log('ORT_PREFER_DYNAMIC_LINK=1');
 }
-const result = spawnSync(process.env.CARGO || 'cargo', args, { stdio: 'inherit', env });
-if (result.error) fail(`cargo couldn't be run: ${result.error.message}`);
-process.exit(result.status ?? 1);
 
 function fail(message) {
   console.error(`\ncargo.mjs: ${message}\n`);

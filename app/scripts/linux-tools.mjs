@@ -2,9 +2,10 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { arch, homedir, totalmem } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
+import { fileURLToPath } from 'node:url';
 
 const CMAKE = {
   version: '3.31.6',
@@ -21,6 +22,7 @@ const VULKAN_SDK = {
 };
 
 export const cacheDir = join(process.env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'mesa-build');
+export const gstreamerPlugins = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'src-tauri', 'target', 'gstreamer-plugins');
 
 export async function cmake(minimum, log) {
   const atLeast = (command) => {
@@ -92,24 +94,30 @@ export function checkSystem() {
     ['ayatana-appindicator3-0.1', 'pkg-config', 'libayatana-appindicator3-dev'],
     ['libgomp.so.1', 'library', 'libgomp1'],
   ];
+  const missing = missingPackages(needs);
+  if (missing) throw new Error(`building Mesa needs ${missing}`);
+}
+
+export function missingPackages(needs) {
   const hasPkgConfig = onPath('pkg-config');
-  const missing = needs.filter(([name, how]) => {
+  const missing = needs.filter(([name, how, , path]) => {
     if (how === 'command') return !onPath(name);
     if (how === 'pkg-config') return hasPkgConfig && spawnSync('pkg-config', ['--exists', name]).status !== 0;
+    if (how === 'exists') return !existsSync(path);
     return !capture('/sbin/ldconfig', ['-p']).includes(name);
   });
-  if (!missing.length) return;
+  if (!missing.length) return null;
   const debian = existsSync('/etc/debian_version');
   const packages = [...new Set(missing.map(([, , pkg]) => pkg))];
-  throw new Error(
-    `building Mesa needs some packages that aren't installed: ${missing.map(([name]) => name).join(', ')}.\n` +
-      (debian
-        ? `  Install them with:\n\n    sudo apt install ${packages.join(' ')}\n`
-        : `  On Debian or Ubuntu they are: ${packages.join(' ')}. Install your distribution's packages for them.\n`),
+  return (
+    `some packages that aren't installed: ${missing.map(([name]) => name).join(', ')}.\n` +
+    (debian
+      ? `  Install them with:\n\n    sudo apt install ${packages.join(' ')}\n`
+      : `  On Debian or Ubuntu they are: ${packages.join(' ')}. Install your distribution's packages for them.\n`)
   );
 }
 
-async function download(url, sha256) {
+export async function download(url, sha256) {
   mkdirSync(cacheDir, { recursive: true });
   const file = join(cacheDir, `download-${sha256.slice(0, 12)}`);
   const response = await fetch(url);
@@ -126,7 +134,7 @@ async function download(url, sha256) {
   return file;
 }
 
-function unpack(dir, tarArgs) {
+export function unpack(dir, tarArgs) {
   const partial = `${dir}.partial`;
   rmSync(partial, { recursive: true, force: true });
   mkdirSync(partial, { recursive: true });

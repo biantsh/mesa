@@ -153,6 +153,8 @@ fn main() {
         return;
     }
     let context = tauri::generate_context!();
+    #[cfg(target_os = "linux")]
+    xdg::set_up_gstreamer(&context.config().identifier);
     let data_dir = startup::data_dir(&context.config().identifier);
     let claim = match data_dir.as_deref() {
         None => Some(instance::Claim::default()),

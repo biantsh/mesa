@@ -800,6 +800,17 @@
   transition: none;
 }
 
+:global(:root[data-engine="webkitgtk"]) .asWidget.opening {
+  opacity: 0;
+  animation: shown-anyway 0s linear 400ms forwards;
+}
+
+@keyframes shown-anyway {
+  to {
+    opacity: 1;
+  }
+}
+
 .home:not(.engaged) .actions {
   z-index: 4;
 }

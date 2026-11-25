@@ -74,8 +74,8 @@ function gather() {
     ],
   },
   { id: 'programs', title: 'Included programs', items: programs() },
-  { id: 'rust', title: 'Rust crates', items: merge(crates()) },
   { id: 'javascript', title: 'JavaScript packages', items: merge(npmPackages()) },
+  { id: 'rust', title: 'Rust crates', items: merge(crates()) },
   ];
 }
 
@@ -128,7 +128,28 @@ function programs() {
   }
   if (os === 'linux') {
     const apache = standard('Apache-2.0');
+    const gstScript = readFileSync(join(app, 'scripts', 'build-gstreamer.mjs'), 'utf8');
+    const [ffmpeg, gstLibav] = ['FFMPEG', 'GST_LIBAV'].map((name) => gstScript.match(new RegExp(`const ${name} = \\{\\s*version: '([^']+)'`))?.[1]);
+    const lgpl = bundled('LGPL-2.1.txt');
     items.push(
+      {
+        name: 'FFmpeg',
+        version: ffmpeg,
+        by: 'The FFmpeg developers',
+        license: 'LGPL-2.1-or-later',
+        note: 'In the AppImage only: decodes H.264, H.265, AAC and other formats for GStreamer. Built from the unchanged source, as LGPL, by scripts/build-gstreamer.mjs.',
+        url: `https://ffmpeg.org/releases/ffmpeg-${ffmpeg}.tar.xz`,
+        texts: [lgpl],
+      },
+      {
+        name: 'gst-libav',
+        version: gstLibav,
+        by: 'The GStreamer developers',
+        license: 'LGPL-2.1-or-later',
+        note: 'In the AppImage only: lets GStreamer use FFmpeg. Built from the unchanged source by scripts/build-gstreamer.mjs.',
+        url: `https://gstreamer.freedesktop.org/src/gst-libav/gst-libav-${gstLibav}.tar.xz`,
+        texts: [lgpl],
+      },
       {
         name: 'SPIRV-Headers',
         by: 'The Khronos Group Inc.',

@@ -818,8 +818,10 @@ export function HomeScreen({ ref, overview, model, onRetryModel, onFocusChange, 
         e.preventDefault();
         leave();
       } else if (document.activeElement === input.current) {
+        e.preventDefault();
         input.current?.blur();
       } else if (asWidget) {
+        e.preventDefault();
         onDismiss?.();
       }
     };
