@@ -60,6 +60,7 @@ pub trait Backend: Send + Sync + 'static {
 const REST_AFTER_A_BATCH: f64 = 3.0;
 pub const GENTLE_SLOWDOWN: f64 = 1.0 + REST_AFTER_A_BATCH;
 const BATCH_TIME: Duration = Duration::from_secs(1);
+const QUERY_BYTES: usize = 1500;
 const UNIT_TIME_WEIGHT: f64 = 0.3;
 const PARK_FALLBACK: Duration = Duration::from_millis(200);
 
@@ -244,6 +245,14 @@ impl<B: Backend> Pipeline<B> {
             left -= slice;
         }
     }
+}
+
+fn clipped(text: &str, most: usize) -> &str {
+    let mut end = text.len().min(most);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 fn prepare_ocr(ocr: &ocr::Lazy, preparing: &AtomicUsize) {
@@ -772,7 +781,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
 
     fn embed_query(&self, text: &str) -> Result<Record, Error> {
         let _first = self.search_first();
-        let prompt = Prepared::Text(documents::query_prompt(text.trim()));
+        let prompt = Prepared::Text(documents::query_prompt(clipped(text.trim(), QUERY_BYTES)));
         let output = self
             .backend
             .embed_batch(&[&prompt])?

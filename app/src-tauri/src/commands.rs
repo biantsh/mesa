@@ -263,6 +263,9 @@ pub fn remove_from_index(paths: Vec<String>, index: State<'_, Index>) -> Result<
 #[tauri::command(async)]
 pub fn open_file(path: String, app: AppHandle) -> Result<(), String> {
     let file = Path::new(&path);
+    if !file.exists() {
+        return Err("It was moved or deleted.".into());
+    }
     if !browse::is_listed_file(file) {
         return Err("That isn't a file Mesa opens.".into());
     }

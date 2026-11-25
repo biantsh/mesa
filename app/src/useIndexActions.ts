@@ -102,11 +102,12 @@ export function useIndexActions({
   };
 
   const listActions = useMemo(() => ({
-    unindex: (items: Listed[]) => {
+    unindex: (items: Listed[], all = false) => {
       const paths = items.map((item) => item.path);
       const stops = items.some((item) => item.queued);
-      if (items.length > 1) {
-        setAsking({ which: "removeFromIndex", subject: describeKinds(items), paths, stops });
+      if (items.length > 1 || all) {
+        const subject = items.length === 1 ? `“${items[0].name}”` : describeKinds(items);
+        setAsking({ which: "removeFromIndex", subject, paths, stops });
         return;
       }
       if (stops) markStopped();

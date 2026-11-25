@@ -56,6 +56,10 @@ fn can_change() -> bool {
     if cfg!(debug_assertions) {
         return false;
     }
+    #[cfg(windows)]
+    if tauri::utils::platform::bundle_type().is_none() {
+        return false;
+    }
     !(cfg!(target_os = "macos") && std::env::current_exe().is_ok_and(|exe| not_installed(&exe)))
 }
 

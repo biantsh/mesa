@@ -23,7 +23,7 @@ interface Props {
   onSetSelection: (paths: ReadonlySet<string>) => void;
   onOpen: (item: Listed) => void;
   onContextMenu: (item: Listed, x: number, y: number) => void;
-  onRemove: (items: Listed[]) => void;
+  onRemove: (items: Listed[], all?: boolean) => void;
   verb: string;
   danger?: boolean;
   removeLabel: string;
@@ -278,7 +278,7 @@ export const ItemsPanel = memo(function ItemsPanel({
           type="button"
           className={cx(styles.action, danger && styles.danger)}
           disabled={items.length === 0}
-          onClick={() => onRemove(chosen.length > 0 ? chosen : items)}
+          onClick={() => (chosen.length > 0 ? onRemove(chosen) : onRemove(items, true))}
         >
           {chosen.length > 0 ? `${verb} ${chosen.length}` : `${verb} all`}
         </button>

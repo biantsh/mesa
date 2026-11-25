@@ -460,6 +460,7 @@ impl<'a> Walker<'a> {
                 let path = scan.path.join(&file.name);
                 if self.batch.tracking == Tracking::Run {
                     self.batch.processed_file(self.shared, &path, &scan.path);
+                    self.batch.seen_in_store(self.shared, &path);
                 }
                 self.batch.finished.push(path);
                 up_to_date += 1;
@@ -479,7 +480,9 @@ impl<'a> Walker<'a> {
         if up_to_date > 0 {
             self.batch.files += up_to_date;
             if let Tracking::Job(ticket) = self.batch.tracking {
-                lock(&self.shared.progress).processed_in(ticket, up_to_date as u64, &scan.path);
+                let mut progress = lock(&self.shared.progress);
+                progress.processed_in(ticket, up_to_date as u64, &scan.path);
+                progress.seen_in_store(ticket, up_to_date as u64);
             }
         }
         if !self.batch.tracking.is_in_progress() && self.waiting.len() > waiting_before {
@@ -532,6 +535,9 @@ impl<'a> Walker<'a> {
                     let path = path_of(&folders, places[n]);
                     self.release(&path);
                     self.batch.processed_file(shared, &path, &folders[places[n].0].path);
+                    if !self.new_files.contains(&path) {
+                        self.batch.seen_in_store(shared, &path);
+                    }
                 }
                 break;
             }
@@ -565,7 +571,8 @@ impl<'a> Walker<'a> {
                             (file.words, file.pages, file.words_only) = (words, pages, true)
                         }
                     }
-                    if new_files.remove(&items[i].path) {
+                    let new = new_files.remove(&items[i].path);
+                    if new {
                         batch.new += 1;
                         shared.counts.made();
                     }
@@ -573,6 +580,9 @@ impl<'a> Walker<'a> {
                     batch.add_file(&folders[folder].path, file);
                     batch.files += 1;
                     batch.processed_file(shared, &items[i].path, &folders[folder].path);
+                    if !new {
+                        batch.seen_in_store(shared, &items[i].path);
+                    }
                     finished[i] = true;
                     if batch.due() {
                         *stored &= batch.store(shared);
@@ -676,6 +686,20 @@ impl Batch {
         }
         if let Some(&(ticket, _)) = self.owners.get(file).and_then(|jobs| jobs.first()) {
             lock(&shared.progress).processed_in(ticket, 1, file);
+        }
+    }
+
+    fn seen_in_store(&self, shared: &Shared, file: &Path) {
+        let ticket = match self.tracking {
+            Tracking::Run => self
+                .owners
+                .get(file)
+                .and_then(|jobs| jobs.first())
+                .map(|&(ticket, _)| ticket),
+            tracking => tracking.ticket(),
+        };
+        if let Some(ticket) = ticket {
+            lock(&shared.progress).seen_in_store(ticket, 1);
         }
     }
 

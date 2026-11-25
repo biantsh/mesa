@@ -50,6 +50,7 @@ struct ActiveJob {
     done: u64,
     current: Option<PathBuf>,
     already: u64,
+    seen: u64,
 }
 
 impl ActiveJob {
@@ -66,6 +67,7 @@ impl ActiveJob {
             done: 0,
             current: None,
             already: 0,
+            seen: 0,
         }
     }
 }
@@ -100,7 +102,6 @@ pub struct ProgressState {
     tallies: BTreeMap<PathBuf, Tally>,
     found: u64,
     done: u64,
-    already: u64,
     checks_to_do: u64,
     checks_done: u64,
 }
@@ -257,7 +258,6 @@ impl ProgressState {
         if !job.counted {
             self.uncounted += 1;
         }
-        self.already += job.already;
         self.jobs.push_back(job);
     }
 
@@ -272,7 +272,6 @@ impl ProgressState {
         if !job.quiet {
             self.asked.remove(&job.root);
         }
-        self.already -= job.already;
         self.checks_to_do -= job.to_do;
         self.checks_done -= job.done;
         job
@@ -315,7 +314,6 @@ impl ProgressState {
         self.tallies = BTreeMap::new();
         self.found = 0;
         self.done = 0;
-        self.already = 0;
         self.checks_to_do = 0;
         self.checks_done = 0;
     }
@@ -476,6 +474,12 @@ impl ProgressState {
         self.change(&tallied, |tally| tally.done += files);
     }
 
+    pub fn seen_in_store(&mut self, ticket: u64, files: u64) {
+        if let Some(position) = self.position_of(ticket) {
+            self.jobs[position].seen += files;
+        }
+    }
+
     pub fn finish_job(&mut self, ticket: u64) -> bool {
         let Some(position) = self.position_of(ticket) else {
             return false;
@@ -507,7 +511,8 @@ impl ProgressState {
         let current = self.jobs.front()?;
         let counting = !current.counted || (!self.released && self.uncounted > 0);
         let total = self.found + self.checks_to_do;
-        let done = (self.done.max(self.already) + self.checks_done.min(self.checks_to_do)).min(total);
+        let unseen: u64 = self.jobs.iter().map(|job| job.already.saturating_sub(job.seen)).sum();
+        let done = (self.done + unseen + self.checks_done.min(self.checks_to_do)).min(total);
         Some(Progress {
             name: browse::display_name(&current.root),
             queued: self.jobs.len() as u64 - 1,
@@ -586,5 +591,28 @@ mod tests {
         state.finish_counting(jobs[0]);
         state.processed(jobs[0], 4);
         assert_eq!(state.snapshot(false).unwrap().done, 3);
+    }
+
+    #[test]
+    fn already_indexed_files_count_until_seen() {
+        let mut state = ProgressState::default();
+        let job = state.add_job_having_done(0, root("a"), 12).0;
+        state.begin(job);
+        state.found(job, 30);
+        state.finish_counting(job);
+        state.release();
+        state.processed(job, 3);
+        assert_eq!(state.snapshot(false).unwrap().done, 15);
+
+        state.processed(job, 10);
+        state.seen_in_store(job, 10);
+        assert_eq!(state.snapshot(false).unwrap().done, 15);
+
+        state.processed(job, 2);
+        state.seen_in_store(job, 2);
+        assert_eq!(state.snapshot(false).unwrap().done, 15);
+
+        state.processed(job, 1);
+        assert_eq!(state.snapshot(false).unwrap().done, 16);
     }
 }

@@ -53,6 +53,11 @@ const INDEXED_HINT = (
     to start indexing it.
   </>
 );
+const INDEXED_LIST_HINT = (
+  <>
+    Right-click a file or folder and choose <b>Add to index</b> to start indexing it.
+  </>
+);
 const EXCLUDED_HINT = (
   <>
     Right-click a file or folder and choose <b>Exclude</b> to keep it out of the index.
@@ -461,7 +466,7 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
             danger
             removeLabel="Remove from index"
             empty="Nothing is indexed yet."
-            emptyHint={INDEXED_HINT}
+            emptyHint={view === "list" ? INDEXED_LIST_HINT : INDEXED_HINT}
             collapsed={open !== "indexed"}
             onExpand={open === "indexed" ? undefined : expandIndexed}
             animate={animate}
