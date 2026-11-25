@@ -29,7 +29,7 @@ fn main() {
         if fs::read_dir(folder).map_or(true, |mut files| files.next().is_none()) {
             let _ = fs::write(
                 format!("{folder}/NOT-COPIED.txt"),
-                "The OCR's DLLs are copied here by `node scripts/copy-ocr-runtime.mjs` in app/, which `tauri build` runs.\n",
+                "The OCR's DLLs and the Visual C++ runtime are copied here by `node scripts/copy-windows-runtime.mjs` in app/, which `tauri build` runs.\n",
             );
         }
         println!("cargo:rerun-if-changed={folder}");
