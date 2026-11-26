@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cx } from "../cx";
 import { modifierLabels, keyLabel } from "../hotkey";
-import { isWebKit, platform } from "../platform";
+import { platform } from "../platform";
 import type { HotkeyParts } from "../api";
 import { useGpuAcceleration } from "../useGpuAcceleration";
 import { useSearchHotkey } from "../useSearchHotkey";
@@ -38,7 +38,7 @@ export function SettingsDialog({ open, onClose, update, onOpenUpdate }: Props) {
     if (!hotkey.isRecording()) onClose();
   };
   return (
-    <Modal open={open} onClose={close} className={styles.dialog} labelledBy={titleId} focusCard={isWebKit} modeless>
+    <Modal open={open} onClose={close} className={styles.dialog} labelledBy={titleId} focusCard modeless>
       {open && (
         <div className={styles.content}>
           <header className={styles.header}>

@@ -1,8 +1,66 @@
+.dialog {
+  width: min(600px, calc(100vw - 32px));
+}
+
+.content {
+  padding: 19px 20px 20px;
+}
+
+.title {
+  margin-bottom: 20px;
+}
+
+.current {
+  margin-left: 4px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.actions {
+  display: grid;
+  margin-top: 26px;
+}
+
+.actions > * {
+  grid-area: 1 / 1;
+}
+
+.buttons {
+  margin-top: 0;
+  transition:
+    opacity 160ms ease-out,
+    visibility 0s;
+}
+
+.actions[data-busy] .buttons {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 160ms ease-out,
+    visibility 0s 160ms;
+}
+
 .progress {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 4px;
+  margin: 0 13px;
+  animation: progress-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+@keyframes progress-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+
+@keyframes progress-in-faded {
+  from {
+    opacity: 0;
+  }
 }
 
 .track {
@@ -40,6 +98,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .progress {
+    animation-name: progress-in-faded;
+  }
+
   .sweep {
     animation: none;
     width: 100%;
@@ -50,6 +112,7 @@
 .label {
   flex: none;
   display: inline-grid;
+  justify-items: end;
   color: var(--color-text-muted);
   font-size: 12px;
   line-height: 1.5;

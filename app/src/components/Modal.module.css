@@ -12,6 +12,15 @@
 }
 
 .dialog[open] {
+  --pixel: var(--device-unit, 1px);
+  inset: auto;
+  top: 50%;
+  top: round(nearest, 50%, var(--pixel));
+  left: 50%;
+  left: round(nearest, 50%, var(--pixel));
+  margin: 0;
+  translate: -50% -50%;
+  translate: round(nearest, -50%, var(--pixel)) round(nearest, -50%, var(--pixel));
   animation: pop 140ms ease-out;
 }
 

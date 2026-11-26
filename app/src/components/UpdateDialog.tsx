@@ -1,7 +1,6 @@
 import { useId } from "react";
 import type { UpdateStatus } from "../api";
 import { cx } from "../cx";
-import { isWebKit } from "../platform";
 import { useEased } from "../useEased";
 import { useSwap } from "../useSwap";
 import { downloadFraction } from "../useUpdateStatus";
@@ -26,29 +25,31 @@ export function UpdateDialog({ open, status, onInstall, onClose }: Props) {
     if (!busy) onClose();
   };
   return (
-    <Modal open={open} onClose={close} className={confirm.dialog} labelledBy={titleId} focusCard={isWebKit} modeless>
+    <Modal open={open} onClose={close} className={cx(confirm.dialog, styles.dialog)} labelledBy={titleId} focusCard modeless>
       {open && status && (
-        <div className={confirm.content}>
-          <h2 id={titleId} className={confirm.title}>
-            Mesa {status.version} is available
+        <div className={cx(confirm.content, styles.content)}>
+          <h2 id={titleId} className={cx(confirm.title, styles.title)}>
+            Mesa {status.version} is available <span className={styles.current}>(you have {status.current})</span>
           </h2>
           <div className={confirm.body}>
             {status.notes && <ReleaseNotes notes={status.notes} />}
             {status.asksPassword && <p>Installing it will ask for an administrator's password.</p>}
-            {busy && <Progress status={status} />}
             {status.error && !busy && (
               <p className={styles.error} role="alert">
                 {status.error}
               </p>
             )}
           </div>
-          <div className={confirm.actions}>
-            <Button variant="secondary" onClick={onClose} disabled={busy}>
-              Not Now
-            </Button>
-            <Button variant="primary" onClick={onInstall} disabled={busy || state !== "available"}>
-              Install and Restart
-            </Button>
+          <div className={styles.actions} data-busy={busy || undefined}>
+            <div className={cx(confirm.actions, styles.buttons)} aria-hidden={busy || undefined}>
+              <Button variant="secondary" onClick={onClose} disabled={busy}>
+                Not Now
+              </Button>
+              <Button variant="primary" onClick={onInstall} disabled={busy || state !== "available"}>
+                Install and Restart
+              </Button>
+            </div>
+            {busy && <Progress status={status} />}
           </div>
         </div>
       )}
@@ -70,17 +71,22 @@ function Progress({ status }: { status: UpdateStatus }) {
   );
 }
 
+const INSTALLING = "Installing update…";
+
 function PhaseLabel({ installing, percent }: { installing: boolean; percent: number | null }) {
   const { current, previous, changing, gone } = useSwap(installing);
-  const say = (phase: boolean) => (phase ? "Installing…" : `Downloading…${percent === null ? "" : ` ${percent}%`}`);
+  const say = (phase: boolean) => (phase ? INSTALLING : `Downloading…${percent === null ? "" : ` ${percent}%`}`);
   return (
     <span className={styles.label}>
       <span className={styles.labelSizer} aria-hidden>
         Downloading… 100%
       </span>
+      <span className={styles.labelSizer} aria-hidden>
+        {INSTALLING}
+      </span>
       {previous !== null && (
         <span key={`was:${previous}`} className={cx(styles.phase, styles.phaseLeaving)} onAnimationEnd={gone} aria-hidden>
-          {previous ? "Installing…" : "Downloading… 100%"}
+          {previous ? INSTALLING : "Downloading… 100%"}
         </span>
       )}
       <span key={String(current)} className={cx(styles.phase, changing && styles.phaseComing)}>

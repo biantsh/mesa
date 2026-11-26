@@ -1,8 +1,8 @@
-import { memo, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ArrowUpRight, ChevronRight, X } from "lucide-react";
 import { api, type NoticeItem, type Notices } from "../api";
 import { cx } from "../cx";
-import { isMac, isWebKit } from "../platform";
+import { useWheelStopsAtEnds } from "../useWheelStopsAtEnds";
 import { IconButton } from "./IconButton";
 import { Modal } from "./Modal";
 import styles from "./LicensesDialog.module.css";
@@ -56,7 +56,7 @@ export function LicensesDialog({ open, onClose }: Props) {
   useEffect(() => fitUnbuilt(body.current), [open, notices]);
 
   return (
-    <Modal open={open} onClose={onClose} className={styles.dialog} labelledBy={titleId} focusCard={isWebKit} modeless>
+    <Modal open={open} onClose={onClose} className={styles.dialog} labelledBy={titleId} focusCard modeless>
       {open && (
         <div className={styles.content}>
           <header className={styles.header}>
@@ -82,22 +82,6 @@ export function LicensesDialog({ open, onClose }: Props) {
       )}
     </Modal>
   );
-}
-
-// WebView2 at fractional scales scrolls a pixel past the end and then snaps back, so the wheel is ignored at the ends
-// (except on macOS, where the bounce is wanted).
-function useWheelStopsAtEnds(view: RefObject<HTMLElement | null>, active: boolean) {
-  useEffect(() => {
-    const element = view.current;
-    if (!active || !element || isMac) return;
-    const onWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-      const atEnd = e.deltaY > 0 ? element.scrollTop >= element.scrollHeight - element.clientHeight - 1 : element.scrollTop <= 0;
-      if (atEnd) e.preventDefault();
-    };
-    element.addEventListener("wheel", onWheel, { passive: false });
-    return () => element.removeEventListener("wheel", onWheel);
-  }, [view, active]);
 }
 
 const FIRST_ROWS = 30;

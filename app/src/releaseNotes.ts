@@ -1,24 +1,44 @@
 export type Inline = { kind: "text" | "bold" | "italic" | "code"; text: string };
 
-export type Block =
-  | { kind: "heading"; inlines: Inline[] }
-  | { kind: "paragraph"; inlines: Inline[] }
-  | { kind: "list"; items: Inline[][] };
+export type ListItem = { inlines: Inline[]; items: ListItem[] };
 
-const HEADING = /^#{1,6}\s+(.*)$/;
-const ITEM = /^\s*[-*+]\s+(.*)$/;
+export type Block =
+  | { kind: "heading"; level: number; inlines: Inline[] }
+  | { kind: "paragraph"; inlines: Inline[] }
+  | { kind: "list"; items: ListItem[] };
+
+const HEADING = /^(#{1,6})\s+(.*)$/;
+const ITEM = /^(\s*)[-*+]\s+(.*)$/;
+
+type RawItem = { text: string; items: RawItem[] };
+type Level = { indent: number; items: RawItem[] };
 
 export function readNotes(notes: string): Block[] {
   const blocks: Block[] = [];
   let paragraph: string[] = [];
-  let list: string[] | null = null;
+  let levels: Level[] = [];
   const endParagraph = () => {
     if (paragraph.length) blocks.push({ kind: "paragraph", inlines: readInline(paragraph.join(" ")) });
     paragraph = [];
   };
   const endList = () => {
-    if (list?.length) blocks.push({ kind: "list", items: list.map(readInline) });
-    list = null;
+    if (levels.length) blocks.push({ kind: "list", items: levels[0].items.map(finishItem) });
+    levels = [];
+  };
+  const addItem = (indent: number, text: string) => {
+    if (!levels.length) levels.push({ indent, items: [] });
+    let top = levels[levels.length - 1];
+    const parent = top.items[top.items.length - 1];
+    if (indent > top.indent && parent) {
+      top = { indent, items: parent.items };
+      levels.push(top);
+    } else {
+      while (levels.length > 1 && indent < top.indent) {
+        levels.pop();
+        top = levels[levels.length - 1];
+      }
+    }
+    top.items.push({ text, items: [] });
   };
   for (const raw of notes.split(/\r?\n/)) {
     const line = raw.trimEnd();
@@ -26,16 +46,16 @@ export function readNotes(notes: string): Block[] {
     const item = ITEM.exec(line);
     if (!line.trim()) {
       endParagraph();
-      endList();
     } else if (heading) {
       endParagraph();
       endList();
-      blocks.push({ kind: "heading", inlines: readInline(heading[1]) });
+      blocks.push({ kind: "heading", level: heading[1].length, inlines: readInline(heading[2]) });
     } else if (item) {
       endParagraph();
-      (list ??= []).push(item[1]);
-    } else if (list?.length && /^\s+/.test(raw)) {
-      list[list.length - 1] += ` ${line.trim()}`;
+      addItem(item[1].length, item[2]);
+    } else if (levels.length && /^\s+/.test(raw)) {
+      const top = levels[levels.length - 1];
+      top.items[top.items.length - 1].text += ` ${line.trim()}`;
     } else {
       endList();
       paragraph.push(line.trim());
@@ -44,6 +64,10 @@ export function readNotes(notes: string): Block[] {
   endParagraph();
   endList();
   return blocks;
+}
+
+function finishItem(item: RawItem): ListItem {
+  return { inlines: readInline(item.text), items: item.items.map(finishItem) };
 }
 
 // No lookbehind: WebKit before Safari 16.4 (macOS 13.0 to 13.2) can't parse it, and the page would fail to load.

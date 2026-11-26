@@ -40,7 +40,7 @@ button {
 }
 
 ::selection {
-  background: #e26931;
+  background: rgba(226, 105, 49, 0.35);
   color: inherit;
 }
 

@@ -12,20 +12,26 @@ describe("readNotes", () => {
 
 Thanks to [everyone](https://example.com) who reported it.`),
     ).toEqual([
-      { kind: "heading", inlines: [{ kind: "text", text: "New" }] },
+      { kind: "heading", level: 3, inlines: [{ kind: "text", text: "New" }] },
       {
         kind: "list",
         items: [
-          [
-            { kind: "text", text: "Search finds " },
-            { kind: "bold", text: "more" },
-            { kind: "text", text: " files." },
-          ],
-          [
-            { kind: "text", text: "Fixed: previews of " },
-            { kind: "code", text: ".heic" },
-            { kind: "text", text: " photos were blank." },
-          ],
+          {
+            inlines: [
+              { kind: "text", text: "Search finds " },
+              { kind: "bold", text: "more" },
+              { kind: "text", text: " files." },
+            ],
+            items: [],
+          },
+          {
+            inlines: [
+              { kind: "text", text: "Fixed: previews of " },
+              { kind: "code", text: ".heic" },
+              { kind: "text", text: " photos were blank." },
+            ],
+            items: [],
+          },
         ],
       },
       { kind: "paragraph", inlines: [{ kind: "text", text: "Thanks to everyone who reported it." }] },
