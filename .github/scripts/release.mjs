@@ -42,7 +42,7 @@ if (command === 'check') {
 
   const manifest = { version, notes, pub_date: new Date().toISOString(), platforms };
   writeFileSync(join(dist, 'latest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-  writeFileSync('notes.md', `${notes}\n`);
+  writeFileSync('notes.md', `${notes}\n\n[Code signing policy](https://mesa.page/code-signing/)\n`);
   console.log(`latest.json: ${Object.keys(platforms).join(', ')}`);
 }
 

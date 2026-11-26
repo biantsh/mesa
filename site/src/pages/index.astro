@@ -115,6 +115,9 @@ const description = "Find anything in your files using any combination of clues:
         <p class="release">
           <a class="quiet" href={LICENSE}>{LICENSE_NAME}</a><span class="separator" aria-hidden="true"></span><a class="quiet" href={CHANGELOG}>{releaseLine()}</a><span class="separator" aria-hidden="true"></span><a class="quiet" href="/code-signing">Code signing policy</a>
         </p>
+        <p class="startup">
+          Mesa starts in the background when you sign in, so search is always ready. You can turn this off in the settings.
+        </p>
       </div>
     </section>
     <div class="rest-end" aria-hidden="true"></div>
@@ -455,6 +458,14 @@ const description = "Find anything in your files using any combination of clues:
     color: var(--color-text-muted);
     font-size: 14px;
     text-box: trim-both cap alphabetic;
+  }
+
+  .startup {
+    margin: 16px 0 0;
+    color: var(--color-text-muted);
+    font-size: 14px;
+    line-height: 1.5;
+    text-wrap: pretty;
   }
 
   .quiet {

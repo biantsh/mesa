@@ -75,7 +75,7 @@ All of this happens locally on your computer, with EmbeddingGemma 2 running thro
 
 ## Download and install
 
-Get the latest version from the [Releases page](https://github.com/biantsh/mesa/releases/latest).
+Get the latest version from the [Releases page](https://github.com/biantsh/mesa/releases/latest). See the [Code signing policy](https://mesa.page/code-signing/) for how the installers are signed.
 
 | System | Requirements | Download |
 |---|---|---|
@@ -86,6 +86,8 @@ Get the latest version from the [Releases page](https://github.com/biantsh/mesa/
 When the app first starts, it downloads its models. Then, on the *Index* page, choose what to include: everything in your user folder, or specific folders and file types in the advanced view.
 
 Indexing runs in the background at low priority by default, so it doesn't slow down your other processes.
+
+Mesa starts in the background when you sign in, so search is always ready. You can turn this off in the settings.
 
 ## Build from source
 
