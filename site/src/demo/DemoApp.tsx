@@ -90,7 +90,7 @@ async function field(): Promise<HTMLInputElement> {
   for (;;) {
     const input = [...document.querySelectorAll<HTMLInputElement>("input[type='text'], input:not([type])")].find((each) => !each.closest("dialog"));
     if (input) {
-      if (matchMedia("(hover: none)").matches) input.inputMode = "none";
+      if (matchMedia("(pointer: coarse)").matches) input.inputMode = "none";
       return input;
     }
     await wait(100);
