@@ -362,6 +362,7 @@ export const api = {
   excludeFromIndex: (paths: string[]) => invoke<void>("exclude_from_index", { paths }),
   stopExcluding: (paths: string[]) => invoke<void>("stop_excluding", { paths }),
   countWithData: (paths: string[]) => invoke<number>("count_with_data", { paths }),
+  countIndexedIn: (path: string) => invoke<number>("count_indexed_in", { path }),
   exclusionCount: () => invoke<number>("exclusion_count"),
   indexLists: async (): Promise<Lists> => {
     const said = await invoke<SaidLists>("index_lists");

@@ -287,6 +287,7 @@ fn main() {
             commands::get_indexed_types,
             commands::set_indexed_types,
             commands::count_indexed_of_type,
+            commands::count_indexed_in,
             commands::add_to_index,
             commands::remove_from_index,
             commands::exclude_from_index,

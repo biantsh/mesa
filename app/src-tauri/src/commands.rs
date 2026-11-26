@@ -669,6 +669,11 @@ pub fn count_indexed_of_type(kind: Category, index: State<'_, Index>) -> Result<
     index.count_of_type(kind)
 }
 
+#[tauri::command(async)]
+pub fn count_indexed_in(path: String, index: State<'_, Index>) -> Result<u64, String> {
+    index.count_indexed_in(Path::new(&path))
+}
+
 #[tauri::command]
 pub fn model_status(index: State<'_, Index>) -> ModelStatus {
     index.model_status()

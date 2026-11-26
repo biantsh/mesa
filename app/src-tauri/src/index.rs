@@ -1082,6 +1082,11 @@ impl Index {
         Ok(lock(&self.shared.store).count_of(kind)?)
     }
 
+    pub fn count_indexed_in(&self, path: &Path) -> Result<u64, String> {
+        let counts = lock(&self.shared.store).files_under_each(&[path.to_path_buf()])?;
+        Ok(counts.into_iter().next().unwrap_or(0))
+    }
+
     pub fn check_for_changes(&self) {
         self.chores().check_everything();
     }

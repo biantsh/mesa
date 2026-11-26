@@ -2225,6 +2225,27 @@ mod tests {
     }
 
     #[test]
+    fn counts_files_under_each_root() {
+        let mut store = Store::open(&temp_dir("under")).unwrap();
+        write(
+            &mut store,
+            &[
+                scan("a", vec![file("1.jpg", 1), file("2.jpg", 1)]),
+                scan("a/deeper", vec![file("3.jpg", 1)]),
+                scan("b", vec![file("4.jpg", 1)]),
+            ],
+        );
+        let roots = [
+            folder("a"),
+            folder("a/deeper"),
+            folder("b/4.jpg"),
+            folder("b/missing.jpg"),
+            folder("none"),
+        ];
+        assert_eq!(store.files_under_each(&roots).unwrap(), vec![3, 1, 1, 0, 0]);
+    }
+
+    #[test]
     fn reopen_trims_unreferenced_vectors() {
         let dir = temp_dir("reopen");
         let mut store = Store::open(&dir).unwrap();

@@ -14,6 +14,16 @@ interface Inputs {
 }
 
 const UNDO_ADD_MS = 800;
+const ASK_FROM_FILES = 500;
+
+interface Stopping {
+  path: string;
+  at: number;
+  undone: boolean;
+  asked: boolean;
+  removed: boolean;
+  done: Promise<void>;
+}
 
 type Asking = ({ which: Confirmation; subject: string } & Partial<ConfirmContext>) | null;
 
@@ -46,17 +56,37 @@ export function useIndexActions({
 
   const changeSelection = (action: () => Promise<void>) => changeIndex(action, clearSelection);
 
+  const indexedIn = useCallback(
+    async (path: string) => {
+      try {
+        return await api.countIndexedIn(path);
+      } catch (e) {
+        setError(`Couldn't update the index. ${errorText(e)}`);
+        return null;
+      }
+    },
+    [setError],
+  );
+
   const actionsFor = (targets: Entry[]) => {
     const { add, remove, inside, exclude, stop } = menuTargets(targets);
     const paths = (of: Entry[]) => of.map((entry) => entry.path);
-    const doRemove = () => {
+    const doRemove = async () => {
       const stops = remove.some((entry) => entry.queued);
       if (remove.length > 1) {
         setAsking({ which: "removeFromIndex", subject: `${remove.length} items`, paths: paths(remove), stops });
-        return Promise.resolve();
+        return;
+      }
+      if (remove.length === 1) {
+        const files = await indexedIn(remove[0].path);
+        if (files === null) return;
+        if (files >= ASK_FROM_FILES) {
+          setAsking({ which: "removeFromIndex", subject: `“${remove[0].name}”`, paths: paths(remove), stops, files });
+          return;
+        }
       }
       if (stops) markStopped();
-      return changeSelection(() => api.removeFromIndex(paths(remove)));
+      await changeSelection(() => api.removeFromIndex(paths(remove)));
     };
     const excludeEntries = async (which: Entry[]) => {
       try {
@@ -102,7 +132,7 @@ export function useIndexActions({
   };
 
   const listActions = useMemo(() => ({
-    unindex: (items: Listed[], all = false) => {
+    unindex: async (items: Listed[], all = false) => {
       const paths = items.map((item) => item.path);
       const stops = items.some((item) => item.queued);
       if (items.length > 1 || all) {
@@ -110,12 +140,20 @@ export function useIndexActions({
         setAsking({ which: "removeFromIndex", subject, paths, stops });
         return;
       }
+      if (items.length === 1) {
+        const files = await indexedIn(items[0].path);
+        if (files === null) return;
+        if (files >= ASK_FROM_FILES) {
+          setAsking({ which: "removeFromIndex", subject: `“${items[0].name}”`, paths, stops, files });
+          return;
+        }
+      }
       if (stops) markStopped();
-      void changeIndex(() => api.removeFromIndex(paths), clearListSelection);
+      await changeIndex(() => api.removeFromIndex(paths), clearListSelection);
     },
     stopExcluding: (items: Listed[]) =>
       void changeIndex(() => api.stopExcluding(items.map((item) => item.path)), clearListSelection),
-  }), [changeIndex, markStopped, clearListSelection]);
+  }), [changeIndex, markStopped, clearListSelection, indexedIn]);
 
   const lastAdded = useRef<{ path: string; at: number; done: Promise<void> } | null>(null);
   const addEntry = useCallback(
@@ -129,17 +167,25 @@ export function useIndexActions({
     [changeIndex],
   );
 
-  const lastStopped = useRef<{ path: string; at: number; done: Promise<void> } | null>(null);
+  const lastStopped = useRef<Stopping | null>(null);
   const stopEntry = useCallback(
     (entry: Entry) => {
-      markStopped();
-      lastStopped.current = {
-        path: entry.path,
-        at: Date.now(),
-        done: changeIndex(() => api.removeFromIndex([entry.path])),
-      };
+      const stopping: Stopping = { path: entry.path, at: Date.now(), undone: false, asked: false, removed: false, done: Promise.resolve() };
+      lastStopped.current = stopping;
+      stopping.done = (async () => {
+        const files = await indexedIn(entry.path);
+        if (files === null || stopping.undone) return;
+        if (files >= ASK_FROM_FILES) {
+          stopping.asked = true;
+          setAsking({ which: "stopIndexing", subject: `“${entry.name}”`, paths: [entry.path], files });
+          return;
+        }
+        markStopped();
+        stopping.removed = true;
+        await changeIndex(() => api.removeFromIndex([entry.path]));
+      })();
     },
-    [changeIndex, markStopped],
+    [changeIndex, markStopped, indexedIn],
   );
 
   const undoRecentStop = useCallback(
@@ -147,8 +193,11 @@ export function useIndexActions({
       const stopped = lastStopped.current;
       if (!stopped || stopped.path !== entry.path || Date.now() - stopped.at > UNDO_ADD_MS) return;
       lastStopped.current = null;
+      stopped.undone = true;
+      if (stopped.asked) setAsking(null);
       try {
         await stopped.done;
+        if (!stopped.removed) return;
         await api.addToIndex([entry.path]);
         await refresh();
       } catch (e) {
@@ -188,6 +237,7 @@ export function useIndexActions({
         paths: asking.paths ?? [],
         exclusions: asking.exclusions ?? 0,
         withData: asking.withData ?? 0,
+        files: asking.files ?? 0,
         stops: asking.stops ?? false,
         folder: asking.folder ?? "",
         completing: asking.completing ?? false,
