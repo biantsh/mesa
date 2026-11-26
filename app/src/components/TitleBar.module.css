@@ -9,12 +9,23 @@
 }
 
 .mac {
-  height: 35px;
+  --bar-height: 35px;
+  height: var(--bar-height);
   padding-left: 84px;
+}
+
+.mac > .logo,
+.mac > .title {
+  top: calc(var(--buttons-middle, calc(var(--bar-height) / 2)) - var(--bar-height) / 2);
 }
 
 :global(:root[data-fullscreen]) .mac {
   padding-left: 12px;
+}
+
+:global(:root[data-fullscreen]) .mac > .logo,
+:global(:root[data-fullscreen]) .mac > .title {
+  top: 0;
 }
 
 /* Like the window controls, they stay above the search's dimming. */

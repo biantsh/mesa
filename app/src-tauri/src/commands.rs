@@ -702,6 +702,11 @@ pub fn folder_file_counts(
 }
 
 #[tauri::command(async)]
+pub fn window_buttons_middle(window: tauri::WebviewWindow) -> Option<f64> {
+    main_window::buttons_middle(&window)
+}
+
+#[tauri::command(async)]
 pub fn count_indexed_in(path: String, index: State<'_, Index>) -> Result<u64, String> {
     index.count_indexed_in(Path::new(&path))
 }

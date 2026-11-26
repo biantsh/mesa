@@ -291,6 +291,7 @@ fn main() {
             commands::count_indexed_of_type,
             commands::count_indexed_in,
             commands::folder_file_counts,
+            commands::window_buttons_middle,
             commands::add_to_index,
             commands::remove_from_index,
             commands::exclude_from_index,

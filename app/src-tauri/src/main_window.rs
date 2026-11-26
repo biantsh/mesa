@@ -133,6 +133,32 @@ pub fn reveal(app: &AppHandle) {
     let _ = app;
 }
 
+pub fn buttons_middle(window: &WebviewWindow) -> Option<f64> {
+    #[cfg(target_os = "macos")]
+    {
+        let (send, receive) = std::sync::mpsc::channel();
+        let on_window = window.clone();
+        window
+            .run_on_main_thread(move || {
+                use objc2_app_kit::{NSWindow, NSWindowButton};
+                let middle = on_window.ns_window().ok().and_then(|pointer| {
+                    let ns_window = unsafe { &*pointer.cast::<NSWindow>() };
+                    let button = ns_window.standardWindowButton(NSWindowButton::CloseButton)?;
+                    let frame = button.convertRect_toView(button.bounds(), None);
+                    Some(ns_window.frame().size.height - frame.origin.y - frame.size.height / 2.0)
+                });
+                let _ = send.send(middle);
+            })
+            .ok()?;
+        receive.recv().ok().flatten()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        None
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn set_alpha(window: &WebviewWindow, alpha: f64) {
     let on_window = window.clone();

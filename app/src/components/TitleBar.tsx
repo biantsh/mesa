@@ -1,5 +1,6 @@
-import { useRef, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useRef, type MouseEvent, type PointerEvent } from "react";
 import { Copy, Minus, Square, X } from "lucide-react";
+import { api } from "../api";
 import { pressBackground } from "../background";
 import { cx } from "../cx";
 import { releaseFocus } from "../focus";
@@ -50,8 +51,22 @@ export function TitleBar({ maximized, mac = isMac, version: given }: { maximized
   const asked = useAppVersion();
   const version = given ?? asked;
   const pressed = useBarPress();
+  const bar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!mac) return;
+    let gone = false;
+    api
+      .windowButtonsMiddle()
+      .then((middle) => {
+        if (!gone && middle !== null) bar.current?.style.setProperty("--buttons-middle", `${middle}px`);
+      })
+      .catch(() => {});
+    return () => {
+      gone = true;
+    };
+  }, [mac]);
   return (
-    <header className={cx(styles.bar, mac && styles.mac)} {...pressed}>
+    <header ref={bar} className={cx(styles.bar, mac && styles.mac)} {...pressed}>
       <img className={styles.logo} src={logo} alt="" draggable={false} />
       <span className={styles.title}>
         <span className={styles.name}>Mesa</span>

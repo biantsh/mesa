@@ -363,6 +363,7 @@ export const api = {
   stopExcluding: (paths: string[]) => invoke<void>("stop_excluding", { paths }),
   countWithData: (paths: string[]) => invoke<number>("count_with_data", { paths }),
   countIndexedIn: (path: string) => invoke<number>("count_indexed_in", { path }),
+  windowButtonsMiddle: () => invoke<number | null>("window_buttons_middle"),
   folderFileCounts: (folder: string, paths: string[]) =>
     invoke<{ total: number; counts: number[] } | null>("folder_file_counts", { folder, paths }),
   indexLists: async (): Promise<Lists> => {

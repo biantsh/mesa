@@ -167,6 +167,16 @@ jobs:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
     steps:
       - uses: actions/checkout@v7
+      - name: Use the newest Xcode
+        run: |
+          xcode=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1)
+          sudo xcode-select -s "$xcode"
+          sdk=$(xcrun --sdk macosx --show-sdk-version)
+          echo "Building with $xcode, macOS SDK $sdk"
+          if (( ${sdk%%.*} < 26 )); then
+            echo "::error::The newest Xcode here has the macOS $sdk SDK. Built with an SDK older than 26, macOS 26 draws the window buttons lower than in dev builds."
+            exit 1
+          fi
       - uses: actions/setup-node@v7
         with:
           node-version: 24
