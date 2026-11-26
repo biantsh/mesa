@@ -75,7 +75,7 @@ All of this happens locally on your computer, with EmbeddingGemma 2 running thro
 
 ## Download and install
 
-Get the latest version from the [Releases page](https://github.com/biantsh/mesa/releases/latest). See the [Code signing policy](https://mesa.page/code-signing/) for how the installers are signed.
+Get the latest version from the [Releases page](https://github.com/biantsh/mesa/releases/latest).
 
 | System | Requirements | Download |
 |---|---|---|
