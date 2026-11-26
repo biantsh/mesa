@@ -29,6 +29,7 @@ import { entriesWith, sameShape, shapeOf } from "../entriesShape";
 import type { IndexLink } from "../useIndexState";
 import { withStatusChanges } from "../listingColumns";
 import { useFolderChanges } from "../useFolderChanges";
+import { useFolderFill, useFolderFiles } from "../useFolderFiles";
 import { usePageSelection } from "../usePageSelection";
 import { usePanelLayout } from "../usePanelLayout";
 import { useSortedEntries } from "../useSortedEntries";
@@ -91,14 +92,23 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
   const [stoppedAt, setStoppedAt] = useState(0);
   const markStopped = useCallback(() => setStoppedAt(Date.now()), []);
   const [view, setView] = useViewMode();
+  const [folderFill, setFolderFill, fillRising] = useFolderFill();
   const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
   const changeSort = useCallback((column: SortColumn) => setSort((current) => nextSort(current, column)), []);
   const progress = overview?.progress ?? null;
   const { indexed, excluded, loaded, ask: askLists, take: takeLists } = useIndexLists(active, progress !== null);
   const listItems = { indexed, excluded };
 
+  const typeChoice = useTypeChoice({
+    active,
+    nothingIndexed: overview?.empty ?? true,
+    onChanged: index.refresh,
+    onError: setError,
+  });
+
   const entries = listing?.entries ?? NO_ENTRIES;
-  const sortedEntries = useSortedEntries(entries, sort);
+  const folderFiles = useFolderFiles(listing?.path ?? null, entries, String(typeChoice.types));
+  const sortedEntries = useSortedEntries(entries, sort, folderFiles?.counts ?? null);
   const displayed = view === "list" ? sortedEntries : entries;
 
   const {
@@ -146,12 +156,6 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
     return () => cancelAnimationFrame(frame);
   }, [loaded]);
 
-  const typeChoice = useTypeChoice({
-    active,
-    nothingIndexed: overview?.empty ?? true,
-    onChanged: index.refresh,
-    onError: setError,
-  });
   const arrival = useFirstArrival(active, loaded, arrivalDelay);
   useEffect(() => {
     if (listSelection.list !== null && open !== listSelection.list) clearListSelection();
@@ -385,6 +389,8 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
             onOpen={load}
             view={view}
             onViewChange={setView}
+            fill={folderFill}
+            onFillChange={setFolderFill}
           />
 
           {error && (
@@ -416,6 +422,9 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
               onAdd={addEntry}
               onStop={stopEntry}
               onContextMenu={openMenu}
+              files={folderFiles}
+              fill={folderFill}
+              rising={fillRising}
             />
           ) : (
             <FileList
@@ -430,6 +439,7 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
               onSort={changeSort}
               onOpen={openEntry}
               onContextMenu={openMenu}
+              files={folderFiles}
             />
           )}
 
@@ -526,15 +536,9 @@ export function IndexScreen({ onBack, onSimple, overview, index, secondsLeft, ar
         alternative={confirmation?.alternative ? { label: confirmation.alternative.label, onChoose: chooseAlternative } : undefined}
         cancel={!confirmation?.noCancel}
       >
-        {confirmation?.message.map((paragraph, i) =>
-          typeof paragraph === "string" ? (
-            <p key={i}>{paragraph}</p>
-          ) : (
-            <p key={i}>
-              <strong>Note:</strong> {paragraph.note}
-            </p>
-          ),
-        )}
+        {confirmation?.message.map((paragraph, i) => (
+          <p key={i}>{paragraph}</p>
+        ))}
       </ConfirmDialog>
 
       <ConfirmDialog

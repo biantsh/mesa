@@ -13,6 +13,7 @@ use crate::{
     embed::ModelStatus,
     estimate::{Estimate, Estimator},
     folder_access::{FolderAccess, Pane},
+    folder_counts::{self, FolderCounts},
     hotkey::{self, Hotkey},
     index::{Index, IndexStatus, Page, Stats},
     main_window,
@@ -445,11 +446,6 @@ pub fn count_with_data(paths: Vec<String>, index: State<'_, Index>) -> usize {
     index.count_with_data(&to_paths(paths))
 }
 
-#[tauri::command(async)]
-pub fn exclusion_count(index: State<'_, Index>) -> usize {
-    index.exclusion_count()
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Listed {
@@ -667,6 +663,42 @@ pub fn set_indexed_types(types: Vec<Category>, index: State<'_, Index>) -> Resul
 #[tauri::command(async)]
 pub fn count_indexed_of_type(kind: Category, index: State<'_, Index>) -> Result<u64, String> {
     index.count_of_type(kind)
+}
+
+#[derive(Serialize)]
+pub struct FolderFiles {
+    total: u64,
+    counts: Vec<u64>,
+}
+
+#[tauri::command(async)]
+pub fn folder_file_counts(
+    folder: String,
+    paths: Vec<String>,
+    index: State<'_, Index>,
+    access: State<'_, FolderAccess>,
+    counter: State<'_, FolderCounts>,
+) -> Option<FolderFiles> {
+    let folder = PathBuf::from(folder);
+    let by_folder = counter.by_folder(&folder, &access.folders())?;
+    let types = index.indexed_types();
+    let all_excluded = index.is_excluded(&folder);
+    let counts: Vec<u64> = paths
+        .iter()
+        .map(|path| {
+            let path = Path::new(path);
+            let whole = all_excluded || index.is_excluded(path);
+            folder_counts::files_under(&by_folder, path, types, |dir| !whole && index.is_excluded(dir))
+        })
+        .collect();
+    let loose = match by_folder.binary_search_by(|(dir, _)| dir.as_path().cmp(&folder)) {
+        Ok(at) => folder_counts::files_in(&by_folder[at].1, types),
+        Err(_) => 0,
+    };
+    Some(FolderFiles {
+        total: loose + counts.iter().sum::<u64>(),
+        counts,
+    })
 }
 
 #[tauri::command(async)]

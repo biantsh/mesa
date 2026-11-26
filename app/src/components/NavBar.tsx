@@ -1,8 +1,8 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import type { Crumb } from "../api";
 import type { ViewMode } from "../useViewMode";
-import { ViewToggle } from "./ViewToggle";
+import { FillToggle, ViewToggle } from "./ViewToggle";
 import styles from "./NavBar.module.css";
 
 interface Props {
@@ -11,10 +11,20 @@ interface Props {
   onOpen: (path: string) => void;
   view: ViewMode;
   onViewChange: (view: ViewMode) => void;
+  fill: boolean;
+  onFillChange: (fill: boolean) => void;
 }
 
-export function NavBar({ crumbs, parent, onOpen, view, onViewChange }: Props) {
+export function NavBar({ crumbs, parent, onOpen, view, onViewChange, fill, onFillChange }: Props) {
   const trail = useRef<HTMLOListElement>(null);
+  const listSeen = useRef(false);
+  if (view === "list") listSeen.current = true;
+  const [shownView, setShownView] = useState(view);
+  const [leaving, setLeaving] = useState(false);
+  if (view !== shownView) {
+    setShownView(view);
+    setLeaving(view === "list");
+  }
 
   useEffect(() => {
     trail.current?.scrollTo({ left: trail.current.scrollWidth });
@@ -50,7 +60,18 @@ export function NavBar({ crumbs, parent, onOpen, view, onViewChange }: Props) {
           ))}
         </ol>
       </nav>
-      <ViewToggle view={view} onChange={onViewChange} />
+      <div className={styles.views}>
+        {(view === "grid" || leaving) && (
+          <FillToggle
+            on={fill}
+            onChange={onFillChange}
+            entering={view === "grid" && listSeen.current}
+            leaving={view === "list"}
+            onLeft={() => setLeaving(false)}
+          />
+        )}
+        <ViewToggle view={view} onChange={onViewChange} />
+      </div>
     </div>
   );
 }

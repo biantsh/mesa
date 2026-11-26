@@ -643,10 +643,6 @@ impl Index {
         self.shared.is_excluded(path)
     }
 
-    pub fn exclusion_count(&self) -> usize {
-        lock(&self.shared.excluded).len()
-    }
-
     pub fn indexed_roots(&self) -> Vec<PathBuf> {
         let rules = lock(&self.shared.rules);
         rules
@@ -2030,7 +2026,7 @@ mod tests {
 
         let reopened = Index::open(&f.data, embedder()).unwrap();
         assert_eq!(reopened.status(&sub), IndexStatus::Excluded);
-        assert_eq!(reopened.exclusion_count(), 1);
+        assert_eq!(reopened.excluded_paths(), vec![sub]);
     }
 
     #[test]

@@ -1,9 +1,10 @@
-import { Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type CSSProperties, Fragment, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type Entry, type PreviewBox } from "../api";
 import { cx } from "../cx";
-import { nameParts } from "../format";
+import { formatFiles, nameParts } from "../format";
 import { SELECTING_FROM } from "../selection";
 import { useArrowKeys } from "../useArrowKeys";
+import type { FolderFiles } from "../useFolderFiles";
 import { usePreview } from "../usePreview";
 import { usePreviewOrder } from "../usePreviewOrder";
 import { useVirtualRows } from "../virtual";
@@ -23,10 +24,16 @@ interface Props {
   onAdd: (entry: Entry) => void;
   onStop: (entry: Entry) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
+  files: FolderFiles | null;
+  fill: boolean;
+  rising: boolean;
 }
 
 export const FileGrid = memo(function FileGrid({
   entries,
+  files,
+  fill,
+  rising,
   loading,
   selected,
   active,
@@ -58,7 +65,7 @@ export const FileGrid = memo(function FileGrid({
   return (
     <div
       ref={grid}
-      className={cx(styles.grid, loading && styles.loading)}
+      className={cx(styles.grid, loading && styles.loading, rising && styles.rising)}
       tabIndex={-1}
       data-scroller
       data-region="files"
@@ -77,6 +84,9 @@ export const FileGrid = memo(function FileGrid({
           onAdd={onAdd}
           onStop={onStop}
           onContextMenu={onContextMenu}
+          files={files?.counts.get(entry.path)}
+          total={files?.total}
+          fill={fill}
         />
       ))}
       {after > 0 && <div className={styles.space} style={{ height: after }} aria-hidden />}
@@ -85,6 +95,10 @@ export const FileGrid = memo(function FileGrid({
 });
 
 const isReadable = (entry: Entry) => entry.readable;
+
+const LEAST_SHARE = 0.01;
+
+const shareText = (share: number) => (share < LEAST_SHARE ? "under 1%" : `${Math.round(share * 100)}%`);
 
 const PICTURE_BOX: PreviewBox = { width: 76, height: 44, fit: "cover" };
 const PAGE_BOX: PreviewBox = { ...PICTURE_BOX, fit: "contain" };
@@ -99,6 +113,9 @@ interface TileProps {
   onAdd: (entry: Entry) => void;
   onStop: (entry: Entry) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
+  files?: number;
+  total?: number;
+  fill: boolean;
 }
 
 const justAdded = new Map<string, number>();
@@ -242,8 +259,13 @@ const Tile = memo(function Tile({
   onAdd,
   onStop,
   onContextMenu,
+  files,
+  total,
+  fill,
 }: TileProps) {
   const usable = entry.readable;
+  const share = files && total ? files / total : null;
+  const filled = fill && share !== null && share >= LEAST_SHARE;
 
   const { wanted: hasImage, src, loaded: showingImage, onLoad, onError } = usePreview(entry, entry.category === "document" ? PAGE_BOX : PICTURE_BOX);
   const [pointedAt, setPointedAt] = useState(false);
@@ -252,13 +274,24 @@ const Tile = memo(function Tile({
   return (
     <button
       type="button"
-      className={cx(styles.tile, selected && styles.selected, selected && leader && styles.leader, !usable && styles.unreadable)}
+      className={cx(
+        styles.tile,
+        selected && styles.selected,
+        selected && leader && styles.leader,
+        !usable && styles.unreadable,
+        filled && styles.filled,
+        filled && entry.index === "excluded" && styles.excludedFill,
+      )}
+      style={filled ? ({ "--level": `${Math.sqrt(share) * 100}%` } as CSSProperties) : undefined}
       data-slide="tile"
       {...entryProps(entry, { selected, onSelect, onOpen, onContextMenu })}
       onPointerEnter={pointedAt ? undefined : () => setPointedAt(true)}
     >
       <span className={styles.preview}>
-        <span className={cx(styles.iconBox, showingImage && styles.covered)}>
+        <span
+          className={cx(styles.iconBox, showingImage && styles.covered)}
+          data-tooltip={files && share !== null ? `${formatFiles(files)}, ${shareText(share)} of the files here` : undefined}
+        >
           <EntryIcon entry={entry} size={40} />
           {!hasImage && <span className={styles.badgeCorner}>{corner}</span>}
         </span>

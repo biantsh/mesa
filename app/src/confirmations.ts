@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { formatFiles } from "./format";
 import { nameOf } from "./paths";
 
 export type Confirmation = "indexAll" | "removeFromIndex" | "stopIndexing" | "excludeFromIndex" | "indexFolderInstead";
@@ -8,7 +9,7 @@ export interface ConfirmationText {
   confirmLabel: string;
   danger: boolean;
   stopsIndexing: boolean;
-  message: (string | { note: string })[];
+  message: string[];
   run: () => Promise<void>;
   alternative?: { label: string; run: () => Promise<void> };
   noCancel?: boolean;
@@ -16,7 +17,6 @@ export interface ConfirmationText {
 
 export interface ConfirmContext {
   paths: string[];
-  exclusions: number;
   withData: number;
   files: number;
   stops: boolean;
@@ -26,7 +26,7 @@ export interface ConfirmContext {
 }
 
 export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: ConfirmContext) => ConfirmationText> = {
-  indexAll: (_, { exclusions }) => ({
+  indexAll: () => ({
     title: "Index all your files?",
     confirmLabel: "Index my files",
     danger: false,
@@ -34,7 +34,6 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     message: [
       "This will index every supported file in your user folder, which can take a long time.",
       "Indexing runs in the background, and keeps going if you close the window.",
-      ...(exclusions > 0 ? [{ note: "Your excluded items will not be indexed." }] : []),
     ],
     run: api.indexEverything,
   }),
@@ -45,7 +44,7 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     stopsIndexing: stops,
     message: [
       files > 0
-        ? `This will remove ${subject} from the index, along with the ${filesText(files)} indexed from it. Your files themselves are not touched.`
+        ? `This will remove ${subject} from the index, along with the ${formatFiles(files)} indexed from it. Your files themselves are not touched.`
         : `This will remove ${subject} from the index. Your files themselves are not touched.`,
     ],
     run: () => api.removeFromIndex(paths),
@@ -56,7 +55,7 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     danger: true,
     stopsIndexing: true,
     message: [
-      `The ${filesText(files)} already indexed from it will be removed from the index. Your files themselves are not touched.`,
+      `The ${formatFiles(files)} already indexed from it will be removed from the index. Your files themselves are not touched.`,
     ],
     run: () => api.removeFromIndex(paths),
   }),
@@ -91,5 +90,3 @@ export const CONFIRMATIONS: Record<Confirmation, (subject: string, context: Conf
     };
   },
 };
-
-const filesText = (files: number) => (files === 1 ? "1 file" : `${files.toLocaleString()} files`);

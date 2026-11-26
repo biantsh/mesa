@@ -33,30 +33,57 @@
   padding: 4px 6px 3px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: transparent;
+  background-color: transparent;
   text-align: center;
   cursor: default;
 }
 
+@property --level {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+.filled {
+  background-image: linear-gradient(to top, var(--share-bg) var(--level), transparent var(--level));
+  background-origin: border-box;
+  background-repeat: no-repeat;
+  --share-bg: var(--color-share-bg);
+}
+
+.rising .filled {
+  animation: fill-up 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes fill-up {
+  from {
+    --level: 0%;
+  }
+}
+
+.filled.excludedFill {
+  --share-bg: var(--color-share-excluded-bg);
+}
+
 .tile:not(.unreadable):hover {
-  background: var(--color-hover-bg);
+  background-color: var(--color-hover-bg);
 }
 
 .tile.unreadable[data-privacy]:hover {
-  background: var(--color-hover-bg);
+  background-color: var(--color-hover-bg);
 }
 
 .tile.unreadable[data-privacy]:active {
-  background: var(--color-selected-bg);
+  background-color: var(--color-selected-bg);
 }
 
 .tile.selected {
-  background: var(--color-selected-bg);
+  background-color: var(--color-selected-bg);
   border-color: var(--color-selected-border);
 }
 
 .tile.leader {
-  background: var(--color-leader-bg);
+  background-color: var(--color-leader-bg);
 }
 
 .tile:focus-visible {
@@ -64,7 +91,7 @@
 }
 
 .tile:focus-visible:not(.selected) {
-  background: var(--color-hover-bg);
+  background-color: var(--color-hover-bg);
 }
 
 .grid:focus-visible {

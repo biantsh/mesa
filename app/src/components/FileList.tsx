@@ -2,9 +2,10 @@ import { memo, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { type Entry, type PreviewBox } from "../api";
 import { cx } from "../cx";
-import { formatModified, formatSize, typeLabel } from "../format";
+import { formatFiles, formatModified, formatSize, typeLabel } from "../format";
 import type { Sort, SortColumn } from "../sort";
 import { useArrowKeys } from "../useArrowKeys";
+import type { FolderFiles } from "../useFolderFiles";
 import { usePreview } from "../usePreview";
 import { usePreviewOrder } from "../usePreviewOrder";
 import { useVirtualRows } from "../virtual";
@@ -24,6 +25,7 @@ interface Props {
   onSort: (column: SortColumn) => void;
   onOpen: (entry: Entry) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
+  files: FolderFiles | null;
 }
 
 const PICTURE_BOX: PreviewBox = { width: 26, height: 26, fit: "cover" };
@@ -40,6 +42,7 @@ export const FileList = memo(function FileList({
   onSort,
   onOpen,
   onContextMenu,
+  files,
 }: Props) {
   const onKeyDown = useArrowKeys({
     items: entries,
@@ -87,6 +90,7 @@ export const FileList = memo(function FileList({
           onSelect={onSelect}
           onOpen={onOpen}
           onContextMenu={onContextMenu}
+          files={files?.counts.get(entry.path)}
         />
       ))}
       {after > 0 && <div style={{ height: after }} aria-hidden />}
@@ -153,9 +157,10 @@ interface RowProps {
   onSelect: (path: string, toggle: boolean, range?: boolean) => void;
   onOpen: (entry: Entry) => void;
   onContextMenu: (entry: Entry, x: number, y: number) => void;
+  files?: number;
 }
 
-const Row = memo(function Row({ entry, selected, leader, onSelect, onOpen, onContextMenu }: RowProps) {
+const Row = memo(function Row({ entry, selected, leader, onSelect, onOpen, onContextMenu, files }: RowProps) {
   const { wanted, src, loaded, onLoad, onError } = usePreview(entry, entry.category === "document" ? PAGE_BOX : PICTURE_BOX);
   return (
     <button
@@ -189,7 +194,7 @@ const Row = memo(function Row({ entry, selected, leader, onSelect, onOpen, onCon
         <span className={cx(styles.truncate, styles.statusText)}>{statusColumnText(entry)}</span>
       </span>
       <span className={cx(styles.cell, styles.type)}>{typeLabel(entry)}</span>
-      <span className={cx(styles.cell, styles.size)}>{entry.size === null ? "" : formatSize(entry.size)}</span>
+      <span className={cx(styles.cell, styles.size)}>{entry.size !== null ? formatSize(entry.size) : files ? formatFiles(files) : ""}</span>
       <span className={cx(styles.cell, styles.modified)}>{entry.modified === null ? "" : formatModified(entry.modified)}</span>
     </button>
   );

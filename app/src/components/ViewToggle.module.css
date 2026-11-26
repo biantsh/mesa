@@ -32,3 +32,35 @@
   background: var(--color-selected-bg);
   color: var(--color-primary);
 }
+
+.entering {
+  animation: toggle-in 260ms cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+@keyframes toggle-in {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
+.leaving {
+  animation: toggle-out 200ms cubic-bezier(0.3, 0, 1, 1) forwards;
+}
+
+@keyframes toggle-out {
+  60% {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entering {
+    animation: none;
+  }
+}

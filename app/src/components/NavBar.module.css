@@ -97,3 +97,9 @@
   font-weight: 600;
   color: var(--color-text);
 }
+
+.views {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}

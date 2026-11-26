@@ -35,7 +35,11 @@ function statusRank(entry: Entry): number {
   return entry.readable ? STATUS_ORDER[entry.index] : 9;
 }
 
-function compareColumn(a: Entry, b: Entry, column: SortColumn): number | null {
+type Counts = ReadonlyMap<string, number> | null;
+
+const sizeOf = (entry: Entry, counts: Counts) => entry.size ?? counts?.get(entry.path) ?? null;
+
+function compareColumn(a: Entry, b: Entry, column: SortColumn, counts: Counts): number | null {
   switch (column) {
     case "name":
       return 0;
@@ -45,8 +49,10 @@ function compareColumn(a: Entry, b: Entry, column: SortColumn): number | null {
       const [x, y] = [typeLabel(a), typeLabel(b)];
       return x < y ? -1 : x > y ? 1 : 0;
     }
-    case "size":
-      return a.size === null || b.size === null ? null : a.size - b.size;
+    case "size": {
+      const [x, y] = [sizeOf(a, counts), sizeOf(b, counts)];
+      return x === null || y === null ? null : x - y;
+    }
     case "modified":
       return a.modified === null || b.modified === null ? null : a.modified - b.modified;
   }
@@ -56,7 +62,7 @@ export function sortEntries(entries: Entry[], sort: Sort): Entry[] {
   return sortedOrder(entries, sort).map((at) => entries[at]);
 }
 
-export function sortedOrder(entries: readonly Entry[], { column, direction }: Sort): number[] {
+export function sortedOrder(entries: readonly Entry[], { column, direction }: Sort, counts: Counts = null): number[] {
   const sign = direction === "asc" ? 1 : -1;
   const isFile = (entry: Entry) => entry.kind === "file";
   const order = entries.map((_, at) => at);
@@ -64,9 +70,9 @@ export function sortedOrder(entries: readonly Entry[], { column, direction }: So
     const [a, b] = [entries[i], entries[j]];
     if (isFile(a) !== isFile(b)) return isFile(a) ? 1 : -1;
     if (column === "name") return sign * (i - j);
-    const difference = compareColumn(a, b, column);
+    const difference = compareColumn(a, b, column, counts);
     if (difference === null) {
-      const [aMissing, bMissing] = [missing(a, column), missing(b, column)];
+      const [aMissing, bMissing] = [missing(a, column, counts), missing(b, column, counts)];
       if (aMissing !== bMissing) return aMissing ? 1 : -1;
       return i - j;
     }
@@ -74,6 +80,6 @@ export function sortedOrder(entries: readonly Entry[], { column, direction }: So
   });
 }
 
-function missing(entry: Entry, column: SortColumn): boolean {
-  return (column === "size" && entry.size === null) || (column === "modified" && entry.modified === null);
+function missing(entry: Entry, column: SortColumn, counts: Counts): boolean {
+  return (column === "size" && sizeOf(entry, counts) === null) || (column === "modified" && entry.modified === null);
 }

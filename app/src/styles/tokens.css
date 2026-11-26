@@ -230,6 +230,8 @@
   --color-hover-bg: rgba(226, 105, 49, 0.08);
   --color-selected-bg: rgba(226, 105, 49, 0.15);
   --color-leader-bg: rgba(226, 105, 49, 0.26);
+  --color-share-bg: rgba(226, 105, 49, 0.12);
+  --color-share-excluded-bg: rgba(133, 120, 108, 0.14);
 
   --syntax-keyword: #a8431c;
   --syntax-string: #3d7a2c;
@@ -306,6 +308,8 @@
   --color-hover-bg: rgba(226, 105, 49, 0.14);
   --color-selected-bg: rgba(226, 105, 49, 0.24);
   --color-leader-bg: rgba(226, 105, 49, 0.38);
+  --color-share-bg: rgba(226, 105, 49, 0.19);
+  --color-share-excluded-bg: rgba(179, 164, 152, 0.13);
 
   --syntax-keyword: #ee8a5c;
   --syntax-string: #a7c97f;

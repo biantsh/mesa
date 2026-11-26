@@ -1,4 +1,4 @@
-import { LayoutGrid } from "lucide-react";
+import { ChartNoAxesColumn, LayoutGrid } from "lucide-react";
 import { cx } from "../cx";
 import type { ViewMode } from "../useViewMode";
 import styles from "./ViewToggle.module.css";
@@ -56,6 +56,37 @@ export function ViewToggle({ view, onChange }: Props) {
         onClick={() => onChange("list")}
       >
         <ListRows size={16} />
+      </button>
+    </div>
+  );
+}
+
+interface FillToggleProps {
+  on: boolean;
+  onChange: (on: boolean) => void;
+  entering: boolean;
+  leaving: boolean;
+  onLeft: () => void;
+}
+
+export function FillToggle({ on, onChange, entering, leaving, onLeft }: FillToggleProps) {
+  const label = on ? "Hide each folder's share of supported files" : "Show each folder's share of supported files";
+  return (
+    <div
+      className={cx(styles.group, entering && styles.entering, leaving && styles.leaving)}
+      data-slide="item"
+      inert={leaving}
+      onAnimationEnd={(e) => leaving && e.target === e.currentTarget && onLeft()}
+    >
+      <button
+        type="button"
+        className={cx(styles.button, on && styles.selected)}
+        aria-pressed={on}
+        aria-label="Each folder's share of supported files"
+        data-tooltip={label}
+        onClick={() => onChange(!on)}
+      >
+        <ChartNoAxesColumn size={16} strokeWidth={STROKE} aria-hidden />
       </button>
     </div>
   );

@@ -16,6 +16,7 @@ mod epub_read;
 mod estimate;
 mod examples;
 mod folder_access;
+mod folder_counts;
 #[cfg(target_os = "linux")]
 mod gnome_keys;
 mod highlight;
@@ -246,6 +247,7 @@ fn main() {
             app.manage(index);
             app.manage(shown_folder::ShownFolder::default());
             app.manage(shown_listing::ShownListing::default());
+            app.manage(folder_counts::FolderCounts::default());
             surface::start(app.handle().clone(), dir.clone());
             startup::at_start(app.handle(), &settings);
             let search_key = hotkey::Hotkey::new(app.handle(), settings.get().search_hotkey.as_deref());
@@ -288,12 +290,12 @@ fn main() {
             commands::set_indexed_types,
             commands::count_indexed_of_type,
             commands::count_indexed_in,
+            commands::folder_file_counts,
             commands::add_to_index,
             commands::remove_from_index,
             commands::exclude_from_index,
             commands::stop_excluding,
             commands::count_with_data,
-            commands::exclusion_count,
             commands::index_lists,
             commands::stop_indexing,
             commands::open_file,

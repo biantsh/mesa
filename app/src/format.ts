@@ -15,6 +15,10 @@ export function formatSize(bytes: number, precise = false): string {
   return `${((value < 10 || precise) && unit > 0 ? decimals : whole).format(value)} ${UNITS[unit]}`;
 }
 
+export function formatFiles(files: number): string {
+  return files === 1 ? "1 file" : `${files.toLocaleString()} files`;
+}
+
 export function formatModified(milliseconds: number): string {
   return when.format(new Date(milliseconds));
 }

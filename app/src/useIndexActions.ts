@@ -224,18 +224,11 @@ export function useIndexActions({
     [markStopped, refresh, setError],
   );
 
-  const askAboutIndexAll = async () => {
-    try {
-      setAsking({ which: "indexAll", subject: "", exclusions: await api.exclusionCount() });
-    } catch (e) {
-      setError(errorText(e));
-    }
-  };
+  const askAboutIndexAll = () => setAsking({ which: "indexAll", subject: "" });
 
   const confirmation = asking
     ? CONFIRMATIONS[asking.which](asking.subject, {
         paths: asking.paths ?? [],
-        exclusions: asking.exclusions ?? 0,
         withData: asking.withData ?? 0,
         files: asking.files ?? 0,
         stops: asking.stops ?? false,

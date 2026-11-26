@@ -1,6 +1,9 @@
 .view {
   position: absolute;
   inset: 0;
+}
+
+.view:focus-visible {
   outline: none;
 }
 
