@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.2
+
+### Features
+
+- Files are now indexed in two passes, so they are searchable quickly and more detail is added later in the background.
+
+- The update window has been redesigned.
+
 ## v0.1.1
 
 ### Features:
