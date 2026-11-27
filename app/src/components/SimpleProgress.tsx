@@ -4,7 +4,7 @@ import type { Progress } from "../api";
 import { formatEta } from "../eta";
 import { useIndexControls } from "../useIndexControls";
 import { IconButton } from "./IconButton";
-import { Bar, Label, figures, whereIsIndexing } from "./IndexProgress";
+import { Bar, Label, LOOKING_DEEPER, figures, whereIsIndexing } from "./IndexProgress";
 import { SpeedButton } from "./SpeedButton";
 import styles from "./SimpleProgress.module.css";
 
@@ -32,7 +32,7 @@ export function SimpleProgress({ progress, secondsLeft, onScreen, onRefresh, onE
     <div className={styles.root} role="group" aria-label="Indexing progress">
       <div className={styles.head}>
         <div className={styles.what}>
-          <Label progress={progress} />
+          {progress.refining ? <span className={styles.about}>{LOOKING_DEEPER}</span> : <Label progress={progress} />}
           {where && <span className={styles.where}>{where}</span>}
         </div>
         <span className={styles.buttons}>

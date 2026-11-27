@@ -238,6 +238,7 @@ fn main() {
             let index = index::Index::open_with(&dir, embedder, false, settings.get().indexed_before())
                 .map_err(|e| format!("Couldn't open the index in {}: {e}", dir.display()))?;
             index.set_always_full_speed(settings.get().always_full_speed);
+            index.index_breadth_first();
             let access = folder_access::FolderAccess::open(&dir, app.path().home_dir().ok().as_deref());
             access.indexing(index.indexed_roots().iter().map(std::path::PathBuf::as_path));
             app.manage(access);

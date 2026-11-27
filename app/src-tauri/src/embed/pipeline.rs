@@ -11,7 +11,7 @@ use std::{
 use crossbeam_channel::{RecvTimeoutError, bounded, unbounded};
 
 use super::{
-    Device, Embedder, Error, Item, ModelStatus, Outcome, PageTexts, documents,
+    Device, Embedder, Error, Item, ModelStatus, Outcome, PageTexts, documents, overview,
     prepare::{self, Prepared, Unit},
 };
 use crate::{
@@ -429,6 +429,7 @@ impl<B: Backend> Pipeline<B> {
                         &Item {
                             path: path.to_owned(),
                             words_only: false,
+                            shallow: false,
                         },
                         from,
                         to,
@@ -473,6 +474,7 @@ impl<B: Backend> Embedder for Pipeline<B> {
         let item = Item {
             path: path.to_path_buf(),
             words_only: true,
+            shallow: false,
         };
         let mut text = None;
         let mut read = |_: u64, rgb: Vec<u8>, width: u32, height: u32| {
@@ -542,41 +544,76 @@ impl<B: Backend> Embedder for Pipeline<B> {
                                 texts += 1;
                             }
                         };
-                        let result = crate::reader::indexing().prepare(
-                            file,
-                            reading.map(|_| &mut read_text as &mut dyn FnMut(u64, Vec<u8>, u32, u32)),
-                            &mut |unit| {
-                                if cancel.load(Ordering::Relaxed) {
-                                    return false;
-                                }
-                                if file.words_only {
-                                    return true;
-                                }
-                                if let Some(values) =
-                                    chunk_key(&file.path, &unit.input).and_then(|key| lock(&self.chunks).get(key))
+                        let mut emit = |unit: Unit| {
+                            if cancel.load(Ordering::Relaxed) {
+                                return false;
+                            }
+                            if file.words_only {
+                                return true;
+                            }
+                            if let Some(values) =
+                                chunk_key(&file.path, &unit.input).and_then(|key| lock(&self.chunks).get(key))
+                            {
+                                if event_in
+                                    .send(Event::Unit {
+                                        item,
+                                        locator: unit.locator,
+                                        output: Ok(values),
+                                    })
+                                    .is_err()
                                 {
-                                    if event_in
-                                        .send(Event::Unit {
-                                            item,
-                                            locator: unit.locator,
-                                            output: Ok(values),
-                                        })
-                                        .is_err()
-                                    {
-                                        return false;
-                                    }
-                                    units += 1;
-                                    return true;
-                                }
-                                if ready_in.send((item, unit)).is_err() {
                                     return false;
                                 }
                                 units += 1;
-                                true
-                            },
-                            &mut words,
-                            &|| cancel.load(Ordering::Relaxed),
-                        );
+                                return true;
+                            }
+                            if ready_in.send((item, unit)).is_err() {
+                                return false;
+                            }
+                            units += 1;
+                            true
+                        };
+                        let mut gathered = Vec::new();
+                        let mut gather = |unit: Unit| {
+                            let is_text = |unit: &Unit| matches!(unit.input, Prepared::Text(_));
+                            if is_text(&unit) || gathered.iter().all(is_text) {
+                                gathered.push(unit);
+                            }
+                            !cancel.load(Ordering::Relaxed)
+                        };
+                        let pieces = prepare::overview_pieces(&file.path).filter(|_| file.shallow);
+                        let result = match pieces {
+                            Some(pieces) => {
+                                let mut sampled = Vec::new();
+                                let read = crate::reader::indexing()
+                                    .sample(file, 0, pieces, &mut |unit| {
+                                        sampled.push(unit);
+                                        !cancel.load(Ordering::Relaxed)
+                                    })
+                                    .map(|_| ());
+                                if let Some(unit) = overview::of_samples(sampled) {
+                                    emit(unit);
+                                }
+                                read
+                            }
+                            None if file.shallow => {
+                                let read =
+                                    crate::reader::indexing().prepare(file, None, &mut gather, &mut words, &|| {
+                                        cancel.load(Ordering::Relaxed)
+                                    });
+                                if let Some(unit) = overview::of_reading(gathered) {
+                                    emit(unit);
+                                }
+                                read
+                            }
+                            None => crate::reader::indexing().prepare(
+                                file,
+                                reading.map(|_| &mut read_text as &mut dyn FnMut(u64, Vec<u8>, u32, u32)),
+                                &mut emit,
+                                &mut words,
+                                &|| cancel.load(Ordering::Relaxed),
+                            ),
+                        };
                         if cancel.load(Ordering::Relaxed) {
                             break;
                         }
@@ -941,6 +978,7 @@ mod tests {
                 Item {
                     path,
                     words_only: false,
+                    shallow: false,
                 }
             })
             .collect()
@@ -985,6 +1023,26 @@ mod tests {
         let places: Vec<u64> = vectors_of(&outcomes[0]).iter().map(|v| v.locator).collect();
         assert_eq!(places, [0, 1, 2, 3]);
         assert_eq!(vectors_of(&outcomes[1]).len(), 1);
+    }
+
+    #[test]
+    fn a_shallow_document_gets_one_vector_and_all_its_words() {
+        let full = texts("shallow", &[&long_text(10)]);
+        let shallow = [Item {
+            shallow: true,
+            ..full[0].clone()
+        }];
+        let pipeline = Pipeline::new(Fake::default());
+        let (deep, _) = run(&pipeline, &full);
+        let (quick, result) = run(&pipeline, &shallow);
+        result.unwrap();
+        let (Some(Outcome::Vectors(_, Some(all_words), _)), Some(Outcome::Vectors(vectors, Some(words), _))) =
+            (&deep[0], &quick[0])
+        else {
+            panic!("expected vectors and words, got {deep:?} and {quick:?}")
+        };
+        assert_eq!(vectors.len(), 1);
+        assert_eq!(words, all_words);
     }
 
     #[test]

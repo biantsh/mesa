@@ -139,6 +139,14 @@ pub struct Shared {
     pub indexed_types: AtomicU8,
     pub always_full_speed: AtomicBool,
     pub asked_checks: AtomicBool,
+    pub breadth_first: AtomicBool,
+    pub refining: Mutex<Refining>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct Refining {
+    pub left: u64,
+    pub total: u64,
 }
 
 pub struct Control {
@@ -266,6 +274,10 @@ impl Shared {
         !self.control.is_turbo()
     }
 
+    pub fn is_breadth_first(&self) -> bool {
+        self.breadth_first.load(Ordering::Relaxed)
+    }
+
     pub fn set_turbo(&self, turbo: bool) {
         if self.control.is_turbo() != turbo {
             self.embedder.set_eco(!turbo);
@@ -274,7 +286,35 @@ impl Shared {
     }
 
     pub fn is_busy(&self) -> bool {
-        lock(&self.progress).is_active()
+        lock(&self.progress).is_active() || self.refining().left > 0
+    }
+
+    pub fn refining(&self) -> Refining {
+        *lock(&self.refining)
+    }
+
+    pub fn one_more_to_refine(&self) {
+        let mut refining = lock(&self.refining);
+        refining.left += 1;
+        refining.total += 1;
+    }
+
+    pub fn left_to_refine(&self, left: u64) {
+        let mut refining = lock(&self.refining);
+        refining.total = if refining.left == 0 {
+            left
+        } else {
+            refining.total.max(left)
+        };
+        refining.left = left;
+    }
+
+    pub fn recount_refining(&self, store: &Store) {
+        let Ok(left) = store.shallow_count() else { return };
+        let mut refining = lock(&self.refining);
+        let gone = refining.left.saturating_sub(left);
+        refining.total = refining.total.saturating_sub(gone).max(left);
+        refining.left = left;
     }
 
     pub fn wait_while_paused_for(&self, ticket: Option<u64>) {
@@ -403,6 +443,8 @@ impl Index {
             indexed_types: AtomicU8::new(types.bits()),
             always_full_speed: AtomicBool::new(false),
             asked_checks: AtomicBool::new(false),
+            breadth_first: AtomicBool::new(false),
+            refining: Mutex::default(),
         });
 
         let worker = shared.clone();
@@ -530,6 +572,7 @@ impl Index {
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
         let removed = store.remove_paths(&outside);
+        self.shared.recount_refining(&store);
         drop(store);
         Ok(removed?)
     }
@@ -598,6 +641,7 @@ impl Index {
         self.replace_rules(&mut store, rules)?;
         self.shared.control.poke();
         let removed = store.remove_paths(paths);
+        self.shared.recount_refining(&store);
         drop(store);
         let mut progress = lock(&self.shared.progress);
         rules::outermost(paths)
@@ -1012,6 +1056,11 @@ impl Index {
         self.shared.embedder.set_device(device).map_err(|e| e.to_string())
     }
 
+    pub fn index_breadth_first(&self) {
+        self.shared.breadth_first.store(true, Ordering::Relaxed);
+        self.shared.control.more_work();
+    }
+
     pub fn stats(&self) -> Stats {
         Stats {
             files: self.shared.counts.files(),
@@ -1026,9 +1075,23 @@ impl Index {
     pub fn progress(&self) -> Option<Progress> {
         let paused = self.shared.control.is_paused();
         let turbo = self.shared.control.is_turbo();
-        lock(&self.shared.progress)
-            .snapshot(paused)
-            .map(|progress| Progress { turbo, ..progress })
+        let indexing = lock(&self.shared.progress).snapshot(paused);
+        indexing.map(|progress| Progress { turbo, ..progress }).or_else(|| {
+            let Refining { left, total } = self.shared.refining();
+            (left > 0).then(|| Progress {
+                name: "Refining index".into(),
+                queued: 0,
+                counting: false,
+                found: total,
+                done: total - left,
+                total,
+                paused,
+                updating: false,
+                refining: true,
+                folders: Vec::new(),
+                turbo,
+            })
+        })
     }
 
     pub fn set_turbo(&self, turbo: bool) {
@@ -1070,7 +1133,9 @@ impl Index {
             self.remove_many(&gone)?;
         }
         self.shared.control.poke();
-        let removed = lock(&self.shared.store).remove_categories(&dropped);
+        let mut store = lock(&self.shared.store);
+        let removed = store.remove_categories(&dropped);
+        self.shared.recount_refining(&store);
         Ok(removed?)
     }
 
@@ -1130,10 +1195,14 @@ impl Index {
 
     pub fn set_paused(&self, paused: bool) -> Result<(), String> {
         let store = lock(&self.shared.store);
-        if paused && !lock(&self.shared.progress).is_active() {
+        if paused && !self.shared.is_busy() {
             return Ok(());
         }
-        Ok(self.shared.set_paused(&store, paused)?)
+        self.shared.set_paused(&store, paused)?;
+        if !paused {
+            self.shared.control.more_work();
+        }
+        Ok(())
     }
 
     pub fn set_everything_counted(
@@ -1956,6 +2025,7 @@ mod tests {
             words: None,
             pages: Vec::new(),
             words_only: false,
+            depth: crate::store::Depth::Full,
         };
         let scan = ScannedDir {
             path: photos.clone(),

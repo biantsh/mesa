@@ -22,6 +22,7 @@ use crate::{
 };
 
 const CONFIG_ID: u32 = 1;
+const SHALLOW_ID: i64 = -(CONFIG_ID as i64);
 
 const MIGRATIONS: &[&str] = &[SCHEMA];
 
@@ -170,6 +171,15 @@ pub struct ScannedFile {
     pub words: Option<String>,
     pub pages: PageTexts,
     pub words_only: bool,
+    pub depth: Depth,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Depth {
+    #[default]
+    Full,
+    Shallow,
+    Deepened,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -524,18 +534,28 @@ impl Store {
             for file in &scan.files {
                 seen.insert(file.name.as_str());
                 let old = existing.get(&file.name);
-                if old.is_some_and(|old| is_current(old, file, reading)) {
+                let deepening = file.depth == Depth::Deepened;
+                if !deepening && old.is_some_and(|old| is_current(old, file, reading)) {
                     continue;
                 }
                 if !wanted(&scan.path.join(&file.name)) {
                     continue;
                 }
                 if file.words_only {
-                    if let Some(old) = old
-                        && vectors_current(old, file)
-                    {
-                        write_words(&tx, old.id, file.category, &file.name, file.words.as_deref(), reading)?;
-                        write_page_texts(&tx, old.id, &file.pages)?;
+                    match old {
+                        Some(old) if vectors_current(old, file) => {
+                            write_words(&tx, old.id, file.category, &file.name, file.words.as_deref(), reading)?;
+                            write_page_texts(&tx, old.id, &file.pages)?;
+                            if deepening {
+                                tx.prepare_cached("UPDATE files SET embedded_with = ?2 WHERE id = ?1")?
+                                    .execute(params![old.id, CONFIG_ID])?;
+                            }
+                        }
+                        Some(old) if deepening => {
+                            tx.prepare_cached("UPDATE files SET embedded_with = 0 WHERE id = ?1")?
+                                .execute([old.id])?;
+                        }
+                        _ => {}
                     }
                     continue;
                 }
@@ -544,7 +564,8 @@ impl Store {
                     None => *dir_id.insert(ensure_dir(&tx, &scan.path)?),
                 };
                 let file_id = upsert_file(&tx, dir, file)?;
-                if old.is_some() {
+                let keeps_vectors = deepening && old.is_some_and(|old| vectors_current(old, file));
+                if old.is_some() && !keeps_vectors {
                     tx.prepare_cached("DELETE FROM embeddings WHERE config_id = ?1 AND file_id = ?2")?
                         .execute(params![CONFIG_ID, file_id])?;
                 }
@@ -556,7 +577,8 @@ impl Store {
                     .execute(params![CONFIG_ID, slot as i64, file_id, vector.locator as i64])?;
                     writes.push((slot, vector.record));
                 }
-                write_words(&tx, file_id, file.category, &file.name, file.words.as_deref(), reading)?;
+                let read_now = reading && file.depth != Depth::Shallow;
+                write_words(&tx, file_id, file.category, &file.name, file.words.as_deref(), read_now)?;
                 write_page_texts(&tx, file_id, &file.pages)?;
             }
 
@@ -619,16 +641,62 @@ impl Store {
                 "WITH RECURSIVE tree(id) AS (
                  SELECT ?1 UNION ALL SELECT d.id FROM dirs d JOIN tree t ON d.parent_id = t.id WHERE d.id != 0
              )
-             SELECT COUNT(*) FROM files WHERE embedded_with = ?2 AND dir_id IN (SELECT id FROM tree)",
+             SELECT COUNT(*) FROM files WHERE embedded_with IN (?2, ?3) AND dir_id IN (SELECT id FROM tree)",
             )?
-            .query_row(params![dir, CONFIG_ID], |r| r.get(0))?)
+            .query_row(params![dir, CONFIG_ID, SHALLOW_ID], |r| r.get(0))?)
     }
 
     fn files_named(&self, dir: i64, name: &str) -> Result<u64> {
         Ok(self
             .conn
-            .prepare_cached("SELECT COUNT(*) FROM files WHERE dir_id = ?1 AND name = ?2 AND embedded_with = ?3")?
-            .query_row(params![dir, name, CONFIG_ID], |r| r.get(0))?)
+            .prepare_cached("SELECT COUNT(*) FROM files WHERE dir_id = ?1 AND name = ?2 AND embedded_with IN (?3, ?4)")?
+            .query_row(params![dir, name, CONFIG_ID, SHALLOW_ID], |r| r.get(0))?)
+    }
+
+    pub fn shallow_files(&self, most: usize) -> Result<Vec<(PathBuf, Category)>> {
+        let mut statement = self
+            .conn
+            .prepare_cached("SELECT dir_id, name, category FROM files WHERE embedded_with = ?1 LIMIT ?2")?;
+        let rows: Vec<(i64, String, i64)> = statement
+            .query_map(params![SHALLOW_ID, most as i64], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut folders: HashMap<i64, PathBuf> = HashMap::new();
+        let mut found = Vec::with_capacity(rows.len());
+        for (dir, name, code) in rows {
+            let Some(category) = category_from_code(code) else {
+                continue;
+            };
+            if !folders.contains_key(&dir) {
+                folders.insert(dir, dir_path(&self.conn, dir)?);
+            }
+            found.push((folders[&dir].join(name), category));
+        }
+        Ok(found)
+    }
+
+    pub fn settle_shallow(&mut self, paths: &[PathBuf]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for path in paths {
+            let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+                continue;
+            };
+            let Some(dir) = find_dir(&tx, folder)? else { continue };
+            tx.prepare_cached(
+                "UPDATE files SET embedded_with = ?3 WHERE dir_id = ?1 AND name = ?2 AND embedded_with = ?4",
+            )?
+            .execute(params![dir, name.to_string_lossy(), CONFIG_ID, SHALLOW_ID])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn shallow_count(&self) -> Result<u64> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT COUNT(*) FROM files WHERE embedded_with = ?1")?
+            .query_row([SHALLOW_ID], |r| r.get(0))?)
     }
 
     pub fn cloud_in(&mut self, folder: &Path) -> Result<HashMap<String, CloudOnly>> {
@@ -686,15 +754,16 @@ impl Store {
         let reading = (self.reading_pictures)();
         let pictures = if reading { category_code(Category::Image) } else { -1 };
         Ok(self.conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM files WHERE embedded_with != ?1)
-                 OR EXISTS (SELECT 1 FROM files WHERE read_with != ?2
+            "SELECT EXISTS (SELECT 1 FROM files WHERE embedded_with NOT IN (?1, ?6))
+                 OR EXISTS (SELECT 1 FROM files WHERE read_with != ?2 AND embedded_with != ?6
                             AND (category = ?3 OR (category = ?4 AND (?5 OR lower(name) NOT LIKE '%.pdf'))))",
             params![
                 CONFIG_ID,
                 WORDS_ID,
                 pictures,
                 category_code(Category::Document),
-                reading
+                reading,
+                SHALLOW_ID
             ],
             |r| r.get(0),
         )?)
@@ -1829,13 +1898,24 @@ struct StoredFile {
 }
 
 fn is_current(stored: &StoredFile, file: &ScannedFile, reading_pictures: bool) -> bool {
-    vectors_current(stored, file) && words_current(stored, &file.name, reading_pictures)
+    vectors_current(stored, file)
+        && (stored.embedded_with == SHALLOW_ID || words_current(stored, &file.name, reading_pictures))
 }
 
 fn vectors_current(stored: &StoredFile, file: &ScannedFile) -> bool {
-    stored.modified_ms == file.modified_ms
-        && stored.size == file.size as i64
-        && stored.embedded_with == i64::from(CONFIG_ID)
+    stored.modified_ms == file.modified_ms && stored.size == file.size as i64 && embedded_now(stored.embedded_with)
+}
+
+fn embedded_now(embedded_with: i64) -> bool {
+    embedded_with == i64::from(CONFIG_ID) || embedded_with == SHALLOW_ID
+}
+
+fn embedded_with(depth: Depth) -> i64 {
+    if depth == Depth::Shallow {
+        SHALLOW_ID
+    } else {
+        i64::from(CONFIG_ID)
+    }
 }
 
 fn words_current(stored: &StoredFile, name: &str, reading_pictures: bool) -> bool {
@@ -1926,7 +2006,7 @@ fn upsert_file(tx: &Transaction, dir_id: i64, file: &ScannedFile) -> Result<i64>
                 category_code(file.category),
                 file.modified_ms,
                 file.size as i64,
-                CONFIG_ID
+                embedded_with(file.depth)
             ],
             |r| r.get(0),
         )?)
@@ -2037,6 +2117,7 @@ mod tests {
             words: None,
             pages: Vec::new(),
             words_only: false,
+            depth: Depth::Full,
         }
     }
 
@@ -2418,5 +2499,102 @@ mod tests {
         let again = Store::open(&dir).unwrap();
         assert_eq!((count(&again, "embeddings"), again.vectors.next_slot()), (10, 10));
         assert_eq!(again.reclaimable().unwrap().free_slots, 0);
+    }
+
+    #[test]
+    fn shallow_files_stay_indexed_and_keep_their_vectors_when_deepened() {
+        let dir = temp_dir("shallow");
+        let mut store = Store::open(&dir).unwrap();
+        let video = |depth: Depth, locators: &[u64]| ScannedFile {
+            category: Category::Video,
+            depth,
+            ..in_parts("clip.mp4", 1, locators)
+        };
+        write(&mut store, &[scan("films", vec![video(Depth::Shallow, &[1, 2])])]);
+        assert!(!store.has_stale_files().unwrap());
+        assert_eq!(store.shallow_count().unwrap(), 1);
+        assert_eq!(
+            store.shallow_files(10).unwrap(),
+            vec![(folder("films").join("clip.mp4"), Category::Video)]
+        );
+        assert!(
+            store
+                .changes(&scan("films", vec![video(Depth::Full, &[])]))
+                .unwrap()
+                .changed
+                .is_empty()
+        );
+
+        write(&mut store, &[scan("films", vec![video(Depth::Full, &[])])]);
+        assert_eq!((count(&store, "embeddings"), store.shallow_count().unwrap()), (2, 1));
+
+        let deepened = ScannedDir {
+            complete: false,
+            ..scan("films", vec![video(Depth::Deepened, &[10, 20, 30])])
+        };
+        write(&mut store, &[deepened]);
+        assert_eq!((count(&store, "embeddings"), store.shallow_count().unwrap()), (5, 0));
+        assert!(!store.has_stale_files().unwrap());
+    }
+
+    #[test]
+    fn deepening_a_picture_reads_its_words_and_keeps_its_vector() {
+        let dir = temp_dir("shallow-picture");
+        let mut store = Store::open(&dir).unwrap();
+        store.read_pictures_if(|| true);
+        let shallow = ScannedFile {
+            depth: Depth::Shallow,
+            ..file("cat.jpg", 1)
+        };
+        write(&mut store, &[scan("pets", vec![shallow])]);
+        assert!(!store.has_stale_files().unwrap());
+        assert!(
+            store
+                .changes(&scan("pets", vec![file("cat.jpg", 1)]))
+                .unwrap()
+                .changed
+                .is_empty()
+        );
+
+        let read = ScannedFile {
+            depth: Depth::Deepened,
+            words_only: true,
+            words: Some("a cat on a sofa".into()),
+            vectors: Vec::new(),
+            ..file("cat.jpg", 1)
+        };
+        write(
+            &mut store,
+            &[ScannedDir {
+                complete: false,
+                ..scan("pets", vec![read])
+            }],
+        );
+        let read_with: i64 = store
+            .conn
+            .query_row("SELECT read_with FROM files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            (count(&store, "embeddings"), store.shallow_count().unwrap(), read_with),
+            (1, 0, i64::from(WORDS_ID))
+        );
+        assert!(!store.has_stale_files().unwrap());
+    }
+    #[test]
+    fn deepening_a_document_keeps_its_overview() {
+        let dir = temp_dir("shallow-document");
+        let mut store = Store::open(&dir).unwrap();
+        let paper = |depth: Depth, locators: &[u64]| ScannedFile {
+            category: Category::Document,
+            depth,
+            ..in_parts("paper.pdf", 1, locators)
+        };
+        write(&mut store, &[scan("papers", vec![paper(Depth::Shallow, &[0])])]);
+        let deepened = ScannedDir {
+            complete: false,
+            ..scan("papers", vec![paper(Depth::Deepened, &[1, 2, 3, 4, 5])])
+        };
+        write(&mut store, &[deepened]);
+        assert_eq!((count(&store, "embeddings"), store.shallow_count().unwrap()), (6, 0));
     }
 }

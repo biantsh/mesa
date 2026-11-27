@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DatabaseZap, Info, Search, Trash2 } from "lucide-react";
-import { api, errorText, type Category, type Estimate, type Overview, type Survey } from "../api";
+import { api, errorText, type Category, type Estimate, type Overview, type Progress, type Survey } from "../api";
 import { describeTotal, estimateSeconds, formatEstimateRange, joinNames } from "../fileSurvey";
 import { Button } from "../components/Button";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -212,7 +212,7 @@ export function SimpleIndexScreen({
             <section className={styles.card} aria-busy={!ready}>
               {ready && view === "running" && progress && (
                 <>
-                  <h2 className={styles.cardTitle}>{progress.updating ? "Updating your index" : "Indexing your files"}</h2>
+                  <h2 className={styles.cardTitle}>{titleOf(progress)}</h2>
                   <div className={styles.middle}>
                     <SimpleProgress progress={progress} secondsLeft={secondsLeft} onScreen={active} onRefresh={refresh} onError={setError} />
                     {hint && !paused && (
@@ -230,7 +230,7 @@ export function SimpleIndexScreen({
                   </div>
                   <div className={styles.foot}>
                     <div className={styles.footActions}>
-                      {!progress.updating && (
+                      {!progress.updating && !progress.refining && (
                         <Button variant="dangerOutline" onClick={() => setStopAsked(true)} disabled={stopping}>
                           Stop indexing
                         </Button>
@@ -373,6 +373,11 @@ interface Total {
   node: ReactNode;
 }
 
+function titleOf(progress: Progress): string {
+  if (progress.refining) return "Refining your index";
+  return progress.updating ? "Updating your index" : "Indexing your files";
+}
+
 function indexTotal(survey: Survey, estimate: Estimate | null, types: Category[]): Total {
   const files = describeTotal(survey, types);
   const fast = estimate ? estimateSeconds(estimate, types) : null;
@@ -394,7 +399,7 @@ function indexTotal(survey: Survey, estimate: Estimate | null, types: Category[]
     id: `${files}|${time}`,
     counted: true,
     node: (
-      <span className={styles.total} data-tooltip="With fast indexing, or without (the default).">
+      <span className={styles.total}>
         {files}, {time}
       </span>
     ),

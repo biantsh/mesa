@@ -19,6 +19,7 @@ mod model;
 mod office;
 mod opendocument;
 pub(crate) mod outline;
+mod overview;
 mod picture;
 mod pipeline;
 mod prepare;
@@ -82,6 +83,7 @@ pub enum Device {
 pub struct Item {
     pub path: PathBuf,
     pub words_only: bool,
+    pub shallow: bool,
 }
 
 fn display_name(path: &Path) -> String {
@@ -129,6 +131,7 @@ pub trait Embedder: Send + Sync {
             &[Item {
                 path: path.to_owned(),
                 words_only: false,
+                shallow: false,
             }],
             &|| false,
             &mut |_, made| outcome = Some(made),

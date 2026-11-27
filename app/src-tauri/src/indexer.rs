@@ -18,7 +18,7 @@ use crate::{
     embed::{Item, Outcome},
     index::{Job, Shared, lock},
     power,
-    store::{ScannedDir, ScannedFile},
+    store::{Depth, ScannedDir, ScannedFile},
     unindexable,
 };
 
@@ -27,6 +27,9 @@ const BATCH_AGE: Duration = Duration::from_millis(250);
 const CHUNK_FILES: usize = 512;
 const RUN_MOST: usize = 512;
 const LISTED_AHEAD: usize = 1024;
+const DEEPEN_FILES: usize = 16;
+const FEW_CHANGES: usize = 20;
+const SMALL_CODE_BYTES: u64 = 3 * 1024;
 
 pub fn work(shared: &Shared) {
     loop {
@@ -56,10 +59,128 @@ pub fn work(shared: &Shared) {
             check(shared, &path);
             continue;
         }
+        if deepen(shared, seen) {
+            power::keep_pace(true);
+            continue;
+        }
         power::keep_pace(false);
         if shared.control.wait_for_work(seen) {
             break;
         }
+    }
+}
+
+fn starts_shallow(file: &ScannedFile, reads_text: bool) -> bool {
+    match file.category {
+        Category::Video | Category::Audio | Category::Document => true,
+        Category::Image => reads_text,
+        Category::Code => file.size > SMALL_CODE_BYTES,
+    }
+}
+
+fn deepen(shared: &Shared, seen: u64) -> bool {
+    if shared.control.is_paused() {
+        return false;
+    }
+    let found = {
+        let store = lock(&shared.store);
+        store
+            .shallow_files(DEEPEN_FILES)
+            .and_then(|files| Ok((files, store.shallow_count()?)))
+    };
+    let (files, left) = match found {
+        Ok(found) => found,
+        Err(e) => {
+            eprintln!("Mesa: couldn't look for files to index more deeply: {e}");
+            shared.left_to_refine(0);
+            return false;
+        }
+    };
+    shared.left_to_refine(left);
+    if files.is_empty() {
+        return false;
+    }
+
+    let (mut items, mut scanned, mut gone, mut settled) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (path, category) in files {
+        let (Some(name), Some(facts)) = (path.file_name(), facts_of_path(&path)) else {
+            gone.push(path);
+            continue;
+        };
+        if !shared.wants(&path) {
+            settled.push(path);
+            continue;
+        }
+        let (modified_ms, size) = facts;
+        scanned.push(ScannedFile {
+            name: name.to_string_lossy().into_owned(),
+            category,
+            modified_ms,
+            size,
+            vectors: Vec::new(),
+            words: None,
+            pages: Vec::new(),
+            words_only: false,
+            depth: Depth::Deepened,
+        });
+        items.push(Item {
+            path,
+            words_only: category == Category::Image,
+            shallow: false,
+        });
+    }
+    {
+        let mut store = lock(&shared.store);
+        if !gone.is_empty()
+            && let Err(e) = store.remove_paths(&gone)
+        {
+            eprintln!("Mesa: couldn't forget files that have gone: {e}");
+        }
+        if !settled.is_empty()
+            && let Err(e) = store.settle_shallow(&settled)
+        {
+            eprintln!("Mesa: couldn't settle files that are no longer indexed: {e}");
+        }
+    }
+    if items.is_empty() {
+        return true;
+    }
+
+    let epoch = shared.control.epoch();
+    let mut deepened = Vec::new();
+    let result = shared.embedder.embed(
+        &items,
+        &|| shared.control.changed_since(epoch) || shared.control.work_seen() != seen,
+        &mut |i, outcome| {
+            let mut file = scanned[i].clone();
+            match outcome {
+                Outcome::Vectors(vectors, words, pages) => {
+                    (file.vectors, file.words, file.pages) = (vectors, words, pages)
+                }
+                Outcome::NoVector(_) => {}
+                Outcome::Words(words, pages) => (file.words, file.pages, file.words_only) = (words, pages, true),
+            }
+            deepened.push(ScannedDir {
+                path: items[i].path.parent().unwrap_or(&items[i].path).to_owned(),
+                files: vec![file],
+                cloud: Vec::new(),
+                complete: false,
+                subfolders: None,
+            });
+        },
+    );
+    if !deepened.is_empty()
+        && let Err(e) = lock(&shared.store).write_scans(&deepened, &|path| shared.wants(path), 0)
+    {
+        eprintln!("Mesa: couldn't store files indexed more deeply: {e}");
+        return false;
+    }
+    match result {
+        Err(e) => {
+            eprintln!("Mesa: couldn't index files more deeply, so they are left for later: {e}");
+            false
+        }
+        Ok(()) => !deepened.is_empty() || shared.control.work_seen() != seen,
     }
 }
 
@@ -544,12 +665,22 @@ impl<'a> Walker<'a> {
             self.stored &= self.batch.pause_point(shared);
 
             let epoch = shared.control.epoch();
+            let breadth_first =
+                shared.is_breadth_first() && (self.batch.tracking.is_in_progress() || left.len() > FEW_CHANGES);
+            let reads_text = breadth_first && shared.embedder.reads_text();
             let items: Vec<Item> = left
                 .iter()
                 .map(|&n| {
                     let path = path_of(&folders, places[n]);
                     let words_only = self.rereads.contains(&path);
-                    Item { path, words_only }
+                    let (folder, file) = places[n];
+                    let shallow =
+                        breadth_first && !words_only && starts_shallow(&folders[folder].files[file], reads_text);
+                    Item {
+                        path,
+                        words_only,
+                        shallow,
+                    }
                 })
                 .collect();
             let mut finished = vec![false; items.len()];
@@ -564,7 +695,11 @@ impl<'a> Walker<'a> {
                     let mut file = folders[folder].files[file].clone();
                     match outcome {
                         Outcome::Vectors(vectors, words, pages) => {
-                            (file.vectors, file.words, file.pages) = (vectors, words, pages)
+                            (file.vectors, file.words, file.pages) = (vectors, words, pages);
+                            if items[i].shallow {
+                                file.depth = Depth::Shallow;
+                                shared.one_more_to_refine();
+                            }
                         }
                         Outcome::NoVector(_) => file.vectors = Vec::new(),
                         Outcome::Words(words, pages) => {
@@ -866,6 +1001,7 @@ fn scan_dir(dir: &Path, types: Categories) -> Option<Found> {
                 words: None,
                 pages: Vec::new(),
                 words_only: false,
+                depth: Depth::Full,
             }),
             None => unreadable_file = true,
         },
@@ -918,6 +1054,7 @@ fn scan_file(path: &Path, types: Categories) -> Option<ScannedDir> {
             words: None,
             pages: Vec::new(),
             words_only: false,
+            depth: Depth::Full,
         }],
         cloud: Vec::new(),
         complete: false,
@@ -1088,6 +1225,8 @@ mod tests {
             embedder: embedder.clone(),
             always_full_speed: Default::default(),
             asked_checks: Default::default(),
+            breadth_first: Default::default(),
+            refining: Default::default(),
         });
         let ticket = {
             let mut progress = lock(&shared.progress);

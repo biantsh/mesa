@@ -71,6 +71,15 @@
   --screen-x: 100%;
 }
 
+.pane.warming {
+  visibility: visible;
+  opacity: 0.001;
+  transform: translateX(0);
+  --screen-x: 0%;
+  pointer-events: none;
+  transition: none;
+}
+
 .fromWidget .pane,
 .fromWidget .before,
 .fromWidget .after {

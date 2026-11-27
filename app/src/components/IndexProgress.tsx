@@ -95,14 +95,16 @@ export function whereIsIndexing({ counting, folders }: Progress): string | null 
 
 const quoted = (name: string) => `\u201c${name}\u201d`;
 
+export const LOOKING_DEEPER = "Looking deeper into files to make searching more accurate";
+
 export function Label({ progress }: { progress: Progress }) {
-  const { name, queued, updating } = progress;
+  const { name, queued, updating, refining } = progress;
   const where = whereIsIndexing(progress);
+  const tooltip = refining
+    ? LOOKING_DEEPER
+    : `${updating ? "Updating" : "Indexing"} ${quoted(name)}${queued > 0 ? ` + ${queued}` : ""}${where ? `\nin ${where}` : ""}`;
   return (
-    <span
-      className={styles.label}
-      data-tooltip={`${updating ? "Updating" : "Indexing"} ${quoted(name)}${queued > 0 ? ` + ${queued}` : ""}${where ? `\nin ${where}` : ""}`}
-    >
+    <span className={styles.label} data-tooltip={tooltip}>
       <span className={styles.name}>{name}</span>
       {queued > 0 && <span className={styles.fixed}>{`\u00a0+\u00a0${queued}`}</span>}
     </span>

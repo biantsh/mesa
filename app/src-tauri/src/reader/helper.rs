@@ -105,6 +105,7 @@ pub fn execute(job: Job, call: &dyn Fn(Call) -> bool) -> Reply {
     let item = |path: String, words_only: bool| Item {
         path: PathBuf::from(path),
         words_only,
+        shallow: false,
     };
     match job {
         Job::Prepare {

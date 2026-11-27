@@ -47,6 +47,7 @@ export default function App() {
   const cardOpen = card !== null;
   const [querying, setQuerying] = useState(false);
   const onIndex = screen === "index";
+  const warmingIndex = useFirstPaintAhead(onIndex);
   const searchDimmed = querying && !onIndex;
   const dimmed = searchDimmed || cardOpen;
   const maximized = useMaximized();
@@ -198,7 +199,12 @@ export default function App() {
         </div>
         <div
           ref={index}
-          className={cx(styles.pane, !onIndex && styles.after, onIndex && fromWidget && styles.arrive)}
+          className={cx(
+            styles.pane,
+            !onIndex && styles.after,
+            !onIndex && warmingIndex && styles.warming,
+            onIndex && fromWidget && styles.arrive,
+          )}
           tabIndex={-1}
           inert={!onIndex || behind}
         >
@@ -225,4 +231,30 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+const PAINT_AHEAD_AFTER_MS = 2000;
+const PAINT_AHEAD_FOR_MS = 150;
+
+function useFirstPaintAhead(shown: boolean): boolean {
+  const [painting, setPainting] = useState(false);
+  const seen = useRef(shown);
+  if (shown) seen.current = true;
+  useEffect(() => {
+    let frame = 0;
+    let end = 0;
+    const start = window.setTimeout(() => {
+      if (seen.current) return;
+      setPainting(true);
+      frame = requestAnimationFrame(() => {
+        end = window.setTimeout(() => setPainting(false), PAINT_AHEAD_FOR_MS);
+      });
+    }, PAINT_AHEAD_AFTER_MS);
+    return () => {
+      window.clearTimeout(start);
+      window.clearTimeout(end);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+  return painting;
 }

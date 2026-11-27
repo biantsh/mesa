@@ -145,6 +145,7 @@ export interface Progress {
   total: number;
   paused: boolean;
   updating: boolean;
+  refining: boolean;
   folders: string[];
   turbo: boolean;
 }
@@ -160,6 +161,7 @@ export function sameProgress(a: Progress | null, b: Progress | null): boolean {
     a.total === b.total &&
     a.paused === b.paused &&
     a.updating === b.updating &&
+    a.refining === b.refining &&
     a.folders.join("/") === b.folders.join("/") &&
     a.turbo === b.turbo
   );

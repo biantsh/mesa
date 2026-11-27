@@ -25,6 +25,15 @@
   flex: none;
 }
 
+.what > .about {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
 .where {
   min-width: 0;
   overflow: hidden;

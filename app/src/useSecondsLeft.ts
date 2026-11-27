@@ -11,6 +11,7 @@ const NOTHING: Progress = {
   total: 0,
   paused: false,
   updating: false,
+  refining: false,
   folders: [],
   turbo: false,
 };

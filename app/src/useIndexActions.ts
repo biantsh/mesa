@@ -15,6 +15,7 @@ interface Inputs {
 
 const UNDO_ADD_MS = 800;
 const ASK_FROM_FILES = 500;
+const ENDS_PROGRESS = new Set<Confirmation>(["removeFromIndex", "excludeFromIndex", "stopIndexing"]);
 
 interface Stopping {
   path: string;
@@ -85,7 +86,7 @@ export function useIndexActions({
           return;
         }
       }
-      if (stops) markStopped();
+      markStopped();
       await changeSelection(() => api.removeFromIndex(paths(remove)));
     };
     const excludeEntries = async (which: Entry[]) => {
@@ -95,7 +96,7 @@ export function useIndexActions({
         if (withData > 1) {
           setAsking({ which: "excludeFromIndex", subject: describeKinds(which), paths: paths(which), withData, stops });
         } else {
-          if (stops) markStopped();
+          markStopped();
           await changeSelection(() => api.excludeFromIndex(paths(which)));
         }
       } catch (e) {
@@ -148,7 +149,7 @@ export function useIndexActions({
           return;
         }
       }
-      if (stops) markStopped();
+      markStopped();
       await changeIndex(() => api.removeFromIndex(paths), clearListSelection);
     },
     stopExcluding: (items: Listed[]) =>
@@ -241,7 +242,7 @@ export function useIndexActions({
   const confirm = () => {
     if (!asking || !confirmation) return;
     setAsking(null);
-    if (confirmation.stopsIndexing) markStopped();
+    if (ENDS_PROGRESS.has(asking.which)) markStopped();
     changeIndex(confirmation.run, ofSelection(asking.which) ? clearSelection : undefined);
   };
 

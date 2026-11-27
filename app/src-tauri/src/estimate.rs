@@ -24,17 +24,13 @@ const ORDER: [Category; 4] = [Category::Image, Category::Document, Category::Aud
 const FINALIZE_LIMIT: Duration = Duration::from_secs(15);
 const START_LIMIT: Duration = Duration::from_secs(120);
 const RETRY_AFTER: Duration = Duration::from_secs(10 * 60);
-const OCR_WAIT: Duration = Duration::from_secs(90);
 const SURVEY_FRESH: Duration = Duration::from_secs(10 * 60);
-const FILE: &str = "costs-4.json";
+const FILE: &str = "costs-5.json";
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Cost {
     pub per_file: f64,
-    pub per_byte: f64,
-    #[serde(default)]
-    pub with_text: bool,
 }
 
 type Costs = BTreeMap<String, PerType<Option<Cost>>>;
@@ -215,49 +211,17 @@ impl Estimator {
         device: Device,
     ) -> Result<(), String> {
         let embedder = embed::standin::embedder(&self.data_dir, self.resource_dir.as_deref(), device)?;
-        let ocr = crate::ocr::folder(&self.data_dir);
-        let later = !crate::ocr::present(&ocr) && wanted.contains(&Category::Image);
-        let first: Vec<Category> = wanted
-            .iter()
-            .copied()
-            .filter(|&kind| !(later && kind == Category::Image))
-            .collect();
-        let keep = |kind, cost: Cost| {
-            let with_text = kind == Category::Image && crate::ocr::present(&ocr);
-            self.keep_cost(device, kind, Cost { with_text, ..cost });
-        };
-        let mut result = measure(&*embedder, samples, &first, BUDGET, &measurement.cancel, keep);
-        if result.is_ok() && later {
-            let waited = Instant::now();
-            while !crate::ocr::present(&ocr)
-                && waited.elapsed() < OCR_WAIT
-                && !measurement.cancel.load(Ordering::Relaxed)
-            {
-                thread::sleep(Duration::from_millis(200));
-            }
-            if !measurement.cancel.load(Ordering::Relaxed) {
-                result = measure(
-                    &*embedder,
-                    samples,
-                    &[Category::Image],
-                    BUDGET,
-                    &measurement.cancel,
-                    keep,
-                );
-            }
-        }
+        let keep = |kind, cost: Cost| self.keep_cost(device, kind, cost);
+        let result = measure(&*embedder, samples, wanted, BUDGET, &measurement.cancel, keep);
         embedder.release();
         embed::standin::remove(&self.data_dir);
         result
     }
 
     fn cost(&self, device: Device, kind: Category) -> Option<Cost> {
-        let cost = lock(&self.costs)
+        lock(&self.costs)
             .get(device_key(device))
-            .and_then(|costs| *costs.get(kind))?;
-        let stale =
-            kind == Category::Image && !cost.with_text && crate::ocr::present(&crate::ocr::folder(&self.data_dir));
-        (!stale).then_some(cost)
+            .and_then(|costs| *costs.get(kind))
     }
 
     fn keep_cost(&self, device: Device, kind: Category, cost: Cost) {
@@ -295,11 +259,7 @@ fn seconds_for(survey: &Survey, kind: Category, cost: Option<Cost>) -> Option<f6
     if files == 0 {
         return Some(0.0);
     }
-    let cost = cost?;
-    Some(match kind {
-        Category::Image => cost.per_file * files as f64,
-        _ => cost.per_byte * *survey.bytes.get(kind) as f64,
-    })
+    Some(cost?.per_file * files as f64)
 }
 
 fn measure(
@@ -321,6 +281,7 @@ fn measure(
             &[Item {
                 path: first.0.clone(),
                 words_only: false,
+                shallow: true,
             }],
             &|| cancel.load(Ordering::Relaxed),
             &mut |_, _| {},
@@ -348,17 +309,17 @@ fn measure(
             .map(|(path, _)| Item {
                 path: path.clone(),
                 words_only: false,
+                shallow: true,
             })
             .collect();
         let started = Instant::now();
-        let (mut done, mut bytes, mut last) = (0u64, 0u64, Duration::ZERO);
+        let (mut done, mut last) = (0u64, Duration::ZERO);
         embedder
             .embed(
                 &items,
                 &|| cancel.load(Ordering::Relaxed) || started.elapsed() > budget,
-                &mut |i, _| {
+                &mut |_, _| {
                     done += 1;
-                    bytes += files[i].1;
                     last = started.elapsed();
                 },
             )
@@ -372,8 +333,6 @@ fn measure(
                 kind,
                 Cost {
                     per_file: seconds / done as f64,
-                    per_byte: seconds / bytes.max(1) as f64,
-                    with_text: false,
                 },
             );
         }

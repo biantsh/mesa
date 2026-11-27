@@ -83,6 +83,14 @@ pub fn is_supported(item: &Item) -> bool {
     }
 }
 
+pub fn overview_pieces(path: &Path) -> Option<usize> {
+    match kind(path, code::is_code_path(path)) {
+        Some(Kind::Video) => Some(super::overview::VIDEO_PIECES),
+        Some(Kind::Sound) => Some(super::overview::SOUND_PIECES),
+        _ => None,
+    }
+}
+
 pub fn prepare(
     item: &Item,
     code: bool,
@@ -472,6 +480,7 @@ mod tests {
             &Item {
                 path,
                 words_only: false,
+                shallow: false,
             },
             false,
             None,

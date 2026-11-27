@@ -129,10 +129,13 @@ pub fn lines(progress: &Progress) -> Lines {
         total,
         paused,
         updating,
+        refining,
         folders: _,
         turbo: _,
     } = progress;
-    let title = if *queued > 0 {
+    let title = if *refining {
+        "index".into()
+    } else if *queued > 0 {
         format!("{name} + {queued} more")
     } else {
         name.clone()
@@ -150,6 +153,7 @@ pub fn lines(progress: &Progress) -> Lines {
         (true, _, _) => "Paused",
         (_, true, _) => "Looking for files",
         (_, _, true) => "Updating",
+        _ if *refining => "Refining",
         _ => "Indexing",
     };
     Lines {

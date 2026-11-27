@@ -803,6 +803,7 @@ pub mod tests {
         let item = Item {
             path: notes.clone(),
             words_only: false,
+            shallow: false,
         };
         indexing
             .prepare(
@@ -831,6 +832,7 @@ pub mod tests {
         let picture_item = Item {
             path: picture.clone(),
             words_only: false,
+            shallow: false,
         };
         let mut images = 0;
         indexing

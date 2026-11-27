@@ -80,7 +80,7 @@ thread_local! {
     static RESIZER: RefCell<Resizer> = RefCell::new(Resizer::new());
 }
 
-fn resize(rgb: &[u8], from: (u32, u32), to: (u32, u32)) -> Result<Vec<u8>, String> {
+pub(super) fn resize(rgb: &[u8], from: (u32, u32), to: (u32, u32)) -> Result<Vec<u8>, String> {
     let source = ImageRef::new(from.0, from.1, rgb, PixelType::U8x3).map_err(|e| e.to_string())?;
     let mut target = Image::new(to.0, to.1, PixelType::U8x3);
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
@@ -88,6 +88,21 @@ fn resize(rgb: &[u8], from: (u32, u32), to: (u32, u32)) -> Result<Vec<u8>, Strin
         .with(|resizer| resizer.borrow_mut().resize(&source, &mut target, &options))
         .map_err(|e| e.to_string())?;
     Ok(target.into_vec())
+}
+
+pub(super) fn rgb_of(bitmap: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let field = |at: usize| Some(u32::from_le_bytes(bitmap.get(at..at + 4)?.try_into().ok()?));
+    let (start, width, height) = (field(10)? as usize, field(18)?, field(22)?);
+    let row = width as usize * 3;
+    let padded = row.next_multiple_of(4);
+    let pixels = bitmap.get(start..start + padded * height as usize)?;
+    let mut rgb = Vec::with_capacity(row * height as usize);
+    for line in pixels.chunks_exact(padded).rev() {
+        for pixel in line[..row].as_chunks::<3>().0 {
+            rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
+        }
+    }
+    Some((rgb, width, height))
 }
 
 fn bitmap(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {

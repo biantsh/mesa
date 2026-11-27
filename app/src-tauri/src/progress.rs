@@ -23,6 +23,7 @@ pub struct Progress {
     pub total: u64,
     pub paused: bool,
     pub updating: bool,
+    pub refining: bool,
     pub folders: Vec<String>,
     pub turbo: bool,
 }
@@ -522,6 +523,7 @@ impl ProgressState {
             total: if counting { 0 } else { total },
             paused,
             updating: current.quiet,
+            refining: false,
             folders: folders_below(&current.root, current.current.as_deref()),
             turbo: false,
         })

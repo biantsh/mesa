@@ -34,6 +34,9 @@ export function useIndexLists(active: boolean, indexing: boolean) {
   }, [read]);
 
   useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  useEffect(() => {
     if (active) void refresh();
   }, [active, refresh]);
 
