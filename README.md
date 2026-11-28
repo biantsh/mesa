@@ -138,6 +138,13 @@ npm run tauri dev       # run in development mode
 
 To build installers for your system, run `npm run tauri build`.
 
+### Graphics cards
+
+On Windows and Linux, llama.cpp is built with its Vulkan backend, which uses any GPU the Vulkan
+driver exposes, including Intel Arc cards. When a machine has both an integrated GPU and a discrete
+one, Mesa picks the discrete one. To override that, set `MESA_LLAMA_DEVICE` to a device id from
+`llama-server --list-devices` (for example `Vulkan1`), an index, or part of the card's name.
+
 ## License
 
 Mesa is released under the [MIT License](LICENSE). Third-party components and their licenses are listed in the app: click *MIT License* in the bottom corner of the main window.
