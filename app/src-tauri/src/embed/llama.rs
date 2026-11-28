@@ -278,8 +278,10 @@ impl LlamaServer {
         } else {
             device
         };
+        let gpu = self.found_gpu();
+        let pinned = gpu.as_ref().filter(|gpu| gpu.pinned).map(|gpu| gpu.id.as_str());
         self.model.set(ModelStatus::Starting);
-        let mut server = launch(&self.locations, device).inspect_err(|e| {
+        let mut server = launch(&self.locations, device, pinned).inspect_err(|e| {
             self.model.set(ModelStatus::Failed {
                 reason: e.0.clone(),
                 setup: false,
@@ -430,11 +432,15 @@ impl Backend for LlamaServer {
     }
 
     fn gpu(&self) -> Option<String> {
-        self.found_gpu().filter(|gpu| !gpu.integrated).map(|gpu| gpu.name)
+        self.found_gpu()
+            .filter(|gpu| !gpu.integrated || gpu.pinned)
+            .map(|gpu| gpu.name)
     }
 
     fn shared_gpu(&self) -> Option<String> {
-        self.found_gpu().filter(|gpu| gpu.integrated).map(|gpu| gpu.name)
+        self.found_gpu()
+            .filter(|gpu| gpu.integrated && !gpu.pinned)
+            .map(|gpu| gpu.name)
     }
 
     fn model_status(&self) -> ModelStatus {
@@ -473,17 +479,28 @@ fn start_or_fall_back<T>(
     }
 }
 
-fn device_args(device: Device) -> &'static [&'static str] {
+fn device_args(device: Device, pinned: Option<&str>) -> Vec<String> {
     match device {
-        Device::Auto => &["-ngl", "all"],
-        Device::Cpu => &["-dev", "none", "-ngl", "0"],
+        Device::Auto => {
+            let mut args = Vec::with_capacity(4);
+            if let Some(id) = pinned {
+                args.extend(["-dev".to_owned(), id.to_owned()]);
+            }
+            args.extend(["-ngl".to_owned(), "all".to_owned()]);
+            args
+        }
+        Device::Cpu => ["-dev", "none", "-ngl", "0"].map(str::to_owned).to_vec(),
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct FoundGpu {
+    id: String,
     name: String,
     integrated: bool,
+    /// Chosen with `MESA_LLAMA_DEVICE` instead of picked automatically, so `-dev` is passed to
+    /// llama.cpp to make it use this one.
+    pinned: bool,
 }
 
 fn find_gpu(locations: &Locations) -> Option<FoundGpu> {
@@ -500,11 +517,44 @@ fn find_gpu(locations: &Locations) -> Option<FoundGpu> {
         command.creation_flags(CREATE_NO_WINDOW);
     }
     let output = command.output().ok()?;
-    let name = listed_gpu(&String::from_utf8_lossy(&output.stdout))?;
-    Some(FoundGpu {
-        integrated: is_integrated(&name),
-        name: tidy_gpu_name(&name),
-    })
+    let gpus: Vec<FoundGpu> = listed_devices(&String::from_utf8_lossy(&output.stdout))
+        .into_iter()
+        .map(|device| FoundGpu {
+            integrated: is_integrated(&device.name),
+            name: tidy_gpu_name(&device.name),
+            id: device.id,
+            pinned: false,
+        })
+        .collect();
+    let wanted = std::env::var("MESA_LLAMA_DEVICE").ok();
+    let (chosen, pinned) = choose(&gpus, wanted.as_deref())?;
+    let mut gpu = chosen.clone();
+    gpu.pinned = pinned;
+    Some(gpu)
+}
+
+/// Picks the GPU to tell the user about. A discrete GPU is preferred over an integrated one, and
+/// `MESA_LLAMA_DEVICE` (a device id like `Vulkan1`, an index, or part of a name) wins
+/// over both.
+fn choose<'a>(gpus: &'a [FoundGpu], wanted: Option<&str>) -> Option<(&'a FoundGpu, bool)> {
+    if let Some(wanted) = wanted.map(str::trim).filter(|wanted| !wanted.is_empty()) {
+        let found = gpus
+            .iter()
+            .find(|gpu| gpu.id.eq_ignore_ascii_case(wanted))
+            .or_else(|| wanted.parse::<usize>().ok().and_then(|index| gpus.get(index)))
+            .or_else(|| {
+                let wanted = wanted.to_lowercase();
+                gpus.iter().find(|gpu| gpu.name.to_lowercase().contains(&wanted))
+            });
+        if let Some(found) = found {
+            return Some((found, true));
+        }
+        eprintln!("Mesa: no GPU matches MESA_LLAMA_DEVICE={wanted}; picking one automatically");
+    }
+    gpus.iter()
+        .find(|gpu| !gpu.integrated)
+        .or_else(|| gpus.first())
+        .map(|gpu| (gpu, false))
 }
 
 #[cfg(any(target_os = "linux", windows))]
@@ -524,7 +574,7 @@ fn is_integrated(name: &str) -> bool {
             .find_map(|device| {
                 let properties = instance.get_physical_device_properties(device);
                 let device_name = properties.device_name_as_c_str().ok()?.to_str().ok()?;
-                (device_name == name).then_some(properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU)
+                same_gpu(device_name, name).then_some(properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU)
             });
         instance.destroy_instance(None);
         integrated.unwrap_or(false)
@@ -536,24 +586,43 @@ fn is_integrated(_name: &str) -> bool {
     false
 }
 
-#[cfg(test)]
-fn parse_gpu(listing: &str) -> Option<String> {
-    listed_gpu(listing).map(|name| tidy_gpu_name(&name))
+/// The same card is spelled differently by each backend (`Arc(tm)` against `Arc(TM)`, or with the
+/// chip's code added, `... A770 Graphics (DG2)`), so compare names by their letters and digits only.
+fn same_gpu(a: &str, b: &str) -> bool {
+    let (a, b) = (gpu_key(a), gpu_key(b));
+    a == b || (a.len() >= 12 && b.len() >= 12 && (a.starts_with(&b) || b.starts_with(&a)))
 }
 
-fn listed_gpu(listing: &str) -> Option<String> {
-    let mut devices = listing
+fn gpu_key(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ListedDevice {
+    id: String,
+    name: String,
+}
+
+fn listed_devices(listing: &str) -> Vec<ListedDevice> {
+    listing
         .lines()
         .skip_while(|line| !line.trim().starts_with("Available devices"))
-        .skip(1);
-    devices.find_map(|line| {
-        let (id, rest) = line.trim().split_once(": ")?;
-        if id.is_empty() || id.starts_with("CPU") || id.starts_with("BLAS") || id.contains(char::is_whitespace) {
-            return None;
-        }
-        let name = rest.rfind(" (").map_or(rest, |end| &rest[..end]).trim();
-        (!name.is_empty()).then(|| name.to_owned())
-    })
+        .skip(1)
+        .filter_map(|line| {
+            let (id, rest) = line.trim().split_once(": ")?;
+            if id.is_empty() || id.starts_with("CPU") || id.starts_with("BLAS") || id.contains(char::is_whitespace) {
+                return None;
+            }
+            let name = rest.rfind(" (").map_or(rest, |end| &rest[..end]).trim();
+            (!name.is_empty()).then(|| ListedDevice {
+                id: id.to_owned(),
+                name: name.to_owned(),
+            })
+        })
+        .collect()
 }
 
 fn tidy_gpu_name(name: &str) -> String {
@@ -612,13 +681,13 @@ impl From<Error> for Start {
     }
 }
 
-fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
+fn launch(locations: &Locations, device: Device, pinned: Option<&str>) -> Result<Running, Error> {
     if let Some(problem) = locations.problem() {
         return Err(Error(problem));
     }
     let mut tries = 1;
     loop {
-        match start(locations, device) {
+        match start(locations, device, pinned) {
             Ok(server) => return Ok(server),
             Err(Start::PortTaken(_)) if tries < PORT_TRIES => tries += 1,
             Err(Start::PortTaken(error) | Start::Failed(error)) => return Err(error),
@@ -626,7 +695,7 @@ fn launch(locations: &Locations, device: Device) -> Result<Running, Error> {
     }
 }
 
-fn start(locations: &Locations, device: Device) -> Result<Running, Start> {
+fn start(locations: &Locations, device: Device, pinned: Option<&str>) -> Result<Running, Start> {
     let port = TcpListener::bind(("127.0.0.1", 0))
         .and_then(|listener| listener.local_addr())
         .map_err(|e| Error(format!("no free port for the embedding server: {e}")))?
@@ -649,7 +718,7 @@ fn start(locations: &Locations, device: Device) -> Result<Running, Start> {
         .arg("--mmproj")
         .arg(locations.models.join(PICTURE_MODEL))
         .args(["--embedding", "--pooling", "mean"])
-        .args(device_args(device))
+        .args(device_args(device, pinned))
         .args(["-np", &SLOTS.to_string(), "-c", &(SLOTS * TOKENS_PER_SLOT).to_string()])
         .args(["-b", &TOKENS_PER_SLOT.to_string(), "-ub", &TOKENS_PER_SLOT.to_string()])
         .args(["--image-min-tokens", "1", "--image-max-tokens", "1024"])
@@ -794,9 +863,74 @@ mod tests {
     #[test]
     fn parses_gpu_name() {
         let listing = "Available devices:\n  Vulkan0: NVIDIA GeForce RTX 3070 Ti (8017 MiB, 7249 MiB free)\n";
-        assert_eq!(parse_gpu(listing).as_deref(), Some("NVIDIA GeForce RTX 3070 Ti"));
-        let two = "Available devices:\n  Vulkan0: AMD Radeon(TM) Graphics (2048 MiB, 1900 MiB free)\n  Vulkan1: Other (1 MiB, 1 MiB free)\n";
-        assert_eq!(parse_gpu(two).as_deref(), Some("AMD Radeon(TM) Graphics"));
+        let devices = listed_devices(listing);
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].id, "Vulkan0");
+        assert_eq!(devices[0].name, "NVIDIA GeForce RTX 3070 Ti");
+
+        let two = "Available devices:\n  Vulkan0: AMD Radeon(TM) Graphics (2048 MiB, 1900 MiB free)\n  Vulkan1: Other (1 MiB, 1 MiB free)\n  CPU: Some CPU (0 MiB, 0 MiB free)\n";
+        let devices = listed_devices(two);
+        assert_eq!(devices.len(), 2, "{devices:?}");
+        assert_eq!(devices[0].name, "AMD Radeon(TM) Graphics");
+        assert_eq!(devices[1].name, "Other");
+        assert_eq!(
+            tidy_gpu_name("AMD Radeon Graphics (RADV RENOIR)"),
+            "AMD Radeon Graphics"
+        );
+        assert_eq!(
+            tidy_gpu_name("Intel(R) Arc(tm) A770 Graphics"),
+            "Intel(R) Arc(tm) A770 Graphics"
+        );
+        assert_eq!(
+            gpu_key("Intel(R) Arc(tm) A770 Graphics"),
+            gpu_key("Intel(R) Arc(TM) A770 Graphics")
+        );
+        assert!(same_gpu(
+            "Intel(R) Arc(tm) A770 Graphics (DG2)",
+            "Intel(R) Arc(TM) A770 Graphics"
+        ));
+    }
+
+    #[test]
+    fn prefers_a_discrete_gpu() {
+        let gpus = [
+            FoundGpu {
+                id: "Vulkan0".into(),
+                name: "AMD Radeon Graphics".into(),
+                integrated: true,
+                pinned: false,
+            },
+            FoundGpu {
+                id: "Vulkan1".into(),
+                name: "Intel(R) Arc(tm) A770 Graphics".into(),
+                integrated: false,
+                pinned: false,
+            },
+        ];
+        assert_eq!(
+            choose(&gpus, None).map(|(gpu, pinned)| (gpu.id.as_str(), pinned)),
+            Some(("Vulkan1", false))
+        );
+        assert_eq!(
+            choose(&gpus, Some("Vulkan0")).map(|(gpu, pinned)| (gpu.id.as_str(), pinned)),
+            Some(("Vulkan0", true))
+        );
+        assert_eq!(
+            choose(&gpus, Some("arc")).map(|(gpu, pinned)| (gpu.id.as_str(), pinned)),
+            Some(("Vulkan1", true))
+        );
+        assert_eq!(
+            choose(&gpus, Some("1")).map(|(gpu, pinned)| (gpu.id.as_str(), pinned)),
+            Some(("Vulkan1", true))
+        );
+        assert_eq!(
+            choose(&gpus, Some("nothing")).map(|(gpu, _)| gpu.id.as_str()),
+            Some("Vulkan1")
+        );
+        assert_eq!(
+            choose(&gpus[..1], None).map(|(gpu, _)| gpu.id.as_str()),
+            Some("Vulkan0")
+        );
     }
 
     fn fake_server(requests: Arc<AtomicUsize>) -> Connection {
